@@ -176,7 +176,7 @@ The defining rule is the PRD's access model, enforced in code rather than in the
 
 ## Validation
 ```bash
-pnpm -C apps/web lint && pnpm -C apps/web typecheck && pnpm -C apps/web test -- --coverage
+pnpm -C apps/web lint && pnpm -C apps/web typecheck && pnpm -C apps/web exec vitest run --coverage
 pnpm -C apps/web exec playwright test
 cd bridge && uv run ruff check && uv run ruff format --check && uv run mypy && uv run pytest -m "not live" --cov --cov-fail-under=80
 MOOZ_LIVE_TESTS=1 uv run pytest -m live   # opt-in: real Claude (tools) and Grok; costs money
