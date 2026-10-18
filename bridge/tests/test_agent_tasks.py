@@ -207,6 +207,16 @@ async def test_status_questions_and_late_joiners(setup) -> None:  # type: ignore
     await agent.idle()
     titles = {str(e["title"]) for e, to in room.task_events if to == [KAI.identity]}
     assert "Investigate the budget slowly" in titles
+
+    # A browser's own query can arrive before the agent has seen it join, so it's told anyway.
+    room.task_events.clear()
+    assert room.on_participant_joined is not None
+    room.on_participant_joined(LEE)
+    await agent.idle()
+    assert {e["title"] for e, to in room.task_events if to == [LEE.identity]} == {
+        "Look into the launch slowly",
+        "Private task",
+    }
     await agent.aclose()
 
 

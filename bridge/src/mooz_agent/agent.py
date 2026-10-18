@@ -394,8 +394,19 @@ class Agent:
         return self.notes is not None and (self.notes.active or self._announcing)
 
     def _on_joined(self, speaker: Speaker) -> None:
-        if self._notes_on() and speaker.kind == "human":
+        if speaker.kind != "human":
+            return
+        if self._notes_on():
             self._spawn(self._tell_late_joiner(speaker.identity))
+        if self.tasks is not None and self.tasks.tasks:
+            # Their own tasks? query may have come before we saw them join, and been dropped.
+            self._spawn(self._tell_late_joiner_tasks(speaker.identity))
+
+    async def _tell_late_joiner_tasks(self, identity: str) -> None:
+        await asyncio.sleep(self.late_joiner_delay)
+        assert self.tasks is not None
+        for task in self.tasks.tasks:
+            await self._send_task_event(task, identity)
 
     async def _tell_late_joiner(self, identity: str) -> None:
         await asyncio.sleep(self.late_joiner_delay)
