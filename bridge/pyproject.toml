@@ -1,0 +1,71 @@
+[project]
+name = "mooz-agent"
+version = "0.1.0"
+description = "Bring your own AI agent into a mooz meeting."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11,<3.15"
+dependencies = [
+  "livekit>=1.1.20,<2",
+  "livekit-agents>=1.8.8,<2",
+  "livekit-plugins-elevenlabs>=1.8.8,<2",
+  "anthropic>=1.15.0,<2",
+  "httpx>=0.28.1,<1",
+  "rapidfuzz>=3.14.6,<4",
+  "python-dotenv>=1.0",
+]
+
+[project.scripts]
+mooz-agent = "mooz_agent.cli:main"
+
+[dependency-groups]
+dev = [
+  "pytest>=9.1.1",
+  "pytest-asyncio>=1.4.0",
+  "pytest-cov>=7.1.0",
+  "respx>=0.23.1",
+  "ruff>=0.17.1",
+  "mypy>=2.4.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mooz_agent"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+  "unit: fast, no network",
+  "integration: needs a running LiveKit dev server and mooz web app",
+  "live: hits real Anthropic/ElevenLabs APIs (MOOZ_LIVE_TESTS=1)",
+]
+addopts = "-m 'not integration and not live'"
+
+[tool.coverage.run]
+source = ["mooz_agent"]
+omit = ["src/mooz_agent/providers/elevenlabs.py", "src/mooz_agent/providers/claude.py"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ASYNC", "S", "RUF"]
+ignore = ["S101"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+packages = ["mooz_agent"]
+mypy_path = "src"
+
+[[tool.mypy.overrides]]
+module = ["livekit.*"]
+ignore_missing_imports = true
