@@ -18,7 +18,7 @@ heard in the meeting.
   and anyone can leave themselves out.
 - **Self-hosted and open source** under the MIT license.
 
-> **Status: v0.1 in progress.** Milestones 1 and 2 work: people meet by link, anyone can bring
+> **Status: v0.1 in progress.** Milestones 1 and 2 are done: people meet by link, anyone can bring
 > a personal agent (Claude or Grok) that reads their folders and repos, remembers what they
 > tell it, and keeps meeting notes when everyone agrees. Next up are long research tasks (M3)
 > and connecting your existing Grok / Claude / ChatGPT app (M4). See the [roadmap](#roadmap).

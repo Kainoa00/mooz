@@ -194,10 +194,10 @@ MOOZ_LIVE_TESTS=1 uv run pytest -m live   # opt-in: real Claude (tools) and Grok
 | Owner not recognized after reconnect | Medium | Task 8 makes the identity stable across rejoins |
 
 ## Acceptance
-- [ ] All tasks complete, each as its own conventional commit, merged to `main`
-- [ ] Validation passes in CI, with bridge and web coverage at 80% or higher
-- [ ] The access matrix test passes: non-owners never see private sources or memory, and only owners write memory
-- [ ] The E2E access test passes in the browser with the real bridge
-- [ ] `security-reviewer` pass on Tasks 2–4 and `code-reviewer` pass on the milestone diff
-- [ ] Meeting notes only run when the host allows them and the owner asks; every participant sees the banner; opted-out speakers never reach the notes
+- [x] All tasks complete, each as its own conventional commit, merged to `main`
+- [x] Validation passes in CI, with bridge and web coverage at 80% or higher (bridge 95%, web 95%; CI now really measures web coverage)
+- [x] The access matrix test passes: non-owners never see private sources or memory, and only owners write memory
+- [x] The E2E access test passes in the browser with the real bridge
+- [x] `security-reviewer` pass on Tasks 2–4 and `code-reviewer` pass on the milestone diff (plus a security review of Tasks 9–12 and a re-review of every fix; all findings fixed)
+- [x] Meeting notes only run when the host allows them and the owner asks; every participant sees the banner; opted-out speakers never reach the notes (limits in the PRD's "Known limits after M2")
 - [ ] Opt-in live tests pass for Claude tool use and Grok (needs your keys)
