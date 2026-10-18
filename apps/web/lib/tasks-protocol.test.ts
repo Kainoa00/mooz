@@ -3,8 +3,10 @@ import {
   TASKS_QUERY,
   applyTaskEvent,
   cancelTaskMessage,
+  MAX_TASKS_PER_AGENT,
   isActive,
   parseTaskEvent,
+  readCapped,
   sortTasks,
   type TaskRow,
 } from "./tasks-protocol";
@@ -83,12 +85,34 @@ describe("task protocol", () => {
     expect(tasks.size).toBe(2);
   });
 
-  it("puts active tasks first, newest first", () => {
-    const row = (id: string, state: string, updated: number) =>
-      ({ ...parseTaskEvent(JSON.stringify(event({ id, state, updated_at: updated })))!, agent: "a" }) as TaskRow;
-    const sorted = sortTasks([row("t_00000001", "done", 9), row("t_00000002", "working", 1), row("t_00000003", "queued", 5)]);
+  it("puts active tasks first, newest first, and keeps them in place as they update", () => {
+    const row = (id: string, state: string, created: number, updated = 0) =>
+      ({
+        ...parseTaskEvent(JSON.stringify(event({ id, state, created_at: created, updated_at: updated })))!,
+        agent: "a",
+      }) as TaskRow;
+    const sorted = sortTasks([row("t_00000001", "done", 9), row("t_00000002", "working", 1, 99), row("t_00000003", "queued", 5)]);
     expect(sorted.map((t) => t.id)).toEqual(["t_00000003", "t_00000002", "t_00000001"]);
     expect(isActive(sorted[0])).toBe(true);
+  });
+
+  it("keeps a bounded number of rows per agent, dropping the oldest finished ones", () => {
+    const tasks = new Map<string, TaskRow>();
+    applyTaskEvent(tasks, agent, parseTaskEvent(JSON.stringify(event({ id: "t_active", state: "working", updated_at: 0 })))!);
+    for (let i = 0; i < MAX_TASKS_PER_AGENT + 5; i++) {
+      applyTaskEvent(tasks, agent, parseTaskEvent(JSON.stringify(event({ id: `t_${i}`, state: "done", updated_at: i + 1 })))!);
+    }
+    expect(tasks.size).toBe(MAX_TASKS_PER_AGENT);
+    expect(tasks.has("a_atlas:t_active")).toBe(true); // still running: kept
+    expect(tasks.has("a_atlas:t_0")).toBe(false);
+  });
+
+  it("stops reading a stream that is far too long", async () => {
+    async function* chunks(n: number) {
+      for (let i = 0; i < n; i++) yield "x".repeat(10_000);
+    }
+    expect(await readCapped(chunks(2))).toHaveLength(20_000);
+    expect(await readCapped(chunks(1_000))).toBeNull();
   });
 
   it("builds the query and cancel messages agents expect", () => {

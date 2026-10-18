@@ -12,6 +12,7 @@ import {
   cancelTaskMessage,
   isActive,
   parseTaskEvent,
+  readCapped,
   sortTasks,
   type TaskRow,
   type TaskState,
@@ -46,12 +47,13 @@ export function TaskPanel() {
 
   useEffect(() => {
     const handle = async (reader: TextStreamReader, info: { identity: string }) => {
-      let text: string;
+      let text: string | null;
       try {
-        text = await reader.readAll();
+        text = await readCapped(reader);
       } catch {
         return; // the stream was cut off
       }
+      if (text === null) return; // far too long to be a task update
       const from = room.remoteParticipants.get(info.identity);
       const event = parseTaskEvent(text);
       if (!from || !event) return;

@@ -41,6 +41,21 @@ const encode = (value: unknown): Uint8Array<ArrayBuffer> => new TextEncoder().en
 
 export const TASKS_QUERY = encode({ type: "tasks?" });
 
+/** The longest task update read (a full one is about 21 KB); a longer stream is dropped. */
+export const MAX_EVENT_CHARS = 32_000;
+/** Rows kept per agent (a mooz agent takes at most 20 tasks a meeting); oldest finished go first. */
+export const MAX_TASKS_PER_AGENT = 30;
+
+/** A stream's text, or null once it grows past `max` (it stops reading there). */
+export async function readCapped(reader: AsyncIterable<string>, max = MAX_EVENT_CHARS): Promise<string | null> {
+  let text = "";
+  for await (const chunk of reader) {
+    text += chunk;
+    if (text.length > max) return null;
+  }
+  return text;
+}
+
 export function cancelTaskMessage(id: string): Uint8Array<ArrayBuffer> {
   return encode({ type: "task.cancel", id });
 }
@@ -99,11 +114,18 @@ export function applyTaskEvent(
   const known = tasks.get(key);
   if (known && known.seq >= event.seq) return false;
   tasks.set(key, { ...event, agent: from.identity });
+  const mine = [...tasks.entries()].filter(([, t]) => t.agent === from.identity);
+  if (mine.length > MAX_TASKS_PER_AGENT) {
+    // Finished before active, then oldest first.
+    mine.sort(([, a], [, b]) => Number(isActive(a)) - Number(isActive(b)) || a.updatedAt - b.updatedAt);
+    for (const [k] of mine.slice(0, mine.length - MAX_TASKS_PER_AGENT)) tasks.delete(k);
+  }
   return true;
 }
 
 export const isActive = (t: Pick<TaskEvent, "state">) => t.state === "queued" || t.state === "working";
 
+/** Active first, then newest first. By start time, so rows (and their Cancel) don't move on updates. */
 export function sortTasks(tasks: TaskRow[]): TaskRow[] {
-  return [...tasks].sort((a, b) => Number(isActive(b)) - Number(isActive(a)) || b.updatedAt - a.updatedAt);
+  return [...tasks].sort((a, b) => Number(isActive(b)) - Number(isActive(a)) || b.createdAt - a.createdAt);
 }
