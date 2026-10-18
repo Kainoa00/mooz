@@ -27,12 +27,10 @@ describe("agent claim flow", () => {
 
     const claimRes = await POST(jsonRequest("http://localhost/api/agent/claim", { code, name: "Grok" }));
     expect(claimRes.status).toBe(201);
-    const { requestId, claimSecret, status } = (await claimRes.json()) as {
-      requestId: string;
-      claimSecret: string;
-      status: string;
-    };
-    expect(status).toBe("pending");
+    const claimed = (await claimRes.json()) as { requestId: string; claimSecret: string; status: string };
+    const { requestId, claimSecret } = claimed;
+    expect(claimed.status).toBe("pending");
+    expect(JSON.stringify(claimed)).not.toContain(slug);
 
     const pending = await poll(requestId, claimSecret);
     expect(await pending.json()).toEqual({ status: "pending" });
@@ -46,7 +44,9 @@ describe("agent claim flow", () => {
       room: string;
       identity: string;
     };
-    expect(approved).toMatchObject({ status: "approved", url: "ws://livekit.test:7880", room: slug });
+    expect(approved).toMatchObject({ status: "approved", url: "ws://livekit.test:7880" });
+    expect(approved.room).not.toBe(slug);
+    expect(approved.room).toMatch(/^lk_/);
     const claims = await new TokenVerifier(LK_KEY, LK_SECRET).verify(approved.token);
     expect(claims.sub).toBe(approved.identity);
     expect(claims.attributes?.kind).toBe("agent");

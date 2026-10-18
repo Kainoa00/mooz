@@ -1,8 +1,11 @@
-import { AccessToken, TrackSource } from "livekit-server-sdk";
+import { AccessToken, RoomServiceClient, TrackSource } from "livekit-server-sdk";
 import type { AgentIdentity } from "./agents";
 
 export interface LivekitConfig {
+  /** Public WebSocket URL handed to browsers and bridges. */
   url: string;
+  /** Server-to-server HTTP URL for LiveKit's API (may be an internal address). */
+  apiUrl: string;
   apiKey: string;
   apiSecret: string;
 }
@@ -13,11 +16,31 @@ function required(name: string): string {
   return value;
 }
 
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]", "livekit"]);
+
+function isLocal(url: string): boolean {
+  try {
+    return LOCAL_HOSTS.has(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+}
+
 export function livekitConfig(): LivekitConfig {
+  const url = required("LIVEKIT_URL");
+  const apiSecret = required("LIVEKIT_API_SECRET");
+  // The dev keys are public. Anyone holding them can mint any token, including
+  // admin ones, so they must never protect a meeting reachable from outside.
+  if (!isLocal(url) && (apiSecret.length < 32 || apiSecret === "secret")) {
+    throw new Error(
+      "LIVEKIT_API_SECRET must be a random secret of at least 32 characters when LiveKit is not on localhost",
+    );
+  }
   return {
-    url: required("LIVEKIT_URL"),
+    url,
+    apiUrl: process.env.LIVEKIT_API_URL ?? url.replace(/^ws/, "http"),
     apiKey: required("LIVEKIT_API_KEY"),
-    apiSecret: required("LIVEKIT_API_SECRET"),
+    apiSecret,
   };
 }
 
@@ -28,6 +51,7 @@ const TOKEN_TTL = "1h";
  * attributes, so nobody can relabel themselves as an agent (or vice versa).
  */
 export async function mintHumanToken(input: {
+  /** The internal LiveKit room name (Room.livekitRoom), not the public slug. */
   room: string;
   identity: string;
   name: string;
@@ -69,7 +93,7 @@ export async function mintAgentToken(agent: AgentIdentity): Promise<string> {
   });
   at.addGrant({
     roomJoin: true,
-    room: agent.slug,
+    room: agent.livekitRoom,
     canPublish: true,
     canPublishSources: [TrackSource.MICROPHONE],
     canSubscribe: true,
@@ -77,4 +101,15 @@ export async function mintAgentToken(agent: AgentIdentity): Promise<string> {
     canUpdateOwnMetadata: false,
   });
   return at.toJwt();
+}
+
+/** Disconnect a participant now (used when the host removes an agent). */
+export async function removeFromRoom(room: string, identity: string): Promise<void> {
+  const { apiUrl, apiKey, apiSecret } = livekitConfig();
+  try {
+    await new RoomServiceClient(apiUrl, apiKey, apiSecret).removeParticipant(room, identity);
+  } catch (err) {
+    // Already gone (left, or never connected) is fine; anything else is not.
+    if (!/not.?found/i.test(String(err))) throw err;
+  }
 }

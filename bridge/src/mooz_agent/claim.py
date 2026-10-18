@@ -86,6 +86,12 @@ async def wait_for_approval(
             )
         if status == "denied":
             raise ClaimError("denied", "The host declined your agent.")
+        if status == "revoked":
+            raise ClaimError("revoked", "The host removed your agent from this meeting.")
+        if status == "expired":
+            raise ClaimError(
+                "expired", "This approval has expired. Get a new code from the meeting."
+            )
         if time.monotonic() >= deadline:
             raise ClaimError("timeout", "The host did not approve your agent in time.")
         if not announced and on_pending:

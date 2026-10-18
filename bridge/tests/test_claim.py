@@ -112,3 +112,18 @@ async def test_server_url_trailing_slash_is_ignored() -> None:
         ticket = await claim_code(http, SERVER + "/", code="X", name="Atlas")
 
     assert ticket.request_id == "r_1"
+
+
+@pytest.mark.parametrize(
+    ("status", "message"), [("revoked", "removed your agent"), ("expired", "new code")]
+)
+@respx.mock
+async def test_wait_for_approval_explains_revoked_and_expired(status: str, message: str) -> None:
+    respx.get(f"{SERVER}/api/agent/claim/r_1").respond(200, json={"status": status})
+    async with httpx.AsyncClient() as http:
+        with pytest.raises(ClaimError, match=message) as exc:
+            await wait_for_approval(
+                http, SERVER, request_id="r_1", claim_secret="s", poll_interval=0
+            )
+
+    assert exc.value.code == status

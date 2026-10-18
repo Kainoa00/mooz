@@ -2,13 +2,26 @@ import { HttpError } from "./http";
 
 const MAX_DISPLAY_NAME = 40;
 
-/** Trim and validate a human display name. */
-export function parseDisplayName(value: unknown): string {
+// Control and format characters (zero-width, bidi overrides) let a name render as
+// something else; the robot marker is reserved for agents.
+const DECEPTIVE = /[\p{Cc}\p{Cf}]|🤖/u;
+
+/**
+ * Trim and validate a human display name. People cannot use the agent marker,
+ * invisible characters, or the name of an agent in the meeting (its wake word).
+ */
+export function parseDisplayName(value: unknown, agentNames: readonly string[] = []): string {
   if (typeof value !== "string") throw new HttpError(400, "invalid_name", "Name is required");
   const name = value.trim().replace(/\s+/g, " ");
   if (name.length === 0) throw new HttpError(400, "invalid_name", "Name is required");
   if (name.length > MAX_DISPLAY_NAME) {
     throw new HttpError(400, "invalid_name", `Name must be at most ${MAX_DISPLAY_NAME} characters`);
+  }
+  if (DECEPTIVE.test(name)) {
+    throw new HttpError(400, "invalid_name", "Names cannot contain 🤖 or invisible characters");
+  }
+  if (agentNames.some((agent) => agent.toLowerCase() === name.toLowerCase())) {
+    throw new HttpError(409, "name_taken", `An agent in this meeting is called "${name}"`);
   }
   return name;
 }

@@ -28,7 +28,9 @@ test("a guest's agent waits for the host, who approves it", async ({ page, brows
   await expect(page.getByTestId("agent-request")).toHaveCount(0);
 
   const approved = await (await poll()).json();
-  expect(approved).toMatchObject({ status: "approved", room: slug, name: "Grok" });
+  expect(approved).toMatchObject({ status: "approved", name: "Grok" });
+  // The agent learns only LiveKit's internal room name, never the meeting link.
+  expect(approved.room).not.toBe(slug);
   expect(approved.token).toBeTruthy();
 });
 

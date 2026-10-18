@@ -9,9 +9,31 @@ describe("livekitConfig", () => {
   it("reads url and credentials from the environment", () => {
     expect(livekitConfig()).toEqual({
       url: "ws://livekit.test:7880",
+      apiUrl: "http://livekit.test:7880",
       apiKey: LK_KEY,
       apiSecret: LK_SECRET,
     });
+  });
+
+  it("uses LIVEKIT_API_URL for server-to-server calls when set", () => {
+    process.env.LIVEKIT_API_URL = "http://livekit:7880";
+    try {
+      expect(livekitConfig().apiUrl).toBe("http://livekit:7880");
+    } finally {
+      delete process.env.LIVEKIT_API_URL;
+    }
+  });
+
+  it("refuses the public dev secret when LiveKit is reachable beyond localhost", () => {
+    process.env.LIVEKIT_URL = "wss://meet.example.com";
+    process.env.LIVEKIT_API_SECRET = "secret";
+    expect(() => livekitConfig()).toThrow(/at least 32 characters/);
+  });
+
+  it("allows the dev secret on localhost", () => {
+    process.env.LIVEKIT_URL = "ws://localhost:7880";
+    process.env.LIVEKIT_API_SECRET = "secret";
+    expect(livekitConfig().apiSecret).toBe("secret");
   });
 
   it("fails loudly when credentials are missing", () => {
@@ -46,6 +68,7 @@ describe("mintAgentToken", () => {
     const jwt = await mintAgentToken({
       identity: "a_1",
       slug: "abc-defg-hij",
+      livekitRoom: "lk_internal",
       name: "Grok",
       ownerIdentity: "p_9",
       ownerName: "Zach",
@@ -62,7 +85,7 @@ describe("mintAgentToken", () => {
     });
     expect(claims.video).toMatchObject({
       roomJoin: true,
-      room: "abc-defg-hij",
+      room: "lk_internal",
       canSubscribe: true,
       canPublishData: true,
       canUpdateOwnMetadata: false,

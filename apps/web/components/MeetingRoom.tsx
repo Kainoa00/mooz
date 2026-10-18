@@ -13,6 +13,7 @@ import { AgentRequestsTray } from "./AgentRequestsTray";
 import { BringAgentDialog } from "./BringAgentDialog";
 import { ChatPanel } from "./ChatPanel";
 import { JoinForm, type JoinResult } from "./JoinForm";
+import { MeetingContext } from "./MeetingContext";
 import { MoozTile } from "./MoozTile";
 
 function Stage() {
@@ -36,33 +37,35 @@ export function MeetingRoom({ slug }: { slug: string }) {
   if (!session) return <JoinForm slug={slug} onJoined={setSession} />;
 
   return (
-    <LiveKitRoom
-      serverUrl={session.url}
-      token={session.token}
-      connect
-      audio
-      video
-      data-lk-theme="default"
-      className="flex h-dvh flex-col"
-      onDisconnected={() => setSession(null)}
-    >
-      <header className="flex items-center justify-between border-b border-zinc-800 px-4 py-2 text-sm">
-        <span className="font-semibold">mooz</span>
-        <span className="font-mono text-muted">{slug}</span>
-        <span className="flex items-center gap-3">
-          <span>{session.isHost ? "You are the host" : session.name}</span>
-          <BringAgentDialog slug={slug} />
-        </span>
-      </header>
-      {session.isHost && <AgentRequestsTray slug={slug} />}
-      <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[1fr_320px]">
-        <div className="min-h-0">
-          <Stage />
+    <MeetingContext.Provider value={{ slug, isHost: session.isHost }}>
+      <LiveKitRoom
+        serverUrl={session.url}
+        token={session.token}
+        connect
+        audio
+        video
+        data-lk-theme="default"
+        className="flex h-dvh flex-col"
+        onDisconnected={() => setSession(null)}
+      >
+        <header className="flex items-center justify-between border-b border-zinc-800 px-4 py-2 text-sm">
+          <span className="font-semibold">mooz</span>
+          <span className="font-mono text-muted">{slug}</span>
+          <span className="flex items-center gap-3">
+            <span>{session.isHost ? "You are the host" : session.name}</span>
+            <BringAgentDialog slug={slug} />
+          </span>
+        </header>
+        {session.isHost && <AgentRequestsTray slug={slug} />}
+        <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[1fr_320px]">
+          <div className="min-h-0">
+            <Stage />
+          </div>
+          <ChatPanel />
         </div>
-        <ChatPanel />
-      </div>
-      <ControlBar controls={{ chat: false }} />
-      <RoomAudioRenderer />
-    </LiveKitRoom>
+        <ControlBar controls={{ chat: false }} />
+        <RoomAudioRenderer />
+      </LiveKitRoom>
+    </MeetingContext.Provider>
   );
 }

@@ -23,20 +23,30 @@ describe("errorResponse", () => {
 
 describe("readJson", () => {
   it("parses a JSON object body", async () => {
-    const req = new Request("http://x", { method: "POST", body: JSON.stringify({ a: 1 }) });
+    const req = new Request("http://x", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ a: 1 }) });
 
     expect(await readJson(req)).toEqual({ a: 1 });
   });
 
   it("rejects malformed JSON with a 400", async () => {
-    const req = new Request("http://x", { method: "POST", body: "{nope" });
+    const req = new Request("http://x", { method: "POST", headers: { "content-type": "application/json" }, body: "{nope" });
 
     await expect(readJson(req)).rejects.toMatchObject({ status: 400, code: "invalid_json" });
   });
 
   it("rejects non-object JSON with a 400", async () => {
-    const req = new Request("http://x", { method: "POST", body: "[1,2]" });
+    const req = new Request("http://x", { method: "POST", headers: { "content-type": "application/json" }, body: "[1,2]" });
 
     await expect(readJson(req)).rejects.toMatchObject({ status: 400, code: "invalid_json" });
+  });
+
+  it("refuses bodies that are not declared as JSON (blocks text/plain form CSRF)", async () => {
+    const req = new Request("http://x", {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: JSON.stringify({ decision: "approve" }),
+    });
+
+    await expect(readJson(req)).rejects.toMatchObject({ status: 415 });
   });
 });

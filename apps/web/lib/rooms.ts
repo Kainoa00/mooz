@@ -3,6 +3,8 @@ import { hashSecret, newId, newRoomSlug, newSecret } from "./ids";
 
 export interface Room {
   slug: string;
+  /** The LiveKit room name. Internal: knowing it does not let anyone join via the web app. */
+  livekitRoom: string;
   createdAt: number;
 }
 
@@ -16,12 +18,12 @@ export interface Participant {
 export function createRoom(db: Db): { slug: string; hostSecret: string } {
   const hostSecret = newSecret();
   const insert = db.prepare(
-    "INSERT INTO rooms (slug, host_secret_hash, created_at) VALUES (?, ?, ?)",
+    "INSERT INTO rooms (slug, host_secret_hash, livekit_room, created_at) VALUES (?, ?, ?, ?)",
   );
   for (let attempt = 0; attempt < 5; attempt++) {
     const slug = newRoomSlug();
     try {
-      insert.run(slug, hashSecret(hostSecret), Date.now());
+      insert.run(slug, hashSecret(hostSecret), newId("lk"), Date.now());
       return { slug, hostSecret };
     } catch (err) {
       if (!String(err).includes("UNIQUE")) throw err;
@@ -31,10 +33,10 @@ export function createRoom(db: Db): { slug: string; hostSecret: string } {
 }
 
 export function getRoom(db: Db, slug: string): Room | undefined {
-  const row = db.prepare("SELECT slug, created_at FROM rooms WHERE slug = ?").get(slug) as
-    | { slug: string; created_at: number }
-    | undefined;
-  return row && { slug: row.slug, createdAt: row.created_at };
+  const row = db
+    .prepare("SELECT slug, livekit_room, created_at FROM rooms WHERE slug = ?")
+    .get(slug) as { slug: string; livekit_room: string; created_at: number } | undefined;
+  return row && { slug: row.slug, livekitRoom: row.livekit_room, createdAt: row.created_at };
 }
 
 export function isHost(db: Db, slug: string, secret: string | undefined): boolean {

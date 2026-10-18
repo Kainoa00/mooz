@@ -24,6 +24,12 @@ export function errorResponse(err: unknown): Response {
 
 /** Parse a request body that must be a JSON object. */
 export async function readJson(req: Request): Promise<Record<string, unknown>> {
+  // Requiring the JSON content type means a plain HTML form (text/plain) can never
+  // forge a request body, which is half of the CSRF defense (see session.ts).
+  const type = req.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
+  if (type !== "application/json") {
+    throw new HttpError(415, "unsupported_media_type", "Send the body as application/json");
+  }
   let body: unknown;
   try {
     body = await req.json();

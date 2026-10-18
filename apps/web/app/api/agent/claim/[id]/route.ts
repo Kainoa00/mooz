@@ -23,7 +23,7 @@ export async function GET(
       status: "approved",
       token: await mintAgentToken(claim.agent),
       url: livekitConfig().url,
-      room: claim.agent.slug,
+      room: claim.agent.livekitRoom,
       identity: claim.agent.identity,
       name: claim.agent.name,
     });

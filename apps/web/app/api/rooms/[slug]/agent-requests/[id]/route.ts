@@ -1,13 +1,14 @@
 import { decideAgentRequest } from "@/lib/agents";
 import { getDb } from "@/lib/db";
 import { HttpError, errorResponse, readJson } from "@/lib/http";
-import { requireHost } from "@/lib/session";
+import { assertSameOrigin, requireHost } from "@/lib/session";
 
 export async function POST(
   req: Request,
   ctx: { params: Promise<{ slug: string; id: string }> },
 ): Promise<Response> {
   try {
+    assertSameOrigin(req);
     const { slug, id } = await ctx.params;
     const db = getDb();
     requireHost(db, req, slug);

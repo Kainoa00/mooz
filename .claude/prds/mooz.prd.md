@@ -65,7 +65,7 @@ We'll know we're right when **people who complete setup use an agent in at least
 | 3 | Async research tasks | "On it" with background work, spoken and chat progress, and a task panel | pending | — |
 | 4 | Connector door | Grok, Claude or ChatGPT joins via a private MCP link: queued question, one-tap prefill, browser-side voice | pending | — |
 | 5 | Many agents, one floor | Multiple agents, one speaker at a time, agent-to-agent with the 3-turn pause, naming rules hardened | pending | — |
-| 6 | Local voice and launch | OpenAI-compatible local voice (VoiceStudio), VPS guide, meeting summary export, README and demo, v0.1 release | pending | — |
+| 6 | Local voice and launch | OpenAI-compatible local voice (VoiceStudio), VPS guide, meeting summary export, security hardening backlog (below), README and demo, v0.1 release | pending | — |
 
 ## Open Questions
 - [ ] Do grok.com, chatgpt.com and claude.ai `?q=` prefill links still work at build time? They are undocumented, so verify before M4.
@@ -73,6 +73,15 @@ We'll know we're right when **people who complete setup use an agent in at least
 - [ ] Does ElevenLabs realtime speech-to-text allow enough concurrent streams per key for a 6-person meeting? Verify in M1.
 - [ ] Does Muse's custom connector builder work against mooz's API, or does Muse need a cataloged connector? Revisit in v0.2.
 - [ ] How should "addressed vs merely mentioned" be judged: fuzzy name match only, or name match plus a cheap LLM check? Measure false wakes in M1 and M5.
+
+## Security hardening backlog (from the M1 security review; scheduled for M6)
+- [ ] Rate limits on room creation, joins, code minting and claims, plus cleanup of old rows (review L5)
+- [ ] Server-side expiry for host and participant sessions, not just cookie Max-Age (H2)
+- [ ] Derive the cookie `Secure` flag from `MOOZ_PUBLIC_URL` instead of `x-forwarded-proto` (H3)
+- [ ] Request body size limit on JSON endpoints (H4)
+- [ ] CSP and `frame-ancestors 'none'` headers (H5)
+- [ ] Show a code's owner the pending request so a stolen code can't be credited to them unnoticed (H6)
+- [ ] VPS guide: generate a 32+ character LiveKit secret and never run `--dev` (the server already refuses weak secrets off localhost) (H1)
 
 ## Risks
 | Risk | Likelihood | Impact | Mitigation |

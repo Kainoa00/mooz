@@ -38,6 +38,27 @@ const MIGRATIONS = [
      decided_at INTEGER
    );
    CREATE INDEX agent_requests_by_room ON agent_requests(room_slug, status);`,
+  // Security review: LiveKit rooms get an internal name unrelated to the public
+  // link, codes count failed name attempts, and approvals can be revoked.
+  `ALTER TABLE rooms ADD COLUMN livekit_room TEXT;
+   UPDATE rooms SET livekit_room = slug WHERE livekit_room IS NULL;
+   CREATE UNIQUE INDEX rooms_by_livekit_room ON rooms(livekit_room);
+   ALTER TABLE agent_codes ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0;
+   CREATE TABLE agent_requests_v3 (
+     id TEXT PRIMARY KEY,
+     room_slug TEXT NOT NULL REFERENCES rooms(slug),
+     owner_identity TEXT NOT NULL REFERENCES participants(identity),
+     agent_name TEXT NOT NULL,
+     agent_identity TEXT NOT NULL UNIQUE,
+     claim_secret_hash TEXT NOT NULL,
+     status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'denied', 'revoked')),
+     created_at INTEGER NOT NULL,
+     decided_at INTEGER
+   );
+   INSERT INTO agent_requests_v3 SELECT * FROM agent_requests;
+   DROP TABLE agent_requests;
+   ALTER TABLE agent_requests_v3 RENAME TO agent_requests;
+   CREATE INDEX agent_requests_by_room ON agent_requests(room_slug, status);`,
 ];
 
 function migrate(db: Db): void {

@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AGENT_CODE_TTL_MS,
+  APPROVAL_WINDOW_MS,
+  MAX_NAME_ATTEMPTS,
+  activeAgentNames,
+  revokeAgent,
   claimAgentCode,
   createAgentCode,
   decideAgentRequest,
@@ -40,7 +44,7 @@ describe("claimAgentCode", () => {
 
     const claim = claimAgentCode(db, { code, name: "Grok" });
 
-    expect(claim).toMatchObject({ slug, status: "pending" });
+    expect(claim).toEqual({ requestId: expect.any(String), claimSecret: expect.any(String), status: "pending" });
     expect(listPendingRequests(db, slug)).toEqual([
       expect.objectContaining({ id: claim.requestId, agentName: "Grok", ownerName: "Zach" }),
     ]);
@@ -125,6 +129,7 @@ describe("decideAgentRequest and getClaimStatus", () => {
       agent: {
         identity: expect.stringMatching(/^a_/),
         slug,
+        livekitRoom: expect.stringMatching(/^lk_/),
         name: "Grok",
         ownerIdentity: guest.identity,
         ownerName: "Zach",
@@ -166,6 +171,61 @@ describe("decideAgentRequest and getClaimStatus", () => {
     decideAgentRequest(db, { slug, requestId: claim.requestId, approve: true });
     expect(() => decideAgentRequest(db, { slug, requestId: claim.requestId, approve: false })).toThrowError(
       expect.objectContaining({ status: 409, code: "already_decided" }),
+    );
+  });
+});
+
+describe("security hardening", () => {
+  it("burns a code after too many rejected names, so it cannot probe attendee names", () => {
+    const { db, guest } = meeting();
+    const { code } = createAgentCode(db, guest);
+    for (let i = 0; i < MAX_NAME_ATTEMPTS; i++) {
+      expect(() => claimAgentCode(db, { code, name: "Kainoa" })).toThrowError(
+        expect.objectContaining({ code: "name_taken" }),
+      );
+    }
+
+    expect(() => claimAgentCode(db, { code, name: "Grok" })).toThrowError(
+      expect.objectContaining({ code: "invalid_code" }),
+    );
+  });
+
+  it("stops issuing tokens once the approval window has passed", () => {
+    vi.useFakeTimers();
+    const { db, slug, guest } = meeting();
+    const claim = claimAgentCode(db, { code: createAgentCode(db, guest).code, name: "Grok" });
+    decideAgentRequest(db, { slug, requestId: claim.requestId, approve: true });
+    vi.advanceTimersByTime(APPROVAL_WINDOW_MS + 1);
+
+    expect(getClaimStatus(db, claim.requestId, claim.claimSecret)).toEqual({ status: "expired" });
+  });
+
+  it("lets the host revoke an approved agent for good", () => {
+    const { db, slug, guest } = meeting();
+    const claim = claimAgentCode(db, { code: createAgentCode(db, guest).code, name: "Grok" });
+    decideAgentRequest(db, { slug, requestId: claim.requestId, approve: true });
+    const status = getClaimStatus(db, claim.requestId, claim.claimSecret);
+    const identity = status.status === "approved" ? status.agent.identity : "";
+
+    revokeAgent(db, { slug, agentIdentity: identity });
+
+    expect(getClaimStatus(db, claim.requestId, claim.claimSecret)).toEqual({ status: "revoked" });
+    expect(activeAgentNames(db, slug)).toEqual([]);
+    expect(() => revokeAgent(db, { slug, agentIdentity: identity })).toThrowError(
+      expect.objectContaining({ status: 404 }),
+    );
+  });
+
+  it("cannot revoke an agent from another meeting", () => {
+    const { db, slug, guest } = meeting();
+    const other = createRoom(db);
+    const claim = claimAgentCode(db, { code: createAgentCode(db, guest).code, name: "Grok" });
+    decideAgentRequest(db, { slug, requestId: claim.requestId, approve: true });
+    const status = getClaimStatus(db, claim.requestId, claim.claimSecret);
+    const identity = status.status === "approved" ? status.agent.identity : "";
+
+    expect(() => revokeAgent(db, { slug: other.slug, agentIdentity: identity })).toThrowError(
+      expect.objectContaining({ status: 404 }),
     );
   });
 });

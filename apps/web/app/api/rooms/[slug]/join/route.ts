@@ -1,9 +1,11 @@
 import { hostCookie, participantCookie, readCookie, sessionCookie } from "@/lib/cookies";
 import { getDb } from "@/lib/db";
-import { HttpError, errorResponse, readJson } from "@/lib/http";
+import { errorResponse, readJson } from "@/lib/http";
 import { livekitConfig, mintHumanToken } from "@/lib/livekit";
 import { parseDisplayName } from "@/lib/names";
-import { addParticipant, getRoom, isHost } from "@/lib/rooms";
+import { activeAgentNames } from "@/lib/agents";
+import { addParticipant, isHost } from "@/lib/rooms";
+import { assertSameOrigin, requireRoom } from "@/lib/session";
 
 export async function POST(
   req: Request,
@@ -11,13 +13,14 @@ export async function POST(
 ): Promise<Response> {
   try {
     const { slug } = await ctx.params;
+    assertSameOrigin(req);
     const db = getDb();
-    if (!getRoom(db, slug)) throw new HttpError(404, "room_not_found", "No such meeting");
+    const room = requireRoom(db, slug);
 
-    const name = parseDisplayName((await readJson(req)).name);
+    const name = parseDisplayName((await readJson(req)).name, activeAgentNames(db, slug));
     const host = isHost(db, slug, readCookie(req, hostCookie(slug)));
     const participant = addParticipant(db, { slug, name, isHost: host });
-    const token = await mintHumanToken({ room: slug, identity: participant.identity, name });
+    const token = await mintHumanToken({ room: room.livekitRoom, identity: participant.identity, name });
 
     const res = Response.json({
       token,

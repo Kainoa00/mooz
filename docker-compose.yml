@@ -17,6 +17,8 @@ services:
       dockerfile: apps/web/Dockerfile
     environment:
       LIVEKIT_URL: "${LIVEKIT_URL:-ws://localhost:7880}"
+      LIVEKIT_API_URL: http://livekit:7880
+      MOOZ_PUBLIC_URL: "${MOOZ_PUBLIC_URL:-}"
       LIVEKIT_API_KEY: "${LIVEKIT_API_KEY:-devkey}"
       LIVEKIT_API_SECRET: "${LIVEKIT_API_SECRET:-secret}"
       MOOZ_DB_PATH: /data/mooz.db
