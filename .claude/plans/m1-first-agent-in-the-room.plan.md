@@ -118,9 +118,15 @@ docker compose up -d && curl -fsS localhost:3000/api/health
 | CI flakiness with WebRTC fake media | Medium | Use Chromium `--use-fake-device-for-media-stream`. E2E asserts on chat and participant presence, not media quality |
 
 ## Acceptance
-- [ ] All tasks complete, each as its own conventional commit, merged to `main`
-- [ ] Validation passes in CI, with web and bridge coverage at 80% or higher
-- [ ] Manual voice demo: "Hey Atlas, …" is answered aloud and in chat within the latency target (p50 under 2.5s), measured and logged
-- [ ] The mooz server and `.env.example` contain no AI or voice keys (keys live only in the bridge's environment)
-- [ ] `code-reviewer` pass on the full milestone diff and `security-reviewer` pass on Task 5
-- [ ] Patterns established and documented for later milestones to mirror
+- [x] All tasks complete, each as its own conventional commit, merged to `main`
+- [x] Validation passes in CI, with web (95%) and bridge (93%) coverage at 80% or higher
+- [ ] Manual voice demo: "Hey Atlas, …" is answered aloud and in chat within the latency target (p50 under 2.5s), measured and logged. **Open: needs real Anthropic and ElevenLabs keys.** Run `MOOZ_LIVE_TESTS=1 uv run pytest -m live`, then a two-person call. The bridge logs `latency heard→voice` for every answer.
+- [x] The mooz server and `.env.example` contain no AI or voice keys (keys live only in the bridge's environment)
+- [x] `code-reviewer` pass on the full milestone diff (1 critical and 2 high findings fixed in 3a96c48) and `security-reviewer` pass on Task 5 (fixed in b651faa and dbf770b)
+- [x] Patterns established and documented for later milestones to mirror (`docs/protocol.md`, provider protocols with fakes)
+
+## Deviations from this plan
+- SQLite uses Node's built-in `node:sqlite` with hand-written migrations instead of better-sqlite3 + Drizzle (no native build step, fewer dependencies).
+- Default model is `claude-opus-5-5` at low effort (current Anthropic guidance) instead of Sonnet. It can be overridden with `MOOZ_CLAUDE_MODEL`.
+- Agents render as compact cards rather than video tiles (they have no camera).
+- Added beyond the plan, from the reviews: host removal of agents, single-use agent tokens, a LiveKit webhook that kicks removed agents, pending-request expiry, and the agent-to-agent streak guard.
