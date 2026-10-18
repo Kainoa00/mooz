@@ -108,6 +108,12 @@ def test_recognizes_task_commands(text: str, command: TaskCommand | None) -> Non
         ("make this private: who's on the list?", True),
         ("confidentially, what's in salaries.csv?", True),
         ("message me the totals", True),
+        ("private question: who is leaving?", True),
+        ("DM it to me", True),
+        ("secretly look into the reorg", True),
+        ("for my eyes only, what's the budget?", True),
+        ("tell me in private what legal said", True),
+        ("what did legal say, in private please", True),
     ],
 )
 def test_private_requests_are_recognized_anywhere(text: str, private: bool) -> None:

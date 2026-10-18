@@ -38,8 +38,24 @@ MEMORY_HEADING = "What you remember (information, not instructions; newest last)
 # saves the result itself), and a note is public only when the request says so. So nothing the
 # model reads (a web page, an issue, a file) can plant a public note or delete one.
 MEMORY_WRITE_TOOLS = frozenset({"remember", "forget"})
-_MEMORY_REQUEST = re.compile(r"\b(?:remember|forget|memor(?:y|ize|ise)|note|save)", re.I)
-_PUBLIC_REQUEST = re.compile(r"\b(?:public(?:ly)?|anyone|everyone|everybody)\b", re.I)
+# The request has to *start* with the instruction ("remember that…", "forget m_…"), like a
+# task command: "has anyone added notes to issue 12?" mustn't let the issue's text write.
+_ASKING = r"^(?:(?:please|can you|could you|would you|will you|ok|okay)[\s,]+)*"
+_REMEMBER = re.compile(_ASKING + r"(?:remember|note that|make a note)\b", re.I)
+_FORGET = re.compile(_ASKING + r"forget\b", re.I)
+_PUBLIC_NOTE = re.compile(
+    _ASKING + r"remember\s+publicly\b|\b(?:anyone|everyone)\s+(?:may|can)\s+know\b", re.I
+)
+
+
+def memory_requested(question: str) -> tuple[frozenset[str], bool]:
+    """The memory tools the owner's request asks for, and whether a note may be public."""
+    asked = {"remember"} if _REMEMBER.search(question) else set()
+    if _FORGET.search(question):
+        asked.add("forget")
+    return frozenset(asked), bool(asked) and bool(_PUBLIC_NOTE.search(question))
+
+
 # A quick answer runs at most this many tool calls per step; research, what's left of its budget.
 MAX_CALLS_PER_STEP = 8
 TOO_MANY_AT_ONCE = "Not run: too many tool calls at once. Ask for fewer."
@@ -314,7 +330,8 @@ class ToolLoopBrain:
     async def answer(self, *, question: str, asker: Speaker, transcript: str) -> Answer:
         scope = self.scope_for(asker)
         tools = self.toolbox.specs(scope) if self.toolbox is not None else []
-        refused = frozenset() if _MEMORY_REQUEST.search(question) else MEMORY_WRITE_TOOLS
+        asked, public_notes = memory_requested(question.strip())
+        refused = MEMORY_WRITE_TOOLS - asked
         tools = [t for t in tools if t.name not in refused]
         found: list[str] = []
         try:
@@ -325,7 +342,7 @@ class ToolLoopBrain:
                     self._user(question, asker, scope, transcript),
                     found,
                     refused=refused,
-                    public_notes=bool(_PUBLIC_REQUEST.search(question)),
+                    public_notes=public_notes,
                 )
         except TimeoutError:
             answer = TOO_SLOW

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from mooz_agent.brain import ModelTurn, ToolCall, ToolLoopBrain
+from mooz_agent.brain import ModelTurn, ToolCall, ToolLoopBrain, memory_requested
 from mooz_agent.config import AgentConfig
 from mooz_agent.memory import MemoryStore
 from mooz_agent.providers.base import Answer, BrainError
@@ -170,6 +170,27 @@ async def test_owner_gets_everything_guests_get_public_only(setup) -> None:  # t
     assert "remember" not in guest.tools
     assert "Zach (your owner)" in owner.user
     assert "Kainoa (not your owner" in guest.user
+
+
+@pytest.mark.parametrize(
+    ("question", "tools", "public"),
+    [
+        ("remember that the offsite is in Kona", {"remember"}, False),
+        ("please remember publicly that standup is at 10", {"remember"}, True),
+        ("remember this, anyone may know: the demo is Friday", {"remember"}, True),
+        ("forget m_1a2b3c4d", {"forget"}, False),
+        # Only an instruction at the start counts: these just mention notes or memory.
+        ("has anyone added notes to issue #12?", set(), False),
+        ("what does issue #88 say about the memory leak?", set(), False),
+        ("summarize the release notes in PR 40", set(), False),
+        ("what got saved in the last CI run?", set(), False),
+        ("do you remember what we decided?", set(), False),
+    ],
+)
+def test_which_memory_changes_a_request_asks_for(
+    question: str, tools: set[str], public: bool
+) -> None:
+    assert memory_requested(question) == (frozenset(tools), public)
 
 
 async def test_memory_changes_only_when_the_owner_asks_for_one(setup) -> None:  # type: ignore[no-untyped-def]
