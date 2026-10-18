@@ -56,6 +56,10 @@ class AgentConfig:
     def home(self) -> Path:
         return agent_dir(self.name)
 
+    @property
+    def memory_path(self) -> Path:
+        return self.home / "memory.jsonl"
+
     def validate(self) -> None:
         if not _NAME.match(self.name.strip()):
             raise ConfigError(

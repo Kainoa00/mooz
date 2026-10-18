@@ -70,6 +70,18 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     s_remove.add_argument("label")
     agent_option(s_remove)
 
+    memory = sub.add_parser("memory", help="see or edit what an agent remembers")
+    memory_sub = memory.add_subparsers(dest="action", required=True)
+    m_list = memory_sub.add_parser("list")
+    agent_option(m_list)
+    m_add = memory_sub.add_parser("add")
+    m_add.add_argument("text")
+    m_add.add_argument("--public", action="store_true", help="anyone in a meeting may hear this")
+    agent_option(m_add)
+    m_forget = memory_sub.add_parser("forget")
+    m_forget.add_argument("id")
+    agent_option(m_forget)
+
     return parser.parse_args(argv)
 
 
@@ -116,6 +128,30 @@ def cmd_sources(args: argparse.Namespace) -> int:
         cfg.save()
         print(f"Removed {args.label}")
     _print_sources(cfg)
+    return 0
+
+
+def cmd_memory(args: argparse.Namespace) -> int:
+    from .memory import MemoryStore
+
+    cfg = _load_agent(args)
+    store = MemoryStore(cfg.memory_path)
+    if args.action == "add":
+        try:
+            note = store.remember(args.text, public=args.public)
+        except ValueError as err:
+            raise ConfigError(str(err)) from err
+        print(f"Remembered {note.id}")
+    elif args.action == "forget":
+        if not store.forget(args.id):
+            raise ConfigError(f"No note called {args.id}")
+        print(f"Forgot {args.id}")
+    else:
+        notes = store.all(owner=True)
+        if not notes:
+            print(f"{cfg.name} doesn't remember anything yet.")
+        for n in notes:
+            print(f"{n.id}  {'public ' if n.public else 'private'}  {n.text}")
     return 0
 
 
@@ -183,7 +219,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         level=logging.DEBUG if getattr(args, "verbose", False) else logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    commands = {"connect": cmd_connect, "init": cmd_init, "sources": cmd_sources}
+    commands = {
+        "connect": cmd_connect,
+        "init": cmd_init,
+        "sources": cmd_sources,
+        "memory": cmd_memory,
+    }
     try:
         return commands[args.command](args)
     except ConfigError as err:

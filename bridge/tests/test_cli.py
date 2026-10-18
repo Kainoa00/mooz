@@ -186,3 +186,14 @@ def test_grok_needs_an_xai_key(
 
     assert cli.main(["connect", "X", "--server", "http://s", "--agent", "Atlas"]) == 2
     assert "XAI_API_KEY" in capsys.readouterr().err
+
+
+def test_memory_add_list_forget(capsys: pytest.CaptureFixture[str]) -> None:
+    cli.main(["init", "Atlas"])
+
+    assert cli.main(["memory", "add", "Standup is at 9", "--public", "--agent", "Atlas"]) == 0
+    note_id = capsys.readouterr().out.split()[-1]
+    assert cli.main(["memory", "list", "--agent", "Atlas"]) == 0
+    assert "public   Standup is at 9" in capsys.readouterr().out
+    assert cli.main(["memory", "forget", note_id, "--agent", "Atlas"]) == 0
+    assert cli.main(["memory", "forget", note_id, "--agent", "Atlas"]) == 2
