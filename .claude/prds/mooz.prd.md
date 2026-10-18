@@ -60,8 +60,8 @@ We'll know we're right when **people who complete setup use an agent in at least
 
 | # | Milestone | Outcome | Status | Plan |
 |---|---|---|---|---|
-| 1 | First agent in the room | Two people meet by link. One brings a live-bridge agent (host-approved) that answers in chat and by voice when its name is said | in-progress | `.claude/plans/m1-first-agent-in-the-room.plan.md` |
-| 2 | Personal agent with memory | The ready-made agent has Claude or Grok brains, persistent memory, local repo and folder access, and owner-only tasks with public-data rules | pending | — |
+| 1 | First agent in the room | Two people meet by link. One brings a live-bridge agent (host-approved) that answers in chat and by voice when its name is said (live voice check pending keys) | complete | `.claude/plans/m1-first-agent-in-the-room.plan.md` |
+| 2 | Personal agent with memory | The ready-made agent has Claude or Grok brains, persistent memory, local repo and folder access, and owner-only tasks with public-data rules | in-progress | `.claude/plans/m2-personal-agent-with-memory.plan.md` |
 | 3 | Async research tasks | "On it" with background work, spoken and chat progress, and a task panel | pending | — |
 | 4 | Connector door | Grok, Claude or ChatGPT joins via a private MCP link: queued question, one-tap prefill, browser-side voice | pending | — |
 | 5 | Many agents, one floor | Multiple agents, one speaker at a time, agent-to-agent with the 3-turn pause, naming rules hardened | pending | — |
