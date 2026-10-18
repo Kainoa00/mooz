@@ -54,3 +54,25 @@ class ElevenLabsSTT:
             with contextlib.suppress(asyncio.CancelledError):
                 await pumping
             await stream.aclose()
+
+
+TTS_SAMPLE_RATE = 48_000
+
+
+class ElevenLabsTTS:
+    """Flash v2.5 for the lowest time-to-first-audio, at 48 kHz to match the agent's track."""
+
+    def __init__(self, *, api_key: str, voice_id: str | None, http: aiohttp.ClientSession) -> None:
+        self._tts = elevenlabs.TTS(
+            api_key=api_key,
+            voice_id=voice_id or elevenlabs.tts.DEFAULT_VOICE_ID,
+            model="eleven_flash_v2_5",
+            encoding="pcm_48000",
+            http_session=http,
+            enable_logging=False,
+        )
+
+    async def synthesize(self, text: str) -> AsyncIterator[rtc.AudioFrame]:
+        async with self._tts.synthesize(text) as stream:
+            async for audio in stream:
+                yield audio.frame

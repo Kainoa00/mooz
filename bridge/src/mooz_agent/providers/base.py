@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import Protocol
 
 from livekit import rtc
@@ -24,7 +25,19 @@ class TextToSpeech(Protocol):
         ...
 
 
+@dataclass(frozen=True)
+class Answer:
+    """`spoken` is said out loud (short, plain words); `details` only goes to chat."""
+
+    spoken: str
+    details: str = ""
+
+
+class BrainError(Exception):
+    """The model could not be reached or returned an error."""
+
+
 class Brain(Protocol):
-    async def answer(self, *, question: str, asker: Speaker, transcript: str) -> str:
+    async def answer(self, *, question: str, asker: Speaker, transcript: str) -> Answer:
         """Answer a question addressed to the agent, given the recent meeting transcript."""
         ...

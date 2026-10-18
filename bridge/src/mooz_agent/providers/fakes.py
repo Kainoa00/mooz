@@ -9,6 +9,7 @@ from typing import Any
 from livekit import rtc
 
 from ..room import Speaker
+from .base import Answer
 
 
 class FakeSTT:
@@ -52,10 +53,10 @@ class FakeTTS:
 class FakeBrain:
     """Answers from a fixed reply, recording every question it was asked."""
 
-    def __init__(self, reply: str = "Fake answer.") -> None:
-        self.reply = reply
+    def __init__(self, reply: str = "Fake answer.", details: str = "") -> None:
+        self.reply = Answer(reply, details)
         self.questions: list[tuple[str, Speaker, str]] = []
 
-    async def answer(self, *, question: str, asker: Speaker, transcript: str) -> str:
+    async def answer(self, *, question: str, asker: Speaker, transcript: str) -> Answer:
         self.questions.append((question, asker, transcript))
         return self.reply
