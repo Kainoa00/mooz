@@ -105,7 +105,7 @@ describe("POST /api/rooms/[slug]/join", () => {
       const { slug } = createRoom(getDb());
       const first = await joinOnce(slug, { name: "Zach" });
 
-      const again = await joinOnce(slug, { name: "Zach B", rejoin: true }, `mooz_p_${slug}=${first.secret}`);
+      const again = await joinOnce(slug, { name: "Zach B", rejoin: first.json.identity }, `mooz_p_${slug}=${first.secret}`);
 
       expect(again.json.identity).toBe(first.json.identity);
       expect(again.secret).toBe(first.secret);
@@ -127,7 +127,7 @@ describe("POST /api/rooms/[slug]/join", () => {
       const b = createRoom(db);
       const first = await joinOnce(a.slug, { name: "Zach" });
 
-      const other = await joinOnce(b.slug, { name: "Zach", rejoin: true }, `mooz_p_${a.slug}=${first.secret}`);
+      const other = await joinOnce(b.slug, { name: "Zach", rejoin: first.json.identity }, `mooz_p_${a.slug}=${first.secret}`);
 
       expect(other.json.identity).not.toBe(first.json.identity);
     });
@@ -137,9 +137,20 @@ describe("POST /api/rooms/[slug]/join", () => {
       const host = `mooz_host_${slug}=${hostSecret}`;
       const first = await joinOnce(slug, { name: "Kai" }, host);
 
-      const again = await joinOnce(slug, { name: "Kai", rejoin: true }, `${host}; mooz_p_${slug}=${first.secret}`);
+      const again = await joinOnce(slug, { name: "Kai", rejoin: first.json.identity }, `${host}; mooz_p_${slug}=${first.secret}`);
 
       expect(again.json).toMatchObject({ identity: first.json.identity, isHost: true });
+    });
+
+    it("never takes over another tab's identity", async () => {
+      const { slug } = createRoom(getDb());
+      const tabA = await joinOnce(slug, { name: "Zach" });
+      // Tab B in the same browser joins; the shared cookie now belongs to B.
+      const tabB = await joinOnce(slug, { name: "Zach" }, `mooz_p_${slug}=${tabA.secret}`);
+
+      const reloadA = await joinOnce(slug, { name: "Zach", rejoin: tabA.json.identity }, `mooz_p_${slug}=${tabB.secret}`);
+
+      expect(reloadA.json.identity).not.toBe(tabB.json.identity);
     });
 
     it("keeps a notes opt-out on rejoin", async () => {
@@ -147,7 +158,7 @@ describe("POST /api/rooms/[slug]/join", () => {
       const first = await joinOnce(slug, { name: "Zach" });
       setNotesOptOut(getDb(), first.json.identity, true);
 
-      const again = await joinOnce(slug, { name: "Zach", rejoin: true }, `mooz_p_${slug}=${first.secret}`);
+      const again = await joinOnce(slug, { name: "Zach", rejoin: first.json.identity }, `mooz_p_${slug}=${first.secret}`);
 
       const claims = await new TokenVerifier(LK_KEY, LK_SECRET).verify(again.json.token);
       expect(claims.attributes).toEqual({ kind: "human", notes_opt_out: "1" });

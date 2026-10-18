@@ -36,7 +36,7 @@ describe("POST /api/rooms/[slug]/notes-opt-out", () => {
   it("leaves the caller out of notes and tells LiveKit", async () => {
     const { db, slug, zach, livekitRoom } = meeting();
 
-    const res = await call(slug, { optOut: true }, { cookie: `mooz_p_${slug}=${zach.secret}` });
+    const res = await call(slug, { optOut: true, identity: zach.identity }, { cookie: `mooz_p_${slug}=${zach.secret}` });
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ optOut: true });
@@ -47,29 +47,33 @@ describe("POST /api/rooms/[slug]/notes-opt-out", () => {
   it("can be undone", async () => {
     const { db, slug, zach, livekitRoom } = meeting();
     const cookie = `mooz_p_${slug}=${zach.secret}`;
-    await call(slug, { optOut: true }, { cookie });
+    await call(slug, { optOut: true, identity: zach.identity }, { cookie });
 
-    await call(slug, { optOut: false }, { cookie });
+    await call(slug, { optOut: false, identity: zach.identity }, { cookie });
 
     expect(getNotesOptOut(db, zach.identity)).toBe(false);
     // An empty value removes the attribute in LiveKit.
     expect(setParticipantAttributes).toHaveBeenLastCalledWith(livekitRoom, zach.identity, { notes_opt_out: "" });
   });
 
-  it("only ever changes the caller, whatever the body says", async () => {
+  it("only ever changes the caller, and refuses when the tab isn't the cookie's participant", async () => {
     const { db, slug, zach, kai } = meeting();
 
-    await call(slug, { optOut: true, identity: kai.identity }, { cookie: `mooz_p_${slug}=${zach.secret}` });
+    // Two tabs share one cookie: a tab whose identity no longer matches it gets an error,
+    // instead of silently opting out someone else.
+    const res = await call(slug, { optOut: true, identity: kai.identity }, { cookie: `mooz_p_${slug}=${zach.secret}` });
 
+    expect(res.status).toBe(409);
     expect(getNotesOptOut(db, kai.identity)).toBe(false);
-    expect(setParticipantAttributes.mock.calls.map((c) => c[1])).toEqual([zach.identity]);
+    expect(getNotesOptOut(db, zach.identity)).toBe(false);
+    expect(setParticipantAttributes).not.toHaveBeenCalled();
   });
 
   it("needs a joined participant and a same-origin request", async () => {
     const { slug, zach } = meeting();
 
-    const anonymous = await call(slug, { optOut: true }, {});
-    const crossSite = await call(slug, { optOut: true }, {
+    const anonymous = await call(slug, { optOut: true, identity: zach.identity }, {});
+    const crossSite = await call(slug, { optOut: true, identity: zach.identity }, {
       cookie: `mooz_p_${slug}=${zach.secret}`,
       "sec-fetch-site": "cross-site",
     });
@@ -82,7 +86,7 @@ describe("POST /api/rooms/[slug]/notes-opt-out", () => {
   it("needs a true or false", async () => {
     const { slug, zach } = meeting();
 
-    const res = await call(slug, { optOut: 1 }, { cookie: `mooz_p_${slug}=${zach.secret}` });
+    const res = await call(slug, { optOut: 1, identity: zach.identity }, { cookie: `mooz_p_${slug}=${zach.secret}` });
 
     expect(res.status).toBe(400);
   });

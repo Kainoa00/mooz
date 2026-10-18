@@ -21,9 +21,9 @@ export function JoinForm({ slug, onJoined }: { slug: string; onJoined: (r: JoinR
     setBusy(true);
     setError(null);
     const marker = `mooz_joined_${slug}`;
-    let rejoin = false;
+    let rejoin: string | null = null;
     try {
-      rejoin = sessionStorage.getItem(marker) !== null; // set by an earlier join in this tab
+      rejoin = sessionStorage.getItem(marker); // this tab's identity from an earlier join
     } catch {
       // storage unavailable (private mode): join as new
     }

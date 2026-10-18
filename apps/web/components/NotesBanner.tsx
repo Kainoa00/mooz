@@ -64,7 +64,7 @@ export function NotesBanner({ slug }: { slug: string }) {
     const res = await fetch(`/api/rooms/${slug}/notes-opt-out`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ optOut }),
+      body: JSON.stringify({ optOut, identity: localParticipant.identity }),
     }).catch(() => null);
     if (!res?.ok) setError(errorMessage(res ? await readBody(res) : null, "That didn't go through. Try again."));
     setPending(false);

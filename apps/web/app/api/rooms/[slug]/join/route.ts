@@ -22,9 +22,11 @@ export async function POST(
     const name = parseDisplayName(body.name, activeAgentNames(db, slug));
     const host = isHost(db, slug, readCookie(req, hostCookie(slug)));
     // A reload in the same tab rejoins as the same person, so agents keep recognizing
-    // their owner. A new tab (no rejoin flag) is a new participant.
+    // their owner. The tab says who it was, and that must still be whom the cookie names:
+    // another tab in the same browser may have joined since and taken the cookie over.
     const secret = readCookie(req, participantCookie(slug));
-    const returning = body.rejoin === true ? findParticipant(db, slug, secret) : undefined;
+    const cookieParticipant = typeof body.rejoin === "string" ? findParticipant(db, slug, secret) : undefined;
+    const returning = cookieParticipant?.identity === body.rejoin ? cookieParticipant : undefined;
     const participant = returning
       ? { ...renameParticipant(db, returning, name, host), secret: secret as string }
       : addParticipant(db, { slug, name, isHost: host });
