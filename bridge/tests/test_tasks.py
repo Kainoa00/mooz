@@ -1,4 +1,5 @@
 import asyncio
+import time
 
 import pytest
 
@@ -60,6 +61,14 @@ pytestmark = pytest.mark.unit
             "look into the salaries and send it just to me",
             TaskCommand("start", "Look into the salaries", private=True),
         ),
+        (
+            "look into why CI fails and only tell me",
+            TaskCommand("start", "Look into why CI fails", private=True),
+        ),
+        (
+            "look into the bug in private repos",
+            TaskCommand("start", "Look into the bug in private repos"),
+        ),
         ("research", None),
         ("how's it going?", TaskCommand("status")),
         ("what are you working on", TaskCommand("status")),
@@ -89,10 +98,30 @@ def test_recognizes_task_commands(text: str, command: TaskCommand | None) -> Non
         ("what's in plan.md?", False),
         ("tell me about the private beta", False),
         ("who is the dm on this project", False),
+        # Everyday wording that only sounds like it.
+        ("just tell me when the launch is", False),
+        ("what is in private.md?", False),
+        ("tell me in private: who's leaving?", True),
+        ("look into the offsite as a private task", True),
+        ("send me a DM with the totals", True),
+        ("just between us, what did legal say?", True),
+        ("make this private: who's on the list?", True),
+        ("confidentially, what's in salaries.csv?", True),
+        ("message me the totals", True),
     ],
 )
 def test_private_requests_are_recognized_anywhere(text: str, private: bool) -> None:
     assert is_private(text) is private
+
+
+def test_parsing_a_huge_message_takes_no_time() -> None:
+    # A guest's 32 KB of ", " once took 18 seconds, freezing the agent.
+    for filler in (", ", ": ", ",", " "):
+        text = "what is " + filler * 16_000 + "x"
+        started = time.perf_counter()
+        task_command(text)
+        is_private(text)
+        assert time.perf_counter() - started < 0.5
 
 
 def test_titles_are_short() -> None:

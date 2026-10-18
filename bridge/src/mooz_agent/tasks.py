@@ -48,14 +48,20 @@ _POLITE = re.compile(
 )
 _START = re.compile(r"^(look into|research|dig into|investigate|find out|figure out)\s+\S", re.I)
 # However the owner asks for the answer to stay with them, anywhere in what they say.
+# Not "just tell me", which people say all the time, nor "in private repos" or "private.md".
+# Every alternative starts at a word: a leading [\s,]* would make a search quadratic in a long
+# run of commas or spaces (separators left behind are tidied up in without_private).
 _PRIVATE = re.compile(
-    r"[,:\s]*\b(?:"
-    r"(?:and\s+)?(?:tell|send|give)\s+(?:it\s+|that\s+|this\s+)?(?:to\s+)?me\s+privately"
-    r"|(?:and\s+)?(?:tell|send|give)\s+(?:it|that|this)\s+(?:just|only)\s+to\s+me"
-    r"|(?:just|only)\s+(?:tell|for|to)\s+me"
-    r"|privately|in\s+private|keep\s+(?:it|this|that)\s+private"
-    r"|dm\s+me|direct\s+message\s+me|message\s+me\s+privately"
-    r")\b[,:]?",
+    r"\b(?:and\s+)?(?:"
+    r"(?:tell|send|give)\s+(?:it\s+|that\s+|this\s+)?(?:to\s+)?me\s+privately"
+    r"|(?:tell|send|give)\s+(?:it|that|this)\s+(?:just|only)\s+to\s+me"
+    r"|only\s+tell\s+me|(?:just|only)\s+(?:for|to)\s+me"
+    r"|privately|in\s+private(?=\s*(?:$|[,;:!?]|\.(?:\s|$)))"
+    r"|keep\s+(?:it|this|that)\s+private"
+    r"|dm\s+me|direct\s+message\s+me|message\s+me|send\s+me\s+a\s+dm|in\s+a\s+dm"
+    r"|as\s+a\s+private\s+task|make\s+(?:it|this|that)\s+private"
+    r"|just\s+between\s+(?:us|you\s+and\s+me)|confidentially"
+    r")\b",
     re.I,
 )
 _STATUS = re.compile(
@@ -76,7 +82,7 @@ def is_private(text: str) -> bool:
 
 def without_private(text: str) -> str:
     """The request without its "privately", "just for me" and the like."""
-    return _PRIVATE.sub("", text).strip()
+    return " ".join(_PRIVATE.sub(" ", text).split()).strip(" ,;:")
 
 
 def _normalized(text: str) -> str:
@@ -93,7 +99,7 @@ def task_command(text: str) -> TaskCommand | None:
     request = _POLITE.sub("", text.strip())
     if not _START.match(request):
         return None
-    topic = _PRIVATE.sub("", request).strip().rstrip("?.!,;: ").strip()
+    topic = without_private(request).rstrip("?.!,;: ")
     topic = topic[:1].upper() + topic[1:]
     return TaskCommand("start", topic[:MAX_TITLE_CHARS].rstrip(), is_private(text))
 

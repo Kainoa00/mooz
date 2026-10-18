@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import TYPE_CHECKING
 
@@ -10,6 +11,8 @@ import aiohttp
 from ..config import AgentConfig
 from ..room import Speaker
 from .base import Brain, SpeechToText, TextToSpeech
+
+log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ..brain import Model, ToolLoopBrain
@@ -58,6 +61,14 @@ def build_brain(model: Model, me: Speaker, config: AgentConfig) -> ToolLoopBrain
     memory = MemoryStore(config.memory_path)
     # A token is optional for public repos; private ones need GITHUB_TOKEN (read-only is best).
     github = GitHub(os.environ.get("GITHUB_TOKEN") or None) if config.github else None
+    if config.brain == "grok" and config.searches_web:
+        log.warning(
+            "Web search is on for %s's research tasks. Grok's search also opens web pages, so "
+            "a page or issue a task reads could get it to visit an address that carries what "
+            "it found. To turn it off: web_search = false in %s",
+            config.name,
+            config.home / "agent.toml",
+        )
     return ToolLoopBrain(
         model=model,
         agent_name=me.name,

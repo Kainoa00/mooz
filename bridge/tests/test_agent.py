@@ -103,6 +103,16 @@ def hear(agent: Agent, speaker: Speaker, text: str, via: str = "voice") -> None:
     agent.on_utterance(Utterance(speaker, text, time.time(), via))  # type: ignore[arg-type]
 
 
+async def test_a_huge_chat_message_is_cut_before_anything_reads_it() -> None:
+    room = FakeRoom()
+    agent = Agent(room=room, stt=FakeSTT({}), tts=FakeTTS(), brain=EchoBrain())  # type: ignore[arg-type]
+    agent.wire()
+    assert room.on_chat is not None
+    room.on_chat(ChatMessage(KAI, "@Atlas what is " + ", " * 50_000, time.time()))
+    await agent.idle()
+    assert len(agent.transcript.render(max_chars=10**9)) < 5000
+
+
 async def settle(agent: Agent) -> None:
     await agent.idle()
 

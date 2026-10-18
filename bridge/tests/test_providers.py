@@ -49,6 +49,18 @@ async def test_the_configured_brain_is_used(
     assert brain.toolbox is not None and brain.toolbox.config is config
 
 
+async def test_grok_with_web_search_on_is_warned_about(
+    home: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv("MOOZ_PROVIDERS", "fake")
+    async with aiohttp.ClientSession() as http:
+        build_providers(http=http, me=ME, config=AgentConfig(name="Nova", brain="grok"))
+        assert "opens web pages" not in caplog.text  # off by default: nothing to warn about
+        on = AgentConfig(name="Nova", brain="grok", web_search=True)
+        build_providers(http=http, me=ME, config=on)
+    assert "opens web pages" in caplog.text
+
+
 async def test_github_and_web_search_come_from_the_agents_settings(
     home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -99,7 +99,8 @@ uv run mooz-agent sources remove site --agent Atlas
 ```
 
 **Memory.** Say "Atlas, remember that the deploy freeze starts Friday", or use the CLI (safe to
-use while the agent is in a meeting). Only you can add to or change its memory.
+use while the agent is in a meeting). Only you can add to or change its memory, and only by
+asking: a note is private unless you say anyone may know it ("remember publicly that…").
 
 ```bash
 uv run mooz-agent memory list --agent Atlas
@@ -150,9 +151,10 @@ voice at the next pause in the conversation (it waits up to 90 seconds, then lea
 | "Atlas, stop that" (or "cancel that") | Stops your latest task. Or click **Cancel** in the task panel |
 | "Atlas, research the pricing page privately" | Only you get the result: as a direct chat message, never by voice |
 
-**Privately.** Say "privately", "just for me", "only tell me" or "DM me" anywhere in what you ask
-and the answer reaches only you, as a direct chat message (🔒). That works for quick questions
-too ("Atlas, privately, what's in plan.md?") and for "what are you working on?". It's never
+**Privately.** Say "privately", "just for me", "only tell me", "DM me" or "as a private task"
+anywhere in what you ask and the answer reaches only you, as a direct chat message (🔒). That
+works for quick questions too ("Atlas, privately, what's in plan.md?") and for "what are you
+working on?". It's never
 spoken, and later answers and meeting notes don't see it. Your request itself is still heard
 (or read in chat) by everyone; only the answer is private. Guests get only public answers, so
 this is for the agent's owner.
@@ -180,8 +182,8 @@ uv run mooz-agent sources add github:acme/site --agent Atlas            # only y
 uv run mooz-agent sources add github:acme/docs --public --agent Atlas   # anyone may ask
 ```
 
-**Web search.** With Claude, your tasks may search the web, at most 5 searches each (a search
-already under way can finish). It's never available for guests' questions, and Claude's search
+**Web search.** With Claude, your tasks may search the web, about 5 searches each (a step that
+pauses mid-search can run a few more). It's never available for guests' questions, and Claude's search
 can't open arbitrary links, which would be a way to leak what the agent can read. Turn it off
 with `init --no-web-search`, or `web_search = false` in `agent.toml`.
 

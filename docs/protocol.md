@@ -110,6 +110,9 @@ to the comma-separated identities of everyone whose words were in what the agent
 Notes use both to leave out replies that answer or could quote people who opted out, even if
 they opt out later. Only agents' attributes are read.
 
+Anyone can send a very long message, so cut what you parse (the reference bridge reads the
+first 4,000 characters) and keep your parsing linear in the length.
+
 Show the model who said what using server-assigned identities, never display names, which
 people choose freely. The reference bridge renders one escaped line per message, tagged
 `[owner]`, `[guest]`, `[agent]` or `[you]`.
@@ -232,7 +235,8 @@ sent whenever a task changes:
   (the reference bridge says "Reading a private file"). A status answer said to the room calls a
   private task "a private task", even when the owner asks.
 - Research only reads: it doesn't get tools that change memory, so what it reads can't plant or
-  delete notes.
+  delete notes. Likewise a quick answer changes memory only when the owner's own request asks
+  for it, and makes a note public only when the request says so.
 - When a task is done, post the result to chat (a private one only to the owner, with
   `destination_identities`) and save it to the owner's private memory. Speak a public result
   only at a pause in the conversation (no one is speaking, and no one has just finished), never

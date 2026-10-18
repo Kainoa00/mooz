@@ -53,6 +53,8 @@ NOTES_ON: dict[str, object] = {"type": "notes", "state": "on"}
 NOTES_OFF: dict[str, object] = {"type": "notes", "state": "off"}
 # Give someone who just joined a moment to start listening before telling them about notes.
 LATE_JOINER_DELAY = 1.0
+# Longer chat messages are cut here, before anything parses them.
+MAX_CHAT_CHARS = 4000
 # However often someone asks (or rejoins), they get the full task list at most this often.
 TASK_LIST_INTERVAL = 2.0
 # A finished task is reported by voice once nobody has spoken for this long, waiting at most
@@ -174,9 +176,10 @@ class Agent:
         self.room.replay_tracks()
 
     def on_chat(self, msg: ChatMessage) -> None:
+        text = msg.text[:MAX_CHAT_CHARS]
         self.on_utterance(
             Utterance(
-                msg.speaker, msg.text, msg.timestamp, "chat", about=msg.about, sources=msg.sources
+                msg.speaker, text, msg.timestamp, "chat", about=msg.about, sources=msg.sources
             )
         )
 

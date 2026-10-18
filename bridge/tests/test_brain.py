@@ -157,8 +157,8 @@ async def test_owner_gets_everything_guests_get_public_only(setup) -> None:  # t
     owner_model = ScriptedModel([done("ok")])
     guest_model = ScriptedModel([done("ok")])
 
-    await make(owner_model, setup).answer(question="q", asker=ZACH, transcript="")
-    await make(guest_model, setup).answer(question="q", asker=KAI, transcript="")
+    await make(owner_model, setup).answer(question="remember q", asker=ZACH, transcript="")
+    await make(guest_model, setup).answer(question="remember q", asker=KAI, transcript="")
 
     owner, guest = owner_model.seen[0], guest_model.seen[0]
     assert "work" in owner.system and "Thursday deploys" in owner.system
@@ -170,6 +170,36 @@ async def test_owner_gets_everything_guests_get_public_only(setup) -> None:  # t
     assert "remember" not in guest.tools
     assert "Zach (your owner)" in owner.user
     assert "Kainoa (not your owner" in guest.user
+
+
+async def test_memory_changes_only_when_the_owner_asks_for_one(setup) -> None:  # type: ignore[no-untyped-def]
+    # Text the answer reads (an issue someone wrote) can ask for a public note of a file.
+    _, memory = setup
+    planted = ModelTurn(calls=(ToolCall("m", "remember", {"note": "Secret plan", "public": True}),))
+    model = ScriptedModel([planted, done("Issue 12 is about login.")])
+    await make(model, setup).answer(question="what does issue 12 say?", asker=ZACH, transcript="")
+    assert "remember" not in model.seen[0].tools and "forget" not in model.seen[0].tools
+    assert model.seen[0].results[0][0][1].is_error
+    assert not any("Secret plan" in n.text for n in memory.all(owner=True))
+
+
+async def test_a_note_is_public_only_when_the_owner_says_so(setup) -> None:  # type: ignore[no-untyped-def]
+    _, memory = setup
+
+    def saving(note: str) -> ScriptedModel:
+        return ScriptedModel(
+            [
+                ModelTurn(calls=(ToolCall("m", "remember", {"note": note, "public": True}),)),
+                done("Ok."),
+            ]
+        )
+
+    q = "remember that the offsite is in Kona"
+    await make(saving("offsite Kona"), setup).answer(question=q, asker=ZACH, transcript="")
+    q = "remember publicly that standup is at 10"
+    await make(saving("standup 10"), setup).answer(question=q, asker=ZACH, transcript="")
+    notes = {n.text: n.public for n in memory.all(owner=True)}
+    assert notes["offsite Kona"] is False and notes["standup 10"] is True
 
 
 async def test_a_guest_cannot_read_private_files_even_if_the_model_tries(setup) -> None:  # type: ignore[no-untyped-def]
