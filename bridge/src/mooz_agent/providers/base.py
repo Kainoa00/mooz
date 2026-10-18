@@ -33,6 +33,10 @@ class Answer:
     details: str = ""
 
 
+# The most web searches one background task may run, across all of its requests.
+MAX_WEB_SEARCHES = 5
+
+
 class BrainError(Exception):
     """The model could not be reached or returned an error."""
 

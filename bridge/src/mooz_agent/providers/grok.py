@@ -17,7 +17,7 @@ import openai
 
 from ..brain import ANSWER_SCHEMA, Mode, ModelTurn, ToolCall
 from ..tools.toolbox import ToolResult, ToolSpec
-from .base import Answer, BrainError, plain_answer
+from .base import MAX_WEB_SEARCHES, Answer, BrainError, plain_answer
 
 log = logging.getLogger(__name__)
 
@@ -95,6 +95,8 @@ class GrokConversation:
         self._mode = mode
         self._tools = [_tool_param(t) for t in tools]
         self._web_search = mode == "research" and web_search
+        # xAI has no per-request search cap: stop offering it once the task's budget is spent.
+        self._searches_left = MAX_WEB_SEARCHES
         self._last_id: str | None = None
 
     async def send(self, user: str) -> ModelTurn:
@@ -159,6 +161,9 @@ class GrokConversation:
             raise BrainError("could not reach Grok") from err
 
         self._last_id = response.id
+        self._searches_left -= sum(1 for item in response.output if item.type == "web_search_call")
+        if self._searches_left <= 0:
+            self._web_search = False
         if response.status == "incomplete":
             raise BrainError("Grok's answer was cut off")
         searches = tuple(_searches(response.output))

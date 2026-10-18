@@ -32,6 +32,7 @@ class Block:
     id: str = ""
     name: str = ""
     input: dict[str, Any] = field(default_factory=dict)
+    tool_use_id: str = ""
 
 
 @dataclass
@@ -206,6 +207,59 @@ async def test_a_paused_server_turn_is_resumed_and_its_searches_reported() -> No
     # Resumed by resending the paused assistant turn, with no extra user message.
     second = client.calls[1]["messages"]
     assert [m["role"] for m in second] == ["user", "assistant"]
+
+
+def searched(*ids: str, pending: str = "") -> Response:
+    """A turn that ran these web searches (and left `pending` waiting), then read a file."""
+    blocks = [
+        b
+        for i in ids
+        for b in (
+            Block("server_tool_use", id=i, name="web_search", input={"query": i}),
+            Block("web_search_tool_result", tool_use_id=i),
+        )
+    ]
+    if pending:
+        blocks.append(Block("server_tool_use", id=pending, name="web_search", input={"query": "p"}))
+    blocks.append(Block("tool_use", id="c", name="read_file", input={"path": "a.md"}))
+    return Response(blocks, stop_reason="tool_use")
+
+
+def web_tools(call: dict[str, Any]) -> list[dict[str, Any]]:
+    return [t for t in call.get("tools", []) if t.get("name") == "web_search"]
+
+
+async def test_web_searches_are_capped_per_task_not_per_request() -> None:
+    client = FakeClient(searched("s1", "s2", "s3"), searched("s4", "s5"), searched())
+    conv = ClaudeModel(client=client).conversation(
+        system="S", tools=[READ], mode="research", web_search=True
+    )
+    turn = await conv.send("x")
+    for _ in range(2):
+        turn = await conv.send_results([(turn.calls[0], ToolResult("ok"))])
+
+    assert [t["max_uses"] for t in web_tools(client.calls[0])] == [5]
+    assert [t["max_uses"] for t in web_tools(client.calls[1])] == [2]
+    assert web_tools(client.calls[2]) == []  # all five used: no more searching
+    assert any(t["name"] == "read_file" for t in client.calls[2]["tools"])
+
+
+async def test_a_search_still_waiting_to_run_keeps_its_tool() -> None:
+    # The API rejects a request that drops the tool of a search it hasn't run yet.
+    client = FakeClient(
+        searched("s1", "s2", "s3", "s4", "s5", pending="s6"),
+        Response([Block("web_search_tool_result", tool_use_id="s6"), *searched().content]),
+        searched(),
+    )
+    conv = ClaudeModel(client=client).conversation(
+        system="S", tools=[READ], mode="research", web_search=True
+    )
+    turn = await conv.send("x")
+    for _ in range(2):
+        turn = await conv.send_results([(turn.calls[0], ToolResult("ok"))])
+
+    assert [t["max_uses"] for t in web_tools(client.calls[1])] == [1]
+    assert web_tools(client.calls[2]) == []
 
 
 async def test_endless_pausing_is_an_error() -> None:

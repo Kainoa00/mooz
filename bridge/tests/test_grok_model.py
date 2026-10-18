@@ -271,6 +271,25 @@ async def test_if_xai_rejects_web_search_with_functions_it_carries_on_without() 
     assert {"type": "web_search"} not in client.calls[2]["tools"]
 
 
+async def test_web_search_stops_once_a_task_has_used_its_searches() -> None:
+    read = Item("function_call", call_id="c", name="read_file", arguments='{"path": "a.md"}')
+
+    def searched(*queries: str) -> Resp:
+        items = [SearchItem("web_search_call", Action(query=q)) for q in queries]
+        return Resp("resp", [*items, read])  # type: ignore[list-item]
+
+    client = FakeClient(searched("a", "b", "c"), searched("d", "e"), searched())
+    conv = GrokModel(client=client).conversation(
+        system="S", tools=[READ], mode="research", web_search=True
+    )
+    turn = await conv.send("x")
+    for _ in range(2):
+        turn = await conv.send_results([(turn.calls[0], ToolResult("ok"))])
+
+    assert {"type": "web_search"} in client.calls[1]["tools"]
+    assert {"type": "web_search"} not in client.calls[2]["tools"]
+
+
 async def test_a_400_in_answer_mode_is_still_an_error() -> None:
     rejected = openai.BadRequestError(
         "bad", response=httpx.Response(400, request=httpx.Request("POST", XAI_BASE_URL)), body=None

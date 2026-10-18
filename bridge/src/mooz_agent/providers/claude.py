@@ -11,7 +11,7 @@ import anthropic
 
 from ..brain import ANSWER_SCHEMA, Mode, ModelTurn, ToolCall
 from ..tools.toolbox import ToolResult, ToolSpec
-from .base import Answer, BrainError, plain_answer
+from .base import MAX_WEB_SEARCHES, Answer, BrainError, plain_answer
 
 log = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ FALLBACK_BETA = "server-side-fallback-2026-07-01"
 RESEARCH_EFFORT: Effort = "high"
 RESEARCH_MAX_TOKENS = 16_000
 RESEARCH_TIMEOUT = 180.0
-WEB_SEARCH_TOOL = {"type": "web_search_20260209", "name": "web_search", "max_uses": 5}
+WEB_SEARCH_TOOL = {"type": "web_search_20260209", "name": "web_search"}
 # A long server-side search can pause the turn; resume it at most this many times.
 MAX_PAUSES = 5
 
@@ -61,8 +61,9 @@ class ClaudeConversation:
         self._effort = RESEARCH_EFFORT if mode == "research" else effort
         self._system = system
         self._tools: list[dict[str, Any]] = [_tool_param(t) for t in tools]
-        if mode == "research" and web_search:
-            self._tools.append(dict(WEB_SEARCH_TOOL))
+        self._web_search = mode == "research" and web_search
+        # max_uses caps one request; a task makes many, so the budget is kept here.
+        self._searches_left = MAX_WEB_SEARCHES
         self._messages: list[dict[str, Any]] = []
 
     async def send(self, user: str) -> ModelTurn:
@@ -102,8 +103,9 @@ class ClaudeConversation:
             "betas": [FALLBACK_BETA],
             "fallbacks": "default",
         }
-        if self._tools:
-            kwargs["tools"] = self._tools
+        tools = [*self._tools, *self._web_search_tool()]
+        if tools:
+            kwargs["tools"] = tools
         if research:
             kwargs["timeout"] = RESEARCH_TIMEOUT
         try:
@@ -116,7 +118,19 @@ class ClaudeConversation:
             raise BrainError("could not reach Claude") from err
         # Pass the whole content back unchanged (thinking blocks included) on the next turn.
         self._messages.append({"role": "assistant", "content": response.content})
+        ran = sum(1 for b in response.content if b.type == "web_search_tool_result")
+        self._searches_left -= ran
         return response
+
+    def _web_search_tool(self) -> list[dict[str, Any]]:
+        if not self._web_search:
+            return []
+        if self._searches_left > 0:
+            return [{**WEB_SEARCH_TOOL, "max_uses": self._searches_left}]
+        if _pending_search(self._messages):
+            # The API rejects a request without the tool of a search it hasn't run yet.
+            return [{**WEB_SEARCH_TOOL, "max_uses": 1}]
+        return []
 
     async def _call(self) -> ModelTurn:
         searches: list[str] = []
@@ -143,6 +157,16 @@ class ClaudeConversation:
         if self._mode == "research":
             return ModelTurn(answer=_plain_answer(response.content), searches=tuple(searches))
         return ModelTurn(answer=_parse_answer(response.content))
+
+
+def _pending_search(messages: Sequence[dict[str, Any]]) -> bool:
+    """Whether Claude's last turn asked for a web search that hasn't run yet."""
+    content = next((m["content"] for m in reversed(messages) if m["role"] == "assistant"), [])
+    done = {b.tool_use_id for b in content if b.type == "web_search_tool_result"}
+    return any(
+        b.type == "server_tool_use" and b.name == "web_search" and b.id not in done
+        for b in content
+    )
 
 
 def _searches(content: Sequence[Any]) -> list[str]:
