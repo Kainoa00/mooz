@@ -35,8 +35,13 @@ class FakeRoom:
         self.on_human_track = None
         self.on_human_track_ended = None
 
+        self.replayed = False
+
     async def send_chat(self, text: str) -> None:
         self.sent.append(text)
+
+    def replay_tracks(self) -> None:
+        self.replayed = True
 
 
 class Clock:
@@ -172,8 +177,79 @@ async def test_wire_routes_human_tracks_to_the_listener() -> None:
         await asyncio.sleep(10)
         yield b""
 
-    agent.listener.attach(ZACH, silence())
+    agent.listener.attach(ZACH, silence)
     assert agent.listener.active == {"p_z"}
     room.on_human_track_ended("p_z")
     assert agent.listener.active == set()
     await agent.aclose()
+
+
+async def test_wire_replays_tracks_of_people_already_in_the_room() -> None:
+    room, _agent = make()
+    assert room.replayed
+
+
+async def test_follow_up_window_closes_once_the_question_arrives() -> None:
+    room, agent = make()
+    hear(agent, KAI, "Hey Atlas.")
+    await settle(agent)
+    hear(agent, KAI, "Atlas, what's the status?")
+    await settle(agent)
+    hear(agent, KAI, "ok thanks")
+    await settle(agent)
+
+    assert room.sent == ["Yes?", "You asked: what's the status?"]
+
+
+async def test_follow_up_window_starts_after_yes_is_spoken() -> None:
+    clock = Clock()
+
+    class SlowTTS(FakeTTS):
+        async def synthesize(self, text: str):  # type: ignore[no-untyped-def, override]
+            if text != "Yes?":
+                clock.now += FOLLOW_UP_SECONDS + 5  # a long answer is still being spoken
+            async for frame in super().synthesize(text):
+                yield frame
+
+    room = FakeRoom()
+    agent = Agent(room=room, stt=FakeSTT({}), tts=SlowTTS(), brain=EchoBrain(), clock=clock)  # type: ignore[arg-type]
+    agent.wire()
+    hear(agent, ZACH, "@Atlas first question", via="chat")
+    hear(agent, KAI, "Hey Atlas.")
+    await settle(agent)
+    clock.now += 2
+    hear(agent, KAI, "what's on the agenda")
+    await settle(agent)
+
+    assert room.sent[-1] == "You asked: what's on the agenda"
+
+
+async def test_a_voice_failure_is_logged_and_the_answer_still_remembered(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class BrokenTTS(FakeTTS):
+        async def synthesize(self, text: str):  # type: ignore[no-untyped-def, override]
+            raise RuntimeError("quota exceeded")
+            yield  # pragma: no cover
+
+    brain = EchoBrain()
+    room = FakeRoom()
+    agent = Agent(room=room, stt=FakeSTT({}), tts=BrokenTTS(), brain=brain, clock=Clock())  # type: ignore[arg-type]
+    agent.wire()
+    hear(agent, KAI, "@Atlas one", via="chat")
+    await settle(agent)
+    hear(agent, KAI, "@Atlas two", via="chat")
+    await settle(agent)
+
+    assert room.sent == ["You asked: one", "You asked: two"]
+    assert "quota exceeded" in caplog.text
+    assert "Atlas (agent): You asked: one" in brain.questions[1][2]
+
+
+async def test_bare_name_from_another_agent_counts_toward_the_streak() -> None:
+    room, agent = make()
+    for _ in range(MAX_AGENT_STREAK + 2):
+        hear(agent, GROK, "@Atlas", via="chat")
+        await settle(agent)
+
+    assert len(room.sent) == MAX_AGENT_STREAK

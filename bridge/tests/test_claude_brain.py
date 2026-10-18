@@ -77,7 +77,7 @@ async def test_asks_claude_with_the_transcript_and_returns_spoken_and_details() 
     assert "Atlas" in call["system"] and "Kainoa" in call["system"]
 
 
-async def test_system_prompt_is_stable_across_questions_so_it_caches() -> None:
+async def test_system_prompt_is_stable_and_the_asker_goes_in_the_user_turn() -> None:
     client = FakeClient(reply("ok"))
     brain = ClaudeBrain(
         agent_name="Atlas", owner_name="Kainoa", owner_identity="p_k", client=client
@@ -110,11 +110,20 @@ async def test_a_refusal_becomes_a_polite_spoken_decline() -> None:
     assert answer.details == ""
 
 
-async def test_unstructured_text_is_still_spoken() -> None:
+async def test_malformed_output_is_never_read_aloud() -> None:
     client = FakeClient(Response([Block("text", "Plain words.")]))
     brain = ClaudeBrain(agent_name="Atlas", owner_name="K", client=client)  # type: ignore[arg-type]
 
-    assert await brain.answer(question="q", asker=KAI, transcript="") == Answer("Plain words.", "")
+    with pytest.raises(BrainError):
+        await brain.answer(question="q", asker=KAI, transcript="")
+
+
+async def test_a_truncated_answer_is_never_read_aloud() -> None:
+    client = FakeClient(Response([Block("text", '{"spoken": "The mig')], stop_reason="max_tokens"))
+    brain = ClaudeBrain(agent_name="Atlas", owner_name="K", client=client)  # type: ignore[arg-type]
+
+    with pytest.raises(BrainError):
+        await brain.answer(question="q", asker=KAI, transcript="")
 
 
 async def test_api_failures_raise_brain_error() -> None:

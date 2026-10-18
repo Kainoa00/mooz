@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import { errorMessage, readBody } from "@/lib/fetch-json";
 
 export interface JoinResult {
   token: string;
@@ -23,14 +24,14 @@ export function JoinForm({ slug, onJoined }: { slug: string; onJoined: (r: JoinR
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ name }),
-    });
-    const body = await res.json();
-    if (!res.ok) {
-      setError(body?.error?.message ?? "Could not join");
+    }).catch(() => null);
+    const body = res ? await readBody(res) : null;
+    if (!res?.ok || !body) {
+      setError(errorMessage(body, "Could not join. Check your connection and try again."));
       setBusy(false);
       return;
     }
-    onJoined({ ...(body as Omit<JoinResult, "name">), name: name.trim() });
+    onJoined({ ...(body as unknown as Omit<JoinResult, "name">), name: name.trim() });
   }
 
   return (

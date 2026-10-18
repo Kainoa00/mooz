@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
 from .addressing import AddressDetector
-from .claim import AgentGrant
+from .claim import AgentGrant, ClaimError
 from .listening import Listener, track_frames
 from .providers.base import Answer, Brain, BrainError, SpeechToText, TextToSpeech
 from .room import ChatHandler, ChatMessage, Speaker, TrackEndedHandler, TrackHandler
@@ -40,6 +40,7 @@ class AgentRoom(Protocol):
     on_human_track_ended: TrackEndedHandler | None
 
     def send_chat(self, text: str) -> Awaitable[None]: ...
+    def replay_tracks(self) -> None: ...
 
 
 class Agent:
@@ -68,10 +69,12 @@ class Agent:
 
     def wire(self) -> None:
         self.room.on_human_track = lambda speaker, track: self.listener.attach(
-            speaker, track_frames(track)
+            speaker, lambda: track_frames(track)
         )
         self.room.on_human_track_ended = self.listener.detach
         self.room.on_chat = self.on_chat
+        # People already in the room published before these handlers existed.
+        self.room.replay_tracks()
 
     def on_chat(self, msg: ChatMessage) -> None:
         self.on_utterance(Utterance(msg.speaker, msg.text, msg.timestamp, "chat"))
@@ -82,27 +85,39 @@ class Agent:
         if u.speaker.kind == "human":
             self._agent_streak = 0
 
+        # Anything this person says closes their follow-up window.
+        deadline = self._follow_up.pop(u.speaker.identity, None)
         addressed = self.detector.check(u.text, u.via)
         if addressed is None:
-            deadline = self._follow_up.pop(u.speaker.identity, None)
             if deadline is None or heard_at > deadline:
                 return
             question = u.text
         elif not addressed.question:
-            self._follow_up[u.speaker.identity] = heard_at + FOLLOW_UP_SECONDS
-            self._spawn(self._say(Answer("Yes?"), heard_at))
+            if self._allowed(u.speaker):
+                self._spawn(self._acknowledge(u.speaker, heard_at))
             return
         else:
             question = addressed.question
 
-        if u.speaker.kind == "agent":
-            if self._agent_streak >= MAX_AGENT_STREAK:
-                log.info(
-                    "not answering %s: %d agent turns in a row", u.speaker.name, MAX_AGENT_STREAK
-                )
-                return
-            self._agent_streak += 1
-        self._spawn(self._respond(u.speaker, question, heard_at))
+        if self._allowed(u.speaker):
+            self._spawn(self._respond(u.speaker, question, heard_at))
+
+    def _allowed(self, asker: Speaker) -> bool:
+        if asker.kind != "agent":
+            return True
+        if self._agent_streak >= MAX_AGENT_STREAK:
+            log.info("not answering %s: %d agent turns in a row", asker.name, MAX_AGENT_STREAK)
+            return False
+        self._agent_streak += 1
+        return True
+
+    async def _acknowledge(self, asker: Speaker, heard_at: float) -> None:
+        # Open the window now (a question asked while "Yes?" plays still counts), and
+        # start its countdown once "Yes?" has actually been said.
+        self._follow_up[asker.identity] = float("inf")
+        await self._say(Answer("Yes?"), heard_at)
+        if asker.identity in self._follow_up:
+            self._follow_up[asker.identity] = self._clock() + FOLLOW_UP_SECONDS
 
     async def _respond(self, asker: Speaker, question: str, heard_at: float) -> None:
         log.info("%s asked: %s", asker.name, question)
@@ -119,13 +134,24 @@ class Agent:
             latency_ms = (self._clock() - heard_at) * 1000
             log.info("latency heard→voice %.0f ms", latency_ms)
 
-        await self.mouth.say(answer, on_first_frame=first_frame)
-        self.transcript.add(Utterance(self.me, answer.spoken, time.time(), "chat"))
+        try:
+            await self.mouth.say(answer, on_first_frame=first_frame)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("could not say the answer (it may have reached chat only)")
+        finally:
+            self.transcript.add(Utterance(self.me, answer.spoken, time.time(), "chat"))
 
     def _spawn(self, coro: Awaitable[None]) -> None:
         task: asyncio.Task[None] = asyncio.ensure_future(coro)
         self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+        task.add_done_callback(self._finished)
+
+    def _finished(self, task: asyncio.Task[None]) -> None:
+        self._tasks.discard(task)
+        if not task.cancelled() and (err := task.exception()) is not None:
+            log.error("answer task failed", exc_info=err)
 
     async def idle(self) -> None:
         """Wait until every answer in flight has been said (used by tests)."""
@@ -147,14 +173,21 @@ async def run(grant: AgentGrant) -> None:
     from .room import MeetingRoom
 
     room = MeetingRoom()
+    agent: Agent | None = None
     async with aiohttp.ClientSession() as http:
-        await room.connect(grant.url, grant.token)
-        stt, tts, brain = build_providers(http=http, me=room.me)
-        agent = Agent(room=room, stt=stt, tts=tts, brain=brain)
-        agent.wire()
         try:
+            try:
+                await room.connect(grant.url, grant.token)
+            except Exception as err:
+                raise ClaimError(
+                    "connect_failed", f"Could not join the meeting's media server: {err}"
+                ) from err
+            stt, tts, brain = build_providers(http=http, me=room.me)
+            agent = Agent(room=room, stt=stt, tts=tts, brain=brain)
+            agent.wire()
             await room.wait_closed()
             log.info("left the meeting")
         finally:
-            await agent.aclose()
+            if agent:
+                await agent.aclose()
             await room.disconnect()

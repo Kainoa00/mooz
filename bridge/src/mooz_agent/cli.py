@@ -33,17 +33,20 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
 
 
 async def obtain_grant(*, server: str, code: str, name: str) -> AgentGrant:
-    async with httpx.AsyncClient(timeout=15) as http:
-        ticket = await claim_code(http, server, code=code, name=name)
-        return await wait_for_approval(
-            http,
-            server,
-            request_id=ticket.request_id,
-            claim_secret=ticket.claim_secret,
-            on_pending=lambda: print(
-                "Waiting for the host to approve your agent…", file=sys.stderr
-            ),
-        )
+    try:
+        async with httpx.AsyncClient(timeout=15) as http:
+            ticket = await claim_code(http, server, code=code, name=name)
+            return await wait_for_approval(
+                http,
+                server,
+                request_id=ticket.request_id,
+                claim_secret=ticket.claim_secret,
+                on_pending=lambda: print(
+                    "Waiting for the host to approve your agent…", file=sys.stderr
+                ),
+            )
+    except httpx.HTTPError as err:
+        raise ClaimError("network", f"Could not reach {server}: {err}") from err
 
 
 async def run_agent(grant: AgentGrant) -> None:

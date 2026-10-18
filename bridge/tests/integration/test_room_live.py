@@ -77,3 +77,26 @@ async def test_agent_is_offered_human_audio_only(room_name: str) -> None:
         await human.disconnect()
         await other_agent.disconnect()
         await agent.disconnect()
+
+
+async def test_agent_hears_people_who_were_there_before_it_joined(room_name: str) -> None:
+    human = rtc.Room()
+    await human.connect(LIVEKIT_URL, mint(room_name, "p_early", "Kai", {"kind": "human"}))
+    source = rtc.AudioSource(48_000, 1)
+    track = rtc.LocalAudioTrack.create_audio_track("mic", source)
+    await human.local_participant.publish_track(
+        track, rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE)
+    )
+
+    agent = MeetingRoom()
+    await agent.connect(LIVEKIT_URL, mint(room_name, "a_late", "Atlas", {"kind": "agent"}))
+    await asyncio.sleep(1.0)  # subscription events may already have fired
+    offered: list[str] = []
+    agent.on_human_track = lambda speaker, _track: offered.append(speaker.identity)
+    agent.replay_tracks()
+    try:
+        await wait_for(lambda: "p_early" in offered)
+        assert offered == ["p_early"]
+    finally:
+        await human.disconnect()
+        await agent.disconnect()

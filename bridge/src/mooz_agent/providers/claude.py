@@ -87,7 +87,8 @@ class ClaudeBrain:
         model: str = DEFAULT_MODEL,
         effort: Effort = DEFAULT_EFFORT,
     ) -> None:
-        self._client = client or anthropic.AsyncAnthropic()
+        # A spoken answer that arrives minutes late is worse than an apology.
+        self._client = client or anthropic.AsyncAnthropic(timeout=30.0, max_retries=1)
         self._model = model
         self._effort = effort
         self._owner_identity = owner_identity
@@ -123,9 +124,13 @@ class ClaudeBrain:
 
         if response.stop_reason == "refusal":
             return DECLINE
+        # Never read raw or truncated model output aloud.
+        if response.stop_reason == "max_tokens":
+            raise BrainError("Claude's answer was cut off")
         text = "".join(b.text for b in response.content if b.type == "text").strip()
         try:
             data = json.loads(text)
-            return Answer(str(data["spoken"]).strip(), str(data.get("details", "")).strip())
-        except (ValueError, KeyError, TypeError):
-            return Answer(text) if text else DECLINE
+            spoken = str(data["spoken"]).strip()
+        except (ValueError, KeyError, TypeError) as err:
+            raise BrainError("Claude returned an answer in an unexpected format") from err
+        return Answer(spoken, str(data.get("details", "")).strip()) if spoken else DECLINE

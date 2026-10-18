@@ -81,3 +81,17 @@ def test_connect_runs_the_agent_with_the_grant(monkeypatch: pytest.MonkeyPatch) 
 
     assert cli.main(["connect", "X", "--server", "http://s", "--name", "Atlas"]) == 0
     assert ran == [grant]
+
+
+def test_network_errors_become_a_clear_message(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import httpx
+
+    async def unreachable(*_: object, **__: object) -> object:
+        raise httpx.ConnectError("connection refused")
+
+    monkeypatch.setattr(cli, "claim_code", unreachable)
+
+    assert cli.main(["connect", "X", "--server", "http://nowhere", "--name", "Atlas"]) == 1
+    assert "Could not reach http://nowhere" in capsys.readouterr().err

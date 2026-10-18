@@ -17,7 +17,9 @@ async def test_human_audio_from_livekit_reaches_the_transcriber(room_name: str) 
     heard: list[Utterance] = []
     listener = Listener(FakeSTT({"p_it": ["hey Atlas what time is it"]}), heard.append)
     agent = MeetingRoom()
-    agent.on_human_track = lambda speaker, track: listener.attach(speaker, track_frames(track))
+    agent.on_human_track = lambda speaker, track: listener.attach(
+        speaker, lambda: track_frames(track)
+    )
     await agent.connect(LIVEKIT_URL, mint(room_name, "a_it", "Atlas", {"kind": "agent"}))
 
     human = rtc.Room()

@@ -91,8 +91,44 @@ def test_chat_addressing(message: str, question: str | None) -> None:
 
 def test_everyone_addresses_all_agents() -> None:
     assert ATLAS.check("@everyone what are the blockers?", via="chat") is not None
+    assert ATLAS.check("@agents any blockers?", via="chat") is not None
     assert ATLAS.check("Hey agents, any blockers?", via="voice") is not None
     assert ATLAS.check("everyone has the notes", via="voice") is None
+    assert ATLAS.check("Agents can't see my screen yet", via="voice") is None
+    assert ATLAS.check("@all I'm sharing my screen", via="chat") is None
+
+
+# Code review: a vowel-free phonetic key alone let everyday words wake agents.
+@pytest.mark.parametrize(
+    ("name", "utterance"),
+    [
+        ("Claude", "Could we move this to Friday?"),
+        ("Claude", "Okay could you share your screen"),
+        ("Claude", "Cloud costs went up"),
+        ("Max", "Makes sense?"),
+        ("Juno", "Join the other call first."),
+    ],
+)
+def test_common_words_do_not_wake_agents_with_similar_names(name: str, utterance: str) -> None:
+    assert AddressDetector(name).check(utterance, via="voice") is None
+
+
+@pytest.mark.parametrize(
+    ("name", "utterance"),
+    [
+        ("Claude", "Hey Claud, what's next?"),
+        ("Grok", "Hey Grock, what's next?"),
+        ("Grok", "groc what's next"),
+    ],
+)
+def test_real_mis_transcriptions_still_wake(name: str, utterance: str) -> None:
+    assert AddressDetector(name).check(utterance, via="voice") is not None
+
+
+def test_a_name_closing_a_command_after_a_comma_wakes() -> None:
+    result = ATLAS.check("Summarize the last ten minutes, Atlas.", via="voice")
+    assert result is not None
+    assert result.question == "Summarize the last ten minutes"
 
 
 @pytest.mark.parametrize(

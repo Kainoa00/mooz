@@ -16,13 +16,19 @@ from livekit.plugins import elevenlabs
 from ..room import Speaker
 
 STT_SAMPLE_RATE: Final[Literal[16000]] = 16000
+VAD_SILENCE_SECONDS = 0.6
 
 
 class ElevenLabsSTT:
     """One realtime stream per speaker. Runs in zero-retention mode: ElevenLabs keeps no audio."""
 
     def __init__(
-        self, *, api_key: str, http: aiohttp.ClientSession, keyterms: Sequence[str] = ()
+        self,
+        *,
+        api_key: str,
+        http: aiohttp.ClientSession,
+        keyterms: Sequence[str] = (),
+        language: str = "en",
     ) -> None:
         self._stt = elevenlabs.STT(
             api_key=api_key,
@@ -30,6 +36,12 @@ class ElevenLabsSTT:
             sample_rate=STT_SAMPLE_RATE,
             http_session=http,
             enable_logging=False,
+            # Commit a transcript after each pause in speech. Without server VAD the
+            # plugin commits only when the track ends, i.e. never mid-meeting.
+            server_vad={"vad_silence_threshold_secs": VAD_SILENCE_SECONDS},
+            # A fixed language makes the first commit final instead of waiting for the
+            # delayed copy that carries language detection.
+            language_code=language,
             # Biasing toward the agent's name is what keeps wake-ups reliable.
             keyterms=list(keyterms) if keyterms else NOT_GIVEN,
         )

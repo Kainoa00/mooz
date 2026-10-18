@@ -27,8 +27,11 @@ QUESTION_OPENERS = frozenset(
 # A name right after these is the object of a sentence, not someone being spoken to.
 OBJECT_MARKERS = frozenset("ask asked tell told to about with from for the at of by".split())
 BROADCAST_VOICE = ("agents",)
-BROADCAST_CHAT = ("everyone", "agents", "all")
-FUZZY_THRESHOLD = 85
+BROADCAST_CHAT = ("everyone", "agents")
+# A heard word matches the name if it sounds alike AND is spelled close, or is spelled
+# very close. Sound alone is too loose ("could" sounds like "Claude").
+SOUND_ALIKE_MIN_RATIO = 75
+SPELLED_ALIKE_MIN_RATIO = 90
 
 _WORD = re.compile(r"[A-Za-z0-9']+")
 _EDGE_PUNCT = " \t,.:;!-"
@@ -81,7 +84,10 @@ def _same_word(heard: str, wake: str) -> bool:
         return True
     if len(heard) < 3:
         return False
-    return phonetic_key(heard) == phonetic_key(wake) or fuzz.ratio(heard, wake) >= FUZZY_THRESHOLD
+    ratio = fuzz.ratio(heard, wake)
+    if ratio >= SPELLED_ALIKE_MIN_RATIO:
+        return True
+    return ratio >= SOUND_ALIKE_MIN_RATIO and phonetic_key(heard) == phonetic_key(wake)
 
 
 class AddressDetector:
@@ -111,24 +117,37 @@ class AddressDetector:
         if not tokens:
             return None
         forms = [*self._forms, *([w] for w in BROADCAST_VOICE)]
+        broadcast = {tuple([w]) for w in BROADCAST_VOICE}
         for form in forms:
             for i in range(len(tokens) - len(form) + 1):
                 window = tokens[i : i + len(form)]
                 if not all(_same_word(t.norm, w) for t, w in zip(window, form, strict=True)):
                     continue
-                found = self._judge(text, tokens, i, i + len(form) - 1, via)
+                found = self._judge(
+                    text, tokens, i, i + len(form) - 1, via, strict=tuple(form) in broadcast
+                )
                 if found is not None:
                     return found
         return None
 
     def _judge(
-        self, text: str, tokens: list[_Token], first: int, last: int, via: Literal["voice", "chat"]
+        self,
+        text: str,
+        tokens: list[_Token],
+        first: int,
+        last: int,
+        via: Literal["voice", "chat"],
+        strict: bool = False,
     ) -> Addressed | None:
         name_end = tokens[last].end
         before, after = tokens[:first], tokens[last + 1 :]
         comma_after = bool(re.match(r"\s*[,.:;!?]", text[name_end:]))
+        comma_before = bool(re.search(r"[,;:]\s*$", text[: tokens[first].start]))
 
         opens = len(before) <= 3 and all(t.norm in GREETINGS for t in before)
+        # "Agents" is an ordinary word, so as a wake word it must be set off: "Hey agents, ..."
+        if strict and not (opens and comma_after):
+            return None
         if opens:
             if tokens[last].possessive:
                 return None
@@ -138,7 +157,8 @@ class AddressDetector:
 
         closes = not after and before[-1].norm not in OBJECT_MARKERS
         is_question = text.rstrip().endswith("?") or tokens[0].norm in QUESTION_OPENERS
-        if closes and is_question:
+        # "..., Atlas." closing a request is a vocative even when it is not a question.
+        if closes and (is_question or comma_before):
             return Addressed(text[: tokens[first].start].rstrip(_EDGE_PUNCT + " "), via)
         return None
 

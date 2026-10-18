@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from typing import Any
 
 from livekit import rtc
@@ -16,6 +16,10 @@ from .transcript import Utterance
 
 log = logging.getLogger(__name__)
 
+FrameSource = Callable[[], AsyncIterator[Any]]
+# Seconds to wait before re-opening a failed stream; the last value repeats.
+RETRY_DELAYS = (1.0, 2.0, 5.0, 15.0, 30.0)
+
 
 class Listener:
     def __init__(
@@ -23,17 +27,20 @@ class Listener:
         stt: SpeechToText,
         on_utterance: Callable[[Utterance], None],
         clock: Callable[[], float] = time.time,
+        retry_delays: Sequence[float] = RETRY_DELAYS,
     ) -> None:
         self._stt = stt
         self._on_utterance = on_utterance
         self._clock = clock
+        self._retry_delays = list(retry_delays) or [1.0]
         self._tasks: dict[str, asyncio.Task[None]] = {}
 
     @property
     def active(self) -> set[str]:
         return {identity for identity, task in self._tasks.items() if not task.done()}
 
-    def attach(self, speaker: Speaker, frames: AsyncIterator[Any]) -> None:
+    def attach(self, speaker: Speaker, frames: FrameSource) -> None:
+        """Transcribe `speaker` until detached. `frames` opens a fresh audio stream for retries."""
         self.detach(speaker.identity)
         task = asyncio.ensure_future(self._run(speaker, frames))
         self._tasks[speaker.identity] = task
@@ -50,16 +57,26 @@ class Listener:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def _run(self, speaker: Speaker, frames: AsyncIterator[Any]) -> None:
-        try:
-            async for text in self._stt.transcribe(speaker, frames):
-                text = text.strip()
-                if text:
-                    self._on_utterance(Utterance(speaker, text, self._clock(), "voice"))
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            log.exception("transcription failed for %s", speaker.name)
+    async def _run(self, speaker: Speaker, frames: FrameSource) -> None:
+        failures = 0
+        while True:
+            try:
+                async for text in self._stt.transcribe(speaker, frames()):
+                    failures = 0
+                    text = text.strip()
+                    if text:
+                        self._on_utterance(Utterance(speaker, text, self._clock(), "voice"))
+                return  # the track ended normally
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                delay = self._retry_delays[min(failures, len(self._retry_delays) - 1)]
+                failures += 1
+                log.exception("transcription failed for %s; retrying in %ss", speaker.name, delay)
+                if failures > len(self._retry_delays) * 4:
+                    log.error("giving up on transcribing %s", speaker.name)
+                    return
+                await asyncio.sleep(delay)
 
 
 async def track_frames(

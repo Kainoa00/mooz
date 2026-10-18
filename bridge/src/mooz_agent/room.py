@@ -16,6 +16,8 @@ log = logging.getLogger(__name__)
 CHAT_TOPIC = "lk.chat"
 SAMPLE_RATE = 48_000
 NUM_CHANNELS = 1
+# Leave this long after the last person does, so the agent doesn't keep an empty room open.
+ALONE_GRACE_SECONDS = 60.0
 
 
 @dataclass(frozen=True)
@@ -72,6 +74,9 @@ class MeetingRoom:
         self.on_human_track: TrackHandler | None = None
         self.on_human_track_ended: TrackEndedHandler | None = None
         self._closed = asyncio.Event()
+        self._audio_sid: dict[str, str] = {}
+        self._alone_timer: asyncio.TimerHandle | None = None
+        self.alone_grace_seconds = ALONE_GRACE_SECONDS
 
     @property
     def me(self) -> Speaker:
@@ -84,12 +89,35 @@ class MeetingRoom:
         self._room.on("track_subscribed", self._handle_track_subscribed)
         self._room.on("track_unsubscribed", self._handle_track_unsubscribed)
         self._room.on("disconnected", lambda *_: self._closed.set())
+        self._room.on("participant_connected", self._handle_participant_change)
+        self._room.on("participant_disconnected", self._handle_participant_change)
         self._room.register_text_stream_handler(CHAT_TOPIC, self._handle_chat_stream)
         await self._room.connect(url, token, rtc.RoomOptions(auto_subscribe=True))
         track = rtc.LocalAudioTrack.create_audio_track("agent-voice", self.voice)
         options = rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE)
         await self._room.local_participant.publish_track(track, options)
         log.info("joined room %s as %s", self._room.name, self.me.identity)
+
+    def replay_tracks(self) -> None:
+        """Offer audio already subscribed before handlers were set (people who were here first)."""
+        for participant in list(self._room.remote_participants.values()):
+            for publication in list(participant.track_publications.values()):
+                track = publication.track
+                if publication.subscribed and track is not None:
+                    self._handle_track_subscribed(track, publication, participant)
+
+    def _handle_participant_change(self, _participant: rtc.RemoteParticipant) -> None:
+        humans = [p for p in self.participants() if p.kind == "human"]
+        if humans:
+            if self._alone_timer:
+                self._alone_timer.cancel()
+                self._alone_timer = None
+        elif self._alone_timer is None:
+            log.info(
+                "everyone left; leaving in %.0fs unless someone returns", self.alone_grace_seconds
+            )
+            loop = asyncio.get_running_loop()
+            self._alone_timer = loop.call_later(self.alone_grace_seconds, self._closed.set)
 
     async def wait_closed(self) -> None:
         """Return when the meeting ends for us (left, removed by the host, or connection lost)."""
@@ -99,6 +127,8 @@ class MeetingRoom:
         await self._room.local_participant.send_text(text, topic=CHAT_TOPIC)
 
     async def disconnect(self) -> None:
+        if self._alone_timer:
+            self._alone_timer.cancel()
         for task in list(self._tasks):
             task.cancel()
         await self._room.disconnect()
@@ -114,6 +144,7 @@ class MeetingRoom:
         if track.kind != rtc.TrackKind.KIND_AUDIO or speaker.kind != "human":
             return
         if self.on_human_track:
+            self._audio_sid[participant.identity] = track.sid
             self.on_human_track(speaker, track)
 
     def _handle_track_unsubscribed(
@@ -122,7 +153,13 @@ class MeetingRoom:
         _publication: rtc.RemoteTrackPublication,
         participant: rtc.RemoteParticipant,
     ) -> None:
-        if track.kind == rtc.TrackKind.KIND_AUDIO and self.on_human_track_ended:
+        # Only end the stream for the track we are transcribing (not a second or stale one).
+        if track.kind != rtc.TrackKind.KIND_AUDIO:
+            return
+        if self._audio_sid.get(participant.identity) != track.sid:
+            return
+        del self._audio_sid[participant.identity]
+        if self.on_human_track_ended:
             self.on_human_track_ended(participant.identity)
 
     def _handle_chat_stream(self, reader: rtc.TextStreamReader, participant_identity: str) -> None:

@@ -115,8 +115,10 @@ time per agent.
 An agent answers only when addressed:
 - `@Name` in chat, anywhere in the message. `@everyone` and `@agents` address every
   agent.
-- Its name, or a likely mis-transcription of it, opening an utterance (optionally after
-  a greeting like "hey" or "ok"), or closing a question.
+- Its name, or a likely mis-transcription of it (similar in both sound and spelling),
+  opening an utterance (optionally after a greeting like "hey" or "ok"), closing a
+  question, or closing a request after a comma ("Summarize that, Atlas.").
+- "Hey agents, ..." (set off by a comma) addresses every agent by voice.
 - Saying the name alone ("Hey Atlas.") opens an 8-second window. In it, the same
   person's next sentence counts as the question.
 - An agent should stop answering other agents after 3 turns in a row with no human

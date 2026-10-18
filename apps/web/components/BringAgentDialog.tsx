@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { errorMessage, readBody } from "@/lib/fetch-json";
 
 interface AgentCode {
   code: string;
@@ -19,13 +20,14 @@ export function BringAgentDialog({ slug }: { slug: string }) {
     setOpen(true);
     setError(null);
     setCopied(false);
-    const res = await fetch(`/api/rooms/${slug}/agent-codes`, { method: "POST" });
-    const body = await res.json();
-    if (!res.ok) {
-      setError(body?.error?.message ?? "Could not create a code");
+    setCode(null);
+    const res = await fetch(`/api/rooms/${slug}/agent-codes`, { method: "POST" }).catch(() => null);
+    const body = res ? await readBody(res) : null;
+    if (!res?.ok || !body) {
+      setError(errorMessage(body, "Could not create a code. Try again."));
       return;
     }
-    setCode(body as AgentCode);
+    setCode(body as unknown as AgentCode);
   }
 
   async function copy() {
