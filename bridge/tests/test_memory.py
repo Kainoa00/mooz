@@ -103,3 +103,17 @@ def test_rejects_empty_or_huge_notes(store: MemoryStore) -> None:
         store.remember("   ", public=False)
     with pytest.raises(ValueError):
         store.remember("x" * 20_001, public=False)
+
+
+def test_context_block_skips_what_doesnt_fit_and_leaves_out_tagged_notes(
+    store: MemoryStore,
+) -> None:
+    store.remember("Deploy freeze starts Friday", public=False)
+    store.remember("Meeting notes: " + "long " * 2000, public=False, tags=["meeting-notes"])
+    store.remember("x" * 500, public=False)  # too big for the budget, but older facts still fit
+    store.remember("The office is in Honolulu", public=False)
+
+    block = store.context_block(owner=True, budget_chars=300, exclude_tags=("meeting-notes",))
+
+    assert "Deploy freeze" in block and "Honolulu" in block
+    assert "Meeting notes" not in block and "xxxx" not in block

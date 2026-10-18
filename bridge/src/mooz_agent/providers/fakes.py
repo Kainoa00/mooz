@@ -83,7 +83,6 @@ class FakeBrain:
 ASKED = " just asked you: "
 SUMMARY_MARKER = "keeping meeting notes"
 _TRANSCRIPT = re.compile(r"<transcript>\n(.*)\n</transcript>", re.S)
-MEMORY_HEADING = "What you remember (newest last):\n"
 SOURCES_LINE = re.compile(
     r"^(?:Folders and repositories you can read|You have no folders).*$", re.M
 )
@@ -150,7 +149,10 @@ class OfflineConversation:
         return ModelTurn(answer=Answer(f"You asked: {question}"))
 
     def _memories(self) -> Answer:
-        _, found, block = self._system.partition(MEMORY_HEADING)
+        from ..brain import MEMORY_HEADING
+
+        _, found, rest = self._system.partition(MEMORY_HEADING)
+        block = rest.split("\n\n", 1)[0]
         if not found or not block.strip():
             return Answer("I don't remember anything yet.")
         return Answer("Here's what I remember.", details=block.strip())

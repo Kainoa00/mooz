@@ -14,11 +14,11 @@ import time
 from collections.abc import Callable
 from typing import Literal, Protocol
 
-from .memory import MAX_NOTE_CHARS, MemoryStore, Note
+from .memory import MAX_NOTE_CHARS, MEETING_NOTES_TAG, MemoryStore, Note
 from .room import Speaker
 from .transcript import Utterance, render_line
 
-NOTES_TAG = "meeting-notes"
+NOTES_TAG = MEETING_NOTES_TAG
 NOTES_INTERVAL_SECONDS = 15 * 60
 # Summarize early rather than let one chunk grow past what a summary prompt should hold.
 MAX_LOG_CHARS = 60_000
@@ -55,9 +55,11 @@ class NotesKeeper:
         summarizer: Summarizer,
         memory: MemoryStore,
         opted_out: Callable[[str], bool],
+        render: Callable[[Utterance], str] = render_line,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self._summarizer = summarizer
+        self._render = render
         self._memory = memory
         self._opted_out = opted_out
         self._clock = clock
@@ -97,7 +99,7 @@ class NotesKeeper:
             saving = False
             try:
                 summary = await self._summarizer.summarize(
-                    transcript="\n".join(render_line(u) for u in lines)
+                    transcript="\n".join(self._render(u) for u in lines)
                 )
                 start = _when(since if since is not None else lines[0].timestamp)
                 text = f"Meeting notes ({start} to {_when(now)}):\n{summary}"[:MAX_NOTE_CHARS]

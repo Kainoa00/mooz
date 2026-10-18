@@ -24,7 +24,7 @@ from .room import (
     TrackHandler,
 )
 from .speaking import Mouth
-from .transcript import TranscriptBuffer, Utterance
+from .transcript import TranscriptBuffer, Utterance, render_line
 
 log = logging.getLogger(__name__)
 
@@ -95,7 +95,10 @@ class Agent:
         self.notes: NotesKeeper | None = None
         if isinstance(brain, ToolLoopBrain) and brain.memory is not None:
             self.notes = NotesKeeper(
-                summarizer=brain, memory=brain.memory, opted_out=self._opted_out
+                summarizer=brain,
+                memory=brain.memory,
+                opted_out=self._opted_out,
+                render=lambda u: render_line(u, self._role),
             )
         self.notes_interval = NOTES_INTERVAL_SECONDS
         self.late_joiner_delay = LATE_JOINER_DELAY
@@ -141,6 +144,14 @@ class Agent:
         if self._allowed(u.speaker):
             self._spawn(self._respond(u.speaker, question, heard_at))
 
+    def _role(self, speaker: Speaker) -> str:
+        """Who a speaker is to this agent, from server-assigned identities (never names)."""
+        if speaker.identity == self.me.identity:
+            return "you"
+        if self.me.owner_identity is not None and speaker.identity == self.me.owner_identity:
+            return "owner"
+        return "agent" if speaker.kind == "agent" else "guest"
+
     def _allowed(self, asker: Speaker) -> bool:
         if asker.kind != "agent":
             return True
@@ -166,7 +177,7 @@ class Agent:
             return
         try:
             answer = await self.brain.answer(
-                question=question, asker=asker, transcript=self.transcript.render()
+                question=question, asker=asker, transcript=self.transcript.render(roles=self._role)
             )
         except BrainError:
             answer = APOLOGY

@@ -2,7 +2,7 @@
 
 import pytest
 
-from mooz_agent.brain import ToolCall
+from mooz_agent.brain import MEMORY_HEADING, ToolCall
 from mooz_agent.providers.fakes import OfflineModel
 from mooz_agent.tools.toolbox import ToolResult, ToolSpec
 
@@ -64,7 +64,7 @@ async def test_answers_from_tool_results() -> None:
 async def test_memory_and_sources_come_from_the_system_prompt() -> None:
     system = (
         "You are Atlas.\n\nFolders and repositories you can read for this person: site.\n\n"
-        "What you remember (newest last):\n- [m_1] the office is in Honolulu"
+        f"{MEMORY_HEADING}- [m_1] the office is in Honolulu\n\nNotes from past meetings…"
     )
     conversation = OfflineModel().conversation(system=system, tools=[])
     remembered = await conversation.send(asked("what do you remember?"))

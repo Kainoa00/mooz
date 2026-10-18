@@ -17,6 +17,8 @@ from rapidfuzz import fuzz
 log = logging.getLogger(__name__)
 
 MAX_NOTE_CHARS = 20_000
+# Notes an agent saved from meetings (as opposed to facts its owner told it).
+MEETING_NOTES_TAG = "meeting-notes"
 _WORD = re.compile(r"[A-Za-z0-9']+")
 _STOP = frozenset(
     "the and for are was were what when where who why how does did can could would should "
@@ -123,14 +125,21 @@ class MemoryStore:
         scored.sort(key=lambda s: (s[0], s[1]), reverse=True)
         return [note for _, _, note in scored[:limit]]
 
-    def context_block(self, *, owner: bool, budget_chars: int = 6000) -> str:
-        """The newest in-scope notes that fit the budget, oldest first."""
+    def context_block(
+        self, *, owner: bool, budget_chars: int = 6000, exclude_tags: tuple[str, ...] = ()
+    ) -> str:
+        """The newest in-scope notes that fit the budget, oldest first.
+
+        A note too big for what's left is skipped, so one long note can't crowd out the rest.
+        """
         lines: list[str] = []
         size = 0
         for note in reversed(self.all(owner=owner)):
+            if any(tag in note.tags for tag in exclude_tags):
+                continue
             line = f"- [{note.id}] {note.text}"
             if size + len(line) + 1 > budget_chars:
-                break
+                continue
             lines.append(line)
             size += len(line) + 1
         return "\n".join(reversed(lines))
