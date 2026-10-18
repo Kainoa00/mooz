@@ -189,6 +189,47 @@ An agent that keeps notes must:
 A bridge that keeps notes silently can't be detected. The guarantee covers the bridge mooz
 ships, and the visible banner is what makes consent socially enforceable.
 
+### Background tasks
+
+An agent can work on something for its owner in the background and report back later. Only
+the owner (the asker's identity equals the agent's `owner_id`) may start or cancel a task.
+Everyone sees that it exists, the same transparency as the notes banner.
+
+**Task updates** are LiveKit text streams on topic `mooz.tasks`, one JSON object per stream,
+sent whenever a task changes:
+
+```json
+{
+  "type": "task", "id": "t_0a1b2c3d", "state": "working",
+  "title": "Look into why CI is flaky", "owner": "p_kai", "private": false,
+  "progress": ["Checking CI on main"], "summary": "", "details": "", "error": "",
+  "created_at": 1792355314.2, "updated_at": 1792355318.9, "seq": 3
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `id` | Unique per agent, not across agents. Browsers key tasks by sender identity and `id` |
+| `state` | `queued` → `working` → `done`, `failed` or `cancelled` |
+| `owner` | The identity of the person who asked, always the agent's own `owner_id` |
+| `progress` | The latest few steps (at most 5), written by the bridge, not the model |
+| `summary`, `details` | The result: the short spoken version and the longer chat text (`done` only) |
+| `seq` | Increases with every update. Ignore an update older than one you already have |
+
+- A **public** task goes to everyone. A **private** one goes in full only to its owner
+  (`destination_identities`); everyone else gets the same event with `title` set to
+  `"Private task"` and empty `progress`, `summary`, `details` and `error`.
+- Browsers trust an update only from an agent (`kind = agent`) whose `owner_id` equals the
+  update's `owner`, and drop an agent's tasks when it leaves.
+- On (re)connecting, browsers send `{"type": "tasks?"}` on the `mooz.v0` data topic. Answer
+  it, and also send every task to anyone who joins, addressed to them, because their query
+  can arrive before you've seen them join.
+- `{"type": "task.cancel", "id": "t_0a1b2c3d"}` on `mooz.v0`, addressed to the agent, cancels
+  a task. Honor it only from the owner.
+- When a task is done, post the result to chat (a private one only to the owner, with
+  `destination_identities`) and save it to the owner's private memory. Speak a public result
+  only at a pause in the conversation, never a private one.
+
 ## Changelog
 
 - **v0** (M1): bridge door, single-use tokens, host approval and removal, `lk.chat`.
@@ -196,3 +237,7 @@ ships, and the visible banner is what makes consent socially enforceable.
   attribute, `mooz.v0` notes signals and `notes?` queries, and the `reply_to` and `sources` chat
   attributes.
   All additive; M1 agents keep working.
+- **v0** (M3): background tasks: `mooz.tasks` task updates, `tasks?` queries and
+  `task.cancel` on `mooz.v0`, and chat messages addressed to one person (private results). A
+  task's report carries `reply_to` (its owner) and `sources` (whose words the task was given).
+  All additive; M2 agents keep working.

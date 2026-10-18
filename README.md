@@ -66,6 +66,10 @@ memory and a choice of brain, see [Your personal agent](#your-personal-agent).
 - **Answering:** the brain (Claude or Grok) and ElevenLabs voice are billed only when someone
   actually talks to the agent. A question that reads files costs a few model calls.
 - **Notes:** one summary call every 15 minutes while notes are on.
+- **Background research:** a task thinks harder and can take up to 30 model calls, so it costs
+  more than a question. Web search is billed on top: up to 5 searches per task (Claude charges
+  $10 per 1,000, and the results count as input tokens; xAI bills each search call). A meeting
+  allows at most 20 tasks.
 
 ElevenLabs runs in zero-retention mode, so it keeps no audio.
 
@@ -133,6 +137,51 @@ What it can't catch: someone else repeating what you said in their own words, or
 that isn't built on mooz and doesn't mark its replies. Agents still hear you live, so they
 notice when they're addressed.
 
+### Background research
+
+Hand your agent something that takes longer than a quick answer. It says "On it", keeps
+answering questions meanwhile, and reports back when it's done: in chat right away, and by
+voice at the next pause in the conversation (it waits up to 90 seconds, then leaves it to chat).
+
+| Say | What happens |
+|---|---|
+| "Atlas, look into why CI is flaky" (or research, dig into, investigate, find out, figure out) | Starts a task. Only you, its owner, can start one |
+| "Atlas, what are you working on?" | Lists its tasks |
+| "Atlas, stop that" | Stops your latest task. Or click **Cancel** in the task panel |
+| "Atlas, research the pricing page privately" (or "just for me") | Only you get the result: as a direct chat message, never by voice |
+
+Everyone sees an **Agent tasks** panel with what each agent is working on, including people who
+join later. A private task shows only "🔒 Private task for Zach" and its state. Your request
+itself is still heard (or read in chat) by everyone; only the result is private.
+
+A task reads your private folders, repos and memory, like your own questions do. It also
+continues a question of yours that needs more digging than a quick answer allows ("This needs
+more digging. I'll keep at it and report back."). Guests' questions never become tasks.
+Results are saved to your private memory (tagged `task-result`). If the meeting ends while a
+task is running, the agent finishes it and saves it before leaving; Ctrl-C stops at once.
+
+Limits: 2 tasks at a time (more wait their turn), 20 per meeting, 10 minutes each.
+
+**GitHub.** Add a repository to let the agent read its issues, pull requests (with reviews,
+changed files and checks) and CI runs. It can't change anything there. Set `GITHUB_TOKEN`
+(a fine-grained token with read-only access is best); public repos work without one, at
+GitHub's lower rate limit. The same public/private rules as folders apply.
+
+```bash
+uv run mooz-agent sources add github:acme/site --agent Atlas            # only you
+uv run mooz-agent sources add github:acme/docs --public --agent Atlas   # anyone may ask
+```
+
+**Web search.** Your tasks may search the web: Claude's web search, or xAI's for Grok. It's
+never available for guests' questions, and the agent can't open arbitrary links (that would be
+a way to leak what it can read). Each task gets at most 5 searches (with Grok, one step can run
+a few more before it stops offering search). Turn it off with
+`init --no-web-search`, or `web_search = false` in `agent.toml`.
+
+What a task reads (issues, pull requests, web pages, files) can try to steer it. The agent is
+told to treat all of it as information, never instructions, and it can't write anywhere, but
+no model is perfect. For anything sensitive, ask for the result privately.
+
 **Choosing a brain.**
 
 | Brain | Set up with | Key | Default model (override) |
@@ -182,7 +231,7 @@ The project's planning documents are in `.claude/prds/` (requirements) and `.cla
 |---|---|
 | **M1 ✅ First agent in the room** | Meet by link. Host-approved agents that answer by voice and chat when addressed |
 | **M2 ✅ Personal agent with memory** | Claude or Grok brains, memory across meetings, your repos and folders, owner-only access, opt-in meeting notes |
-| M3 Async research tasks | "On it". It works in the background and reports back mid-meeting |
+| M3 Async research tasks | "On it". It works in the background (your files, GitHub, the web) and reports back mid-meeting |
 | M4 Connector | Bring the Grok / Claude / ChatGPT app you already use, with its memory, via a private MCP link |
 | M5 Many agents | One speaker at a time, agent-to-agent conversations with a "Continue?" pause |
 | M6 Local voice and launch | VoiceStudio / any OpenAI-compatible local speech server, VPS guide, security hardening |
@@ -192,8 +241,9 @@ The project's planning documents are in `.claude/prds/` (requirements) and `.cla
 Hosts approve every agent, codes are single-use, and agent tokens are single-issue and
 short-lived. Agents can publish only audio and chat, and can't relabel themselves. An agent's
 file and git tools are read-only, confined to the owner's chosen folders, and can't run
-programs from a repository (git filters, hooks and the like are disabled). Who may see what is
-decided by the server-assigned identity of whoever asks. See
+programs from a repository (git filters, hooks and the like are disabled). GitHub access is
+read-only, and web search is only for the owner's background tasks, with no way to open links.
+Who may see what is decided by the server-assigned identity of whoever asks. See
 [`docs/protocol.md`](docs/protocol.md#4-access-and-consent). The
 local `docker compose` setup uses LiveKit's public dev keys and listens only on localhost.
 **Don't expose it to a network as-is.** Outside localhost, the server refuses weak LiveKit
