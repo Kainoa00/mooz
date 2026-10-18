@@ -9,7 +9,7 @@ Today a question that needs real digging runs into the 20-second spoken budget: 
 
 Research covers the owner's folders and repos (from M2), their **GitHub** issues, PRs and CI (moved here from M2), and optionally **the web**. Only the owner can start tasks, as the PRD requires. Everyone can see what an agent is working on, the same transparency principle as the notes banner.
 
-## Decisions (proposed, need confirmation)
+## Decisions (confirmed 2026-10-18)
 1. **Web research.** Owner tasks can search the web: Claude's server-side `web_search_20260209`, and xAI's `{"type": "web_search"}` for Grok. It's on by default for owner tasks, never available for guests' questions, and can be turned off per agent (`web_search = false` in `agent.toml`). It costs the owner's provider usage, capped at 5 searches per task. Web fetch (opening arbitrary URLs) stays off: it would be an exfiltration channel for anything the agent can read.
 2. **Private results.** If the owner says "…privately" or "…just for me", the result goes only to the owner: their task panel, plus a direct chat message to them. Nothing is spoken. Everyone else sees "🔒 Private task for Kainoa" with its status but not its title. By default, results go to the room as the PRD says.
 3. **GitHub.** Read-only: issues, PRs (with review state and changed files) and CI check status. The owner provides a `GITHUB_TOKEN`; a fine-grained, read-only token is recommended. Repos are added like folders, with the same private and public rules: `mooz-agent sources add github:owner/repo [--public]`. Writing to GitHub (comments, issues) waits for a later milestone.
