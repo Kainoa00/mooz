@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import { guestPage, joinAs, startMeeting } from "./fixtures";
 
 test("only the host can allow agent notes, and the choice outlives a reload", async ({ page, browser }) => {
+  test.setTimeout(120_000); // two people, a reload and a rejoin, all with live video
   const slug = await startMeeting(page);
   await joinAs(page, "Kainoa");
   const zach = await guestPage(browser, slug);

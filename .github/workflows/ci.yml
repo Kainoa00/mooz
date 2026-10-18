@@ -18,7 +18,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm -C apps/web lint
       - run: pnpm -C apps/web typecheck
-      - run: pnpm -C apps/web test -- --coverage
+      - run: pnpm -C apps/web exec vitest run --coverage
 
   bridge:
     runs-on: ubuntu-latest
