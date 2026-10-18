@@ -117,3 +117,22 @@ def test_context_block_skips_what_doesnt_fit_and_leaves_out_tagged_notes(
 
     assert "Deploy freeze" in block and "Honolulu" in block
     assert "Meeting notes" not in block and "xxxx" not in block
+
+
+def test_two_processes_see_and_keep_each_others_changes(tmp_path: Path) -> None:
+    path = tmp_path / "agents" / "atlas" / "memory.jsonl"
+    agent = MemoryStore(path)  # the running agent
+    kept = agent.remember("Our office is in Honolulu", public=True)
+    cli = MemoryStore(path)  # `mooz-agent memory ...` in another terminal
+
+    added = cli.remember("Deploy freeze starts Friday", public=False)
+    cli.forget(kept.id)
+
+    # The agent sees both changes, and its own next write doesn't undo them.
+    assert [n.text for n in agent.all(owner=True)] == ["Deploy freeze starts Friday"]
+    agent.remember("Standup is at 9", public=False)
+    assert {n.id for n in MemoryStore(path).all(owner=True)} == {
+        added.id,
+        agent.all(owner=True)[-1].id,
+    }
+    assert sorted(p.name for p in path.parent.iterdir()) == ["memory.jsonl", "memory.lock"]

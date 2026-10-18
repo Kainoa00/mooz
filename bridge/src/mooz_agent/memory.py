@@ -7,10 +7,18 @@ import logging
 import os
 import re
 import secrets
+import tempfile
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+
+try:
+    import fcntl
+except ImportError:  # Windows: no cross-process lock; one writer at a time is up to you
+    fcntl = None  # type: ignore[assignment]
 
 from rapidfuzz import fuzz
 
@@ -42,10 +50,46 @@ def _words(text: str) -> list[str]:
 
 
 class MemoryStore:
+    """Notes in a JSONL file that a running agent and the CLI can both change safely.
+
+    Every read picks up changes made by another process, and every write happens under a
+    file lock on the latest contents, so neither side can undo the other's changes.
+    """
+
     def __init__(self, path: Path) -> None:
         self.path = path
         self._lock = threading.Lock()  # tool calls run in worker threads
-        self._notes: list[Note] = self._load()
+        self._stamp: tuple[int, int, int] | None = None
+        self._notes: list[Note] = []
+        self._refresh()
+
+    def _current_stamp(self) -> tuple[int, int, int] | None:
+        try:
+            st = self.path.stat()
+        except FileNotFoundError:
+            return None
+        return (st.st_mtime_ns, st.st_size, st.st_ino)
+
+    def _refresh(self) -> None:
+        """Reload if the file changed since we last read or wrote it."""
+        stamp = self._current_stamp()
+        if stamp != self._stamp:
+            self._notes = self._load()
+            self._stamp = stamp
+
+    @contextmanager
+    def _writing(self) -> Iterator[None]:
+        """Hold the thread and file locks, with the latest notes loaded."""
+        self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        with self._lock:
+            fd = os.open(self.path.with_suffix(".lock"), os.O_RDWR | os.O_CREAT, 0o600)
+            try:
+                if fcntl is not None:
+                    fcntl.flock(fd, fcntl.LOCK_EX)
+                self._notes = self._load()
+                yield
+            finally:
+                os.close(fd)  # closing releases the lock
 
     def _load(self) -> list[Note]:
         if not self.path.exists():
@@ -70,20 +114,26 @@ class MemoryStore:
         return notes
 
     def _save(self) -> None:
-        self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(".tmp")
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as f:
-            for note in self._notes:
-                f.write(json.dumps(asdict(note)) + "\n")
-        os.chmod(tmp, 0o600)
-        tmp.replace(self.path)
+        # A unique temp file (mkstemp creates it 0600), renamed over the real one atomically.
+        fd, tmp = tempfile.mkstemp(dir=self.path.parent, prefix=".memory-", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as f:
+                for note in self._notes:
+                    f.write(json.dumps(asdict(note)) + "\n")
+            os.replace(tmp, self.path)
+        except BaseException:
+            Path(tmp).unlink(missing_ok=True)
+            raise
+        self._stamp = self._current_stamp()
 
     def all(self, *, owner: bool) -> list[Note]:
-        return [n for n in self._notes if owner or n.public]
+        with self._lock:
+            self._refresh()
+            notes = list(self._notes)
+        return [n for n in notes if owner or n.public]
 
     def get(self, note_id: str) -> Note | None:
-        return next((n for n in self._notes if n.id == note_id), None)
+        return next((n for n in self.all(owner=True) if n.id == note_id), None)
 
     def remember(self, text: str, *, public: bool, tags: list[str] | None = None) -> Note:
         text = text.strip()
@@ -98,13 +148,13 @@ class MemoryStore:
             created_at=time.time(),
             tags=list(tags or []),
         )
-        with self._lock:
+        with self._writing():
             self._notes.append(note)
             self._save()
         return note
 
     def forget(self, note_id: str) -> bool:
-        with self._lock:
+        with self._writing():
             before = len(self._notes)
             self._notes = [n for n in self._notes if n.id != note_id]
             if len(self._notes) == before:
