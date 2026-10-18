@@ -1,5 +1,5 @@
-import { expect, test } from "@playwright/test";
-import { guestPage, joinAs, startMeeting } from "./fixtures";
+import { expect } from "@playwright/test";
+import { guestPage, joinAs, startMeeting, test } from "./fixtures";
 
 test("a guest's agent waits for the host, who approves it", async ({ page, browser, request }) => {
   const slug = await startMeeting(page);

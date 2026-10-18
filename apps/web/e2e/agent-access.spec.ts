@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { expect, test, type Page } from "@playwright/test";
-import { bridgeCommand, bringAgent, guestPage, joinAs, sendChat, startMeeting, tempHome } from "./fixtures";
+import { expect, type Page } from "@playwright/test";
+import { bridgeCommand, bringAgent, guestPage, joinAs, sendChat, startMeeting, tempHome, test } from "./fixtures";
 
 const lastAgentReply = (p: Page) =>
   p.locator('[data-testid="chat-message"][data-kind="agent"] [data-testid="chat-text"]').last();

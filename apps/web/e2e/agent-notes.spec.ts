@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { expect, test, type Page } from "@playwright/test";
-import { bringAgent, guestPage, joinAs, sendChat, startMeeting } from "./fixtures";
+import { expect, type Page } from "@playwright/test";
+import { bringAgent, guestPage, joinAs, sendChat, startMeeting, test } from "./fixtures";
 
 const BANNER = "📝 Zach's Atlas is keeping notes";
 

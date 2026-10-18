@@ -2,9 +2,23 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { expect, type Browser, type Page } from "@playwright/test";
+import { test as base, expect, type Browser, type Page } from "@playwright/test";
 
 const BRIDGE_DIR = process.env.MOOZ_BRIDGE_DIR ?? path.resolve(__dirname, "../../../bridge");
+
+/**
+ * Playwright's `test`, plus: guests' browser contexts close when the test ends. Left open, their
+ * video calls carry on through every later test and starve the machine.
+ */
+export const test = base.extend<{ closeGuests: void }>({
+  closeGuests: [
+    async ({ browser, context }, use) => {
+      await use();
+      await Promise.all(browser.contexts().filter((c) => c !== context).map((c) => c.close()));
+    },
+    { auto: true },
+  ],
+});
 
 export async function startMeeting(page: Page): Promise<string> {
   await page.goto("/");

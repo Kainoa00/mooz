@@ -1,5 +1,5 @@
-import { expect, test } from "@playwright/test";
-import { connectAgent, guestPage, joinAs, sendChat, startMeeting } from "./fixtures";
+import { expect } from "@playwright/test";
+import { connectAgent, guestPage, joinAs, sendChat, startMeeting, test } from "./fixtures";
 
 test("a guest brings their agent; it answers when addressed and the host can remove it", async ({
   page,

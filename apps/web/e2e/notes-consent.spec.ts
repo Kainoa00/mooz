@@ -1,5 +1,5 @@
-import { expect, test } from "@playwright/test";
-import { guestPage, joinAs, startMeeting } from "./fixtures";
+import { expect } from "@playwright/test";
+import { guestPage, joinAs, startMeeting, test } from "./fixtures";
 
 test("only the host can allow agent notes, and the choice outlives a reload", async ({ page, browser }) => {
   test.setTimeout(120_000); // two people, a reload and a rejoin, all with live video
