@@ -81,6 +81,8 @@ class FakeBrain:
 # -- the offline model ---------------------------------------------------------------
 
 ASKED = " just asked you: "
+SUMMARY_MARKER = "keeping meeting notes"
+_TRANSCRIPT = re.compile(r"<transcript>\n(.*)\n</transcript>", re.S)
 MEMORY_HEADING = "What you remember (newest last):\n"
 SOURCES_LINE = re.compile(
     r"^(?:Folders and repositories you can read|You have no folders).*$", re.M
@@ -128,6 +130,12 @@ class OfflineConversation:
     async def send(self, user: str) -> ModelTurn:
         from ..brain import ModelTurn
 
+        if SUMMARY_MARKER in self._system:
+            # "Summarize" by keeping every line, so tests can see exactly what reached it.
+            match = _TRANSCRIPT.search(user)
+            return ModelTurn(
+                answer=Answer("Meeting notes.", details=match.group(1) if match else "")
+            )
         question = user.rsplit(ASKED, 1)[-1].strip()
         phrase = question.rstrip("?.! ")
         lowered = phrase.lower()

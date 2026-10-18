@@ -38,7 +38,7 @@ class TranscriptBuffer:
         lines: list[str] = []
         size = 0
         for u in reversed(self.recent()):
-            line = f"{_label(u)}: {u.text}"
+            line = render_line(u)
             added = len(line) + (1 if lines else 0)
             if size + added > max_chars:
                 break
@@ -50,6 +50,10 @@ class TranscriptBuffer:
         cutoff = self._clock() - self._window
         while self._items and self._items[0].timestamp < cutoff:
             self._items.popleft()
+
+
+def render_line(u: Utterance) -> str:
+    return f"{_label(u)}: {u.text}"
 
 
 def _label(u: Utterance) -> str:

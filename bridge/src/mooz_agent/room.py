@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from collections.abc import Callable
@@ -14,6 +15,9 @@ from livekit import rtc
 log = logging.getLogger(__name__)
 
 CHAT_TOPIC = "lk.chat"
+# mooz's own messages between agents and browsers (see apps/web/lib/notes-protocol.ts).
+MOOZ_TOPIC = "mooz.v0"
+NOTES_OPT_OUT_ATTRIBUTE = "notes_opt_out"
 SAMPLE_RATE = 48_000
 NUM_CHANNELS = 1
 # Leave this long after the last person does, so the agent doesn't keep an empty room open.
@@ -61,6 +65,7 @@ def speaker_from_participant(p: _ParticipantLike) -> Speaker:
 ChatHandler = Callable[[ChatMessage], None]
 TrackHandler = Callable[[Speaker, rtc.Track], None]
 TrackEndedHandler = Callable[[str], None]
+JoinHandler = Callable[[Speaker], None]
 
 
 class MeetingRoom:
@@ -73,6 +78,9 @@ class MeetingRoom:
         self.on_chat: ChatHandler | None = None
         self.on_human_track: TrackHandler | None = None
         self.on_human_track_ended: TrackEndedHandler | None = None
+        self.on_participant_joined: JoinHandler | None = None
+        self.on_notes_policy_changed: Callable[[], None] | None = None
+        self._opted_out: set[str] = set()
         self._closed = asyncio.Event()
         self._audio_sid: dict[str, str] = {}
         self._alone_timer: asyncio.TimerHandle | None = None
@@ -89,10 +97,14 @@ class MeetingRoom:
         self._room.on("track_subscribed", self._handle_track_subscribed)
         self._room.on("track_unsubscribed", self._handle_track_unsubscribed)
         self._room.on("disconnected", lambda *_: self._closed.set())
-        self._room.on("participant_connected", self._handle_participant_change)
+        self._room.on("participant_connected", self._handle_participant_connected)
         self._room.on("participant_disconnected", self._handle_participant_change)
+        self._room.on("participant_attributes_changed", self._handle_attributes_changed)
+        self._room.on("room_metadata_changed", self._handle_metadata_changed)
         self._room.register_text_stream_handler(CHAT_TOPIC, self._handle_chat_stream)
         await self._room.connect(url, token, rtc.RoomOptions(auto_subscribe=True))
+        for participant in self._room.remote_participants.values():
+            self._track_opt_out(participant)
         track = rtc.LocalAudioTrack.create_audio_track("agent-voice", self.voice)
         options = rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE)
         await self._room.local_participant.publish_track(track, options)
@@ -105,6 +117,53 @@ class MeetingRoom:
                 track = publication.track
                 if publication.subscribed and track is not None:
                     self._handle_track_subscribed(track, publication, participant)
+
+    # -- meeting notes consent (set only by the mooz server) ----------------------
+
+    def notes_allowed(self) -> bool:
+        """Whether the host allows agent notes: room metadata {"notes_allowed": true}."""
+        try:
+            data = json.loads(self._room.metadata or "{}")
+        except ValueError:
+            return False
+        return isinstance(data, dict) and data.get("notes_allowed") is True
+
+    def is_opted_out(self, identity: str) -> bool:
+        """Whether this person asked to be left out of notes (remembered after they leave)."""
+        participant = self._room.remote_participants.get(identity)
+        if participant is not None:
+            self._track_opt_out(participant)
+        return identity in self._opted_out
+
+    def _track_opt_out(self, participant: rtc.RemoteParticipant) -> None:
+        if (participant.attributes or {}).get(NOTES_OPT_OUT_ATTRIBUTE) == "1":
+            self._opted_out.add(participant.identity)
+        else:
+            self._opted_out.discard(participant.identity)
+
+    def _handle_attributes_changed(
+        self, _changed: dict[str, str], participant: rtc.Participant
+    ) -> None:
+        if isinstance(participant, rtc.RemoteParticipant):
+            self._track_opt_out(participant)
+
+    def _handle_metadata_changed(self, _old: str, _new: str) -> None:
+        if self.on_notes_policy_changed:
+            self.on_notes_policy_changed()
+
+    async def send_signal(self, message: dict[str, object], to: list[str] | None = None) -> None:
+        """A mooz.v0 message to everyone, or only to `to`. LiveKit stamps us as the sender."""
+        await self._room.local_participant.publish_data(
+            json.dumps(message), reliable=True, topic=MOOZ_TOPIC, destination_identities=to or []
+        )
+
+    # -- presence ------------------------------------------------------------------
+
+    def _handle_participant_connected(self, participant: rtc.RemoteParticipant) -> None:
+        self._track_opt_out(participant)
+        self._handle_participant_change(participant)
+        if self.on_participant_joined:
+            self.on_participant_joined(speaker_from_participant(participant))
 
     def _handle_participant_change(self, _participant: rtc.RemoteParticipant) -> None:
         humans = [p for p in self.participants() if p.kind == "human"]

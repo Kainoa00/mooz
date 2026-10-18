@@ -1,29 +1,5 @@
-import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtempSync } from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { expect, test } from "@playwright/test";
-import { guestPage, joinAs, sendChat, startMeeting } from "./fixtures";
-
-const BRIDGE_DIR = process.env.MOOZ_BRIDGE_DIR ?? path.resolve(__dirname, "../../../bridge");
-
-/** Run the real bridge CLI with offline providers (no API keys, no audio models). */
-function connectAgent(code: string, name: string, server: string): { proc: ChildProcess; output: () => string } {
-  let output = "";
-  const proc = spawn("uv", ["run", "mooz-agent", "connect", code, "--server", server, "--name", name], {
-    cwd: BRIDGE_DIR,
-    // A throwaway MOOZ_HOME so the agent's memory never lands in a real ~/.mooz.
-    env: {
-      ...process.env,
-      MOOZ_PROVIDERS: "fake",
-      MOOZ_HOME: mkdtempSync(path.join(os.tmpdir(), "mooz-e2e-")),
-      UV_NATIVE_TLS: undefined,
-    },
-  });
-  proc.stdout?.on("data", (d) => (output += d));
-  proc.stderr?.on("data", (d) => (output += d));
-  return { proc, output: () => output };
-}
+import { connectAgent, guestPage, joinAs, sendChat, startMeeting } from "./fixtures";
 
 test("a guest brings their agent; it answers when addressed and the host can remove it", async ({
   page,
@@ -39,7 +15,7 @@ test("a guest brings their agent; it answers when addressed and the host can rem
   await zach.getByRole("button", { name: "Bring my agent" }).click();
   const code = (await zach.getByTestId("agent-code").textContent())!;
   await zach.getByRole("button", { name: "Done" }).click();
-  const bridge = connectAgent(code, "Atlas", baseURL!);
+  const bridge = connectAgent(code, baseURL!, ["--name", "Atlas"]);
 
   try {
     // The host approves; until then nothing joins.

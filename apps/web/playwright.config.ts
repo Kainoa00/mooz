@@ -6,6 +6,8 @@ export default defineConfig({
   testDir: "./e2e",
   timeout: 60_000,
   fullyParallel: false,
+  // Every test runs real video calls (and some a real bridge); in parallel they starve the CPU.
+  workers: 1,
   retries: 0,
   reporter: process.env.CI ? "github" : "list",
   use: {

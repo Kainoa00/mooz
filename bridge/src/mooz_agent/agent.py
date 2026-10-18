@@ -13,8 +13,16 @@ from .brain import ToolLoopBrain
 from .claim import AgentGrant, ClaimError
 from .config import AgentConfig
 from .listening import Listener, track_frames
+from .notes import NOTES_INTERVAL_SECONDS, NotesKeeper, notes_command
 from .providers.base import Answer, Brain, BrainError, SpeechToText, TextToSpeech
-from .room import ChatHandler, ChatMessage, Speaker, TrackEndedHandler, TrackHandler
+from .room import (
+    ChatHandler,
+    ChatMessage,
+    JoinHandler,
+    Speaker,
+    TrackEndedHandler,
+    TrackHandler,
+)
 from .speaking import Mouth
 from .transcript import TranscriptBuffer, Utterance
 
@@ -28,6 +36,10 @@ MAX_AGENT_STREAK = 3
 APOLOGY = Answer("Sorry, I couldn't think that through just now. Please try again.")
 # Said out loud (not posted to chat) when an answer needs tools, so the room isn't left in silence.
 FILLER = Answer("One sec, checking.")
+NOTES_ON: dict[str, object] = {"type": "notes", "state": "on"}
+NOTES_OFF: dict[str, object] = {"type": "notes", "state": "off"}
+# Give someone who just joined a moment to start listening before telling them about notes.
+LATE_JOINER_DELAY = 1.0
 
 
 class AgentRoom(Protocol):
@@ -42,9 +54,16 @@ class AgentRoom(Protocol):
     on_chat: ChatHandler | None
     on_human_track: TrackHandler | None
     on_human_track_ended: TrackEndedHandler | None
+    on_participant_joined: JoinHandler | None
+    on_notes_policy_changed: Callable[[], None] | None
 
     def send_chat(self, text: str) -> Awaitable[None]: ...
     def replay_tracks(self) -> None: ...
+    def notes_allowed(self) -> bool: ...
+    def is_opted_out(self, identity: str) -> bool: ...
+    def send_signal(
+        self, message: dict[str, object], to: list[str] | None = None
+    ) -> Awaitable[None]: ...
 
 
 class Agent:
@@ -72,6 +91,17 @@ class Agent:
         self._follow_up: dict[str, float] = {}
         self._agent_streak = 0
         self._tasks: set[asyncio.Task[None]] = set()
+        # Meeting notes need a brain that can summarize and a memory to keep them in.
+        self.notes: NotesKeeper | None = None
+        if isinstance(brain, ToolLoopBrain) and brain.memory is not None:
+            self.notes = NotesKeeper(
+                summarizer=brain, memory=brain.memory, opted_out=self._opted_out
+            )
+        self.notes_interval = NOTES_INTERVAL_SECONDS
+        self.late_joiner_delay = LATE_JOINER_DELAY
+        self._notes_timer: asyncio.Task[None] | None = None
+        owner = self.me.owner_name
+        self._display_name = f"{owner}'s {self.me.name}" if owner else self.me.name
 
     def wire(self) -> None:
         self.room.on_human_track = lambda speaker, track: self.listener.attach(
@@ -79,6 +109,8 @@ class Agent:
         )
         self.room.on_human_track_ended = self.listener.detach
         self.room.on_chat = self.on_chat
+        self.room.on_participant_joined = self._on_joined
+        self.room.on_notes_policy_changed = self._on_notes_policy_changed
         # People already in the room published before these handlers existed.
         self.room.replay_tracks()
 
@@ -88,6 +120,7 @@ class Agent:
     def on_utterance(self, u: Utterance) -> None:
         heard_at = self._clock()
         self.transcript.add(u)
+        self._note(u)
         if u.speaker.kind == "human":
             self._agent_streak = 0
 
@@ -127,6 +160,10 @@ class Agent:
 
     async def _respond(self, asker: Speaker, question: str, heard_at: float) -> None:
         log.info("%s asked: %s", asker.name, question)
+        command = notes_command(question)
+        if command is not None:
+            await self._say(await self._notes_command(asker, command), heard_at)
+            return
         try:
             answer = await self.brain.answer(
                 question=question, asker=asker, transcript=self.transcript.render()
@@ -155,7 +192,101 @@ class Agent:
         except Exception:
             log.exception("could not say the answer (it may have reached chat only)")
         finally:
-            self.transcript.add(Utterance(self.me, answer.spoken, time.time(), "chat"))
+            said = Utterance(self.me, answer.spoken, time.time(), "chat")
+            self.transcript.add(said)
+            self._note(said)
+
+    # -- meeting notes -------------------------------------------------------------
+
+    def _opted_out(self, identity: str) -> bool:
+        return self.room.is_opted_out(identity)
+
+    def _note(self, u: Utterance) -> None:
+        if self.notes is not None and self.notes.hear(u):
+            self._spawn(self._flush_notes())  # the log is full: summarize this chunk now
+
+    async def _flush_notes(self) -> None:
+        assert self.notes is not None
+        try:
+            await self.notes.flush()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("could not save meeting notes (will try again)")
+
+    async def _notes_loop(self) -> None:
+        while self.notes is not None and self.notes.active:
+            await asyncio.sleep(self.notes_interval)
+            if self.notes.active:
+                # Shielded: stopping notes must not cut a summary off halfway.
+                await asyncio.shield(self._flush_notes())
+
+    async def _notes_command(self, asker: Speaker, command: str) -> Answer:
+        owner = self.me.owner_name or "my owner"
+        if self.me.owner_identity is None or asker.identity != self.me.owner_identity:
+            return Answer(f"Only {owner} can ask me to keep notes.")
+        if self.notes is None:
+            return Answer("I can't keep notes with this setup.")
+        if command == "off":
+            if not self.notes.active:
+                return Answer("I'm not keeping notes.")
+            await self._stop_notes()
+            return Answer("Okay, I've stopped keeping notes and saved them.")
+        if self.notes.active:
+            return Answer("I'm already keeping notes.")
+        if not self.room.notes_allowed():
+            return Answer("The host hasn't allowed agent notes in this meeting.")
+        # Everyone is told before the first line is kept, or notes don't start at all.
+        try:
+            await self.room.send_signal(NOTES_ON)
+            await self.room.send_chat(
+                f"📝 {self._display_name} is keeping notes. "
+                'Anyone can choose "Leave me out" to stay out of them.'
+            )
+        except Exception:
+            log.exception("could not announce meeting notes")
+            return Answer("I couldn't let everyone know, so I'm not keeping notes.")
+        self.notes.start()
+        self._notes_timer = asyncio.ensure_future(self._notes_loop())
+        return Answer("Okay, I'm keeping notes. Anyone can choose Leave me out.")
+
+    async def _stop_notes(self, chat: str | None = None) -> None:
+        if self.notes is None or not self.notes.active:
+            return
+        self.notes.active = False  # stop logging right away
+        if self._notes_timer:
+            self._notes_timer.cancel()
+            self._notes_timer = None
+        try:
+            await self.room.send_signal(NOTES_OFF)
+            await self.room.send_chat(chat or f"📝 {self._display_name} stopped keeping notes.")
+        except Exception:
+            log.exception("could not announce that notes stopped")
+        try:
+            await self.notes.stop()
+        except Exception:
+            log.exception("could not save meeting notes")
+
+    def _on_joined(self, speaker: Speaker) -> None:
+        if self.notes is not None and self.notes.active and speaker.kind == "human":
+            self._spawn(self._tell_late_joiner(speaker.identity))
+
+    async def _tell_late_joiner(self, identity: str) -> None:
+        await asyncio.sleep(self.late_joiner_delay)
+        if self.notes is not None and self.notes.active:
+            try:
+                await self.room.send_signal(NOTES_ON, to=[identity])
+            except Exception:
+                log.exception("could not tell a late joiner about notes")
+
+    def _on_notes_policy_changed(self) -> None:
+        if self.notes is not None and self.notes.active and not self.room.notes_allowed():
+            self._spawn(
+                self._stop_notes(
+                    f"📝 The host turned off agent notes, so {self._display_name} stopped "
+                    "keeping them."
+                )
+            )
 
     def _spawn(self, coro: Awaitable[None]) -> None:
         task: asyncio.Task[None] = asyncio.ensure_future(coro)
@@ -176,6 +307,14 @@ class Agent:
         for task in list(self._tasks):
             task.cancel()
         await asyncio.gather(*list(self._tasks), return_exceptions=True)
+        if self._notes_timer:
+            self._notes_timer.cancel()
+        if self.notes is not None and self.notes.active:
+            # The meeting ended for us: save what's left (the room may already be gone).
+            try:
+                await self.notes.stop()
+            except Exception:
+                log.exception("could not save meeting notes at the end of the meeting")
         await self.listener.aclose()
 
 

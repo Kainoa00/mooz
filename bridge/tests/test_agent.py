@@ -34,11 +34,21 @@ class FakeRoom:
         self.on_chat = None
         self.on_human_track = None
         self.on_human_track_ended = None
-
+        self.on_participant_joined = None
+        self.on_notes_policy_changed = None
         self.replayed = False
 
     async def send_chat(self, text: str) -> None:
         self.sent.append(text)
+
+    def notes_allowed(self) -> bool:
+        return False
+
+    def is_opted_out(self, identity: str) -> bool:
+        return False
+
+    async def send_signal(self, message: dict[str, object], to: list[str] | None = None) -> None:
+        pass
 
     def replay_tracks(self) -> None:
         self.replayed = True

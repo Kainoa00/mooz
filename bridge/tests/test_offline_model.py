@@ -75,3 +75,13 @@ async def test_memory_and_sources_come_from_the_system_prompt() -> None:
     empty = OfflineModel().conversation(system="You are Atlas.", tools=[])
     nothing = await empty.send(asked("what do you remember?"))
     assert nothing.answer is not None and "don't remember anything" in nothing.answer.spoken
+
+
+async def test_offline_summaries_keep_every_line_they_were_given() -> None:
+    conversation = OfflineModel().conversation(
+        system="You are Atlas, keeping meeting notes.", tools=[]
+    )
+    turn = await conversation.send(
+        "<transcript>\nKai: ship Friday\nLee: ok\n</transcript>\n\nWrite."
+    )
+    assert turn.answer is not None and turn.answer.details == "Kai: ship Friday\nLee: ok"
