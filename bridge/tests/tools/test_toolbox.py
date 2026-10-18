@@ -203,3 +203,74 @@ def test_agent_without_sources_or_memory_offers_no_file_tools(
 
     assert bare.specs(OWNER) == []
     assert "no folders" in bare.sources_summary(OWNER)
+
+
+# -- GitHub -----------------------------------------------------------------------------
+
+
+class FakeGitHub:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, tuple[object, ...]]] = []
+
+    def __getattr__(self, name: str):  # type: ignore[no-untyped-def]
+        def call(*args: object) -> str:
+            self.calls.append((name, args))
+            return f"{name} {args}"
+
+        return call
+
+
+@pytest.fixture
+def gh_box(box: ToolBox) -> tuple[ToolBox, FakeGitHub]:
+    box.config.add_github("acme/secret-app", label="secret-app")
+    box.config.add_github("acme/website", public=True)
+    fake = FakeGitHub()
+    box.github = fake  # type: ignore[assignment]
+    return box, fake
+
+
+def test_github_tools_follow_the_same_scope_rules(gh_box: tuple[ToolBox, FakeGitHub]) -> None:
+    box, fake = gh_box
+    github_tools = {"github_issues", "github_issue", "github_pulls", "github_pull", "github_ci"}
+    assert github_tools <= names(box, OWNER) and github_tools <= names(box, GUEST)
+    spec = next(s for s in box.specs(GUEST) if s.name == "github_issues")
+    assert spec.parameters["properties"]["source"]["enum"] == ["website"]
+
+    denied = box.dispatch("github_issues", {"source": "secret-app"}, GUEST)
+    assert denied.is_error and "No source called 'secret-app'" in denied.content
+    assert fake.calls == []
+
+    assert not box.dispatch("github_pull", {"source": "secret-app", "number": 5}, OWNER).is_error
+    assert not box.dispatch("github_ci", {"source": "website", "ref": None}, GUEST).is_error
+    assert fake.calls == [("pull", ("acme/secret-app", 5)), ("ci", ("acme/website", None))]
+
+
+def test_github_tools_need_github_sources(box: ToolBox) -> None:
+    assert not any(n.startswith("github_") for n in names(box, OWNER))
+
+
+def test_folder_tools_never_take_a_github_source(gh_box: tuple[ToolBox, FakeGitHub]) -> None:
+    box, _ = gh_box
+    result = box.dispatch("read_file", {"source": "website", "path": "x"}, OWNER)
+    assert result.is_error and "No source called 'website'" in result.content
+
+
+def test_progress_descriptions_are_built_from_arguments(gh_box: tuple[ToolBox, FakeGitHub]) -> None:
+    box, _ = gh_box
+    assert (
+        box.describe("read_file", {"source": "team-docs", "path": "notes.md"})
+        == "Reading notes.md in team-docs"
+    )
+    assert (
+        box.describe("github_issue", {"source": "website", "number": 12})
+        == "Reading issue #12 in website"
+    )
+    assert (
+        box.describe("github_ci", {"source": "website", "ref": None})
+        == "Checking CI on the default branch in website"
+    )
+    assert (
+        box.describe("search", {"query": "sk-ant-" + "q" * 40})
+        == "Searching your sources for '[redacted]'"
+    )
+    assert box.describe("mystery", {}) == "Working"

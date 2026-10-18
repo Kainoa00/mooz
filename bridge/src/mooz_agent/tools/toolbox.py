@@ -12,11 +12,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from ..config import AgentConfig, Source
+from ..config import AgentConfig, GitHubRepo, Source
 from ..memory import MemoryStore
 from ..transcript import flatten
 from . import files, git
 from .files import FileAccessError
+from .github import GitHub
 from .redact import redact
 
 log = logging.getLogger(__name__)
@@ -84,10 +85,18 @@ def _bool(args: dict[str, Any], key: str) -> bool:
 
 
 class ToolBox:
-    def __init__(self, config: AgentConfig, memory: MemoryStore | None, *, owner_name: str) -> None:
+    def __init__(
+        self,
+        config: AgentConfig,
+        memory: MemoryStore | None,
+        *,
+        owner_name: str,
+        github: GitHub | None = None,
+    ) -> None:
         self.config = config
         self.memory = memory
         self.owner_name = owner_name
+        self.github = github
         self._handlers: dict[str, Callable[[dict[str, Any], Scope], str]] = {
             "list_files": self._list_files,
             "read_file": self._read_file,
@@ -96,6 +105,11 @@ class ToolBox:
             "git_log": self._git_log,
             "git_show": self._git_show,
             "git_diff": self._git_diff,
+            "github_issues": self._github_issues,
+            "github_issue": self._github_issue,
+            "github_pulls": self._github_pulls,
+            "github_pull": self._github_pull,
+            "github_ci": self._github_ci,
             "recall": self._recall,
             "remember": self._remember,
             "forget": self._forget,
@@ -106,12 +120,24 @@ class ToolBox:
     def _visible(self, scope: Scope) -> list[Source]:
         return self.config.visible_sources(owner=scope.owner)
 
+    def _visible_github(self, scope: Scope) -> list[GitHubRepo]:
+        return self.config.visible_github(owner=scope.owner)
+
     def sources_summary(self, scope: Scope) -> str:
         sources = self._visible(scope)
-        if not sources:
+        repos = self._visible_github(scope)
+        if not sources and not repos:
             return "You have no folders or repositories you can read for this person."
-        listed = ", ".join(s.label for s in sources)
-        return f"Folders and repositories you can read for this person: {listed}."
+        parts = []
+        if sources:
+            listed = ", ".join(s.label for s in sources)
+            parts.append(f"Folders and repositories you can read for this person: {listed}.")
+        if repos:
+            listed = ", ".join(f"{g.label} ({g.repo})" for g in repos)
+            parts.append(
+                f"GitHub repositories (issues, pull requests, CI) for this person: {listed}."
+            )
+        return " ".join(parts)
 
     def specs(self, scope: Scope) -> list[ToolSpec]:
         out: list[ToolSpec] = []
@@ -181,6 +207,40 @@ class ToolBox:
                     ),
                 ),
             ]
+        repos = [g.label for g in self._visible_github(scope)]
+        if repos:
+            gh = {"type": "string", "enum": repos, "description": "Which GitHub repository"}
+            state = {"type": "string", "enum": ["open", "closed", "all"]}
+            number = {"type": "integer", "description": "Issue or pull request number"}
+            out += [
+                ToolSpec(
+                    "github_issues",
+                    "List a GitHub repository's issues, optionally matching some text.",
+                    _schema(
+                        {"source": gh, "state": state, "query": {"type": "string"}}, ["source"]
+                    ),
+                ),
+                ToolSpec(
+                    "github_issue",
+                    "Read one GitHub issue with its first comments.",
+                    _schema({"source": gh, "number": number}, ["source", "number"]),
+                ),
+                ToolSpec(
+                    "github_pulls",
+                    "List a GitHub repository's pull requests.",
+                    _schema({"source": gh, "state": state}, ["source"]),
+                ),
+                ToolSpec(
+                    "github_pull",
+                    "Read one pull request: description, reviews, changed files and CI checks.",
+                    _schema({"source": gh, "number": number}, ["source", "number"]),
+                ),
+                ToolSpec(
+                    "github_ci",
+                    "CI check results for a branch, tag or commit (default branch if omitted).",
+                    _schema({"source": gh, "ref": {"type": "string"}}, ["source"]),
+                ),
+            ]
         if self.memory is not None:
             out.append(
                 ToolSpec(
@@ -215,6 +275,10 @@ class ToolBox:
             text = value if isinstance(value, str) and value.strip() else default
             return redact(flatten(text))[:60]
 
+        def number() -> str:
+            value = args.get("number")
+            return str(value) if isinstance(value, int) and not isinstance(value, bool) else "?"
+
         source = arg("source", "your sources")
         descriptions: dict[str, Callable[[], str]] = {
             "list_files": lambda: f"Listing {arg('path', 'files')} in {source}",
@@ -224,6 +288,11 @@ class ToolBox:
             "git_log": lambda: f"Reading the history of {source}",
             "git_show": lambda: f"Looking at commit {arg('ref', 'HEAD')} in {source}",
             "git_diff": lambda: f"Comparing changes in {source}",
+            "github_issues": lambda: f"Checking issues in {source}",
+            "github_issue": lambda: f"Reading issue #{number()} in {source}",
+            "github_pulls": lambda: f"Checking pull requests in {source}",
+            "github_pull": lambda: f"Reading PR #{number()} in {source}",
+            "github_ci": lambda: f"Checking CI on {arg('ref', 'the default branch')} in {source}",
             "recall": lambda: f"Checking my memory for '{arg('query')}'",
             "remember": lambda: "Updating my memory",
             "forget": lambda: "Updating my memory",
@@ -298,6 +367,42 @@ class ToolBox:
     def _git_diff(self, args: dict[str, Any], scope: Scope) -> str:
         source = self._source(args, scope)
         return git.git_diff(source.path, _text(args, "ref_a"), _text(args, "ref_b"))
+
+    def _repo(self, args: dict[str, Any], scope: Scope) -> str:
+        label = _text(args, "source", required=True)
+        for repo in self._visible_github(scope):
+            if repo.label == label:
+                if self.github is None:
+                    raise FileAccessError("GitHub isn't set up for this agent")
+                return repo.repo
+        # Private repos and missing ones are indistinguishable to non-owners.
+        raise FileAccessError(f"No source called {label!r}")
+
+    def _github_client(self) -> GitHub:
+        assert self.github is not None
+        return self.github
+
+    def _github_issues(self, args: dict[str, Any], scope: Scope) -> str:
+        repo = self._repo(args, scope)
+        return self._github_client().issues(
+            repo, _text(args, "state") or "open", _text(args, "query")
+        )
+
+    def _github_issue(self, args: dict[str, Any], scope: Scope) -> str:
+        repo = self._repo(args, scope)
+        return self._github_client().issue(repo, _int(args, "number") or 0)
+
+    def _github_pulls(self, args: dict[str, Any], scope: Scope) -> str:
+        repo = self._repo(args, scope)
+        return self._github_client().pulls(repo, _text(args, "state") or "open")
+
+    def _github_pull(self, args: dict[str, Any], scope: Scope) -> str:
+        repo = self._repo(args, scope)
+        return self._github_client().pull(repo, _int(args, "number") or 0)
+
+    def _github_ci(self, args: dict[str, Any], scope: Scope) -> str:
+        repo = self._repo(args, scope)
+        return self._github_client().ci(repo, _text(args, "ref"))
 
     def _memory(self) -> MemoryStore:
         if self.memory is None:

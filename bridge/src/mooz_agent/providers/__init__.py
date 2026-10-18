@@ -51,17 +51,21 @@ def build_brain(model: Model, me: Speaker, config: AgentConfig) -> ToolLoopBrain
     """The tool loop with this agent's sources and memory, owned by whoever the room says."""
     from ..brain import ToolLoopBrain
     from ..memory import MemoryStore
+    from ..tools.github import GitHub
     from ..tools.toolbox import ToolBox
 
     owner_name = me.owner_name or "your owner"
     memory = MemoryStore(config.memory_path)
+    # A token is optional for public repos; private ones need GITHUB_TOKEN (read-only is best).
+    github = GitHub(os.environ.get("GITHUB_TOKEN") or None) if config.github else None
     return ToolLoopBrain(
         model=model,
         agent_name=me.name,
         owner_name=owner_name,
         owner_identity=me.owner_identity,
-        toolbox=ToolBox(config, memory, owner_name=owner_name),
+        toolbox=ToolBox(config, memory, owner_name=owner_name, github=github),
         memory=memory,
+        web_search=config.web_search,
     )
 
 

@@ -197,3 +197,18 @@ def test_memory_add_list_forget(capsys: pytest.CaptureFixture[str]) -> None:
     assert "public   Standup is at 9" in capsys.readouterr().out
     assert cli.main(["memory", "forget", note_id, "--agent", "Atlas"]) == 0
     assert cli.main(["memory", "forget", note_id, "--agent", "Atlas"]) == 2
+
+
+def test_github_sources_and_web_search_from_the_cli(capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(["init", "Atlas", "--source", "github:kainoa00/mooz", "--no-web-search"]) == 0
+    assert cli.main(["sources", "add", "github:kainoa00/site", "--public", "--agent", "Atlas"]) == 0
+
+    cfg = AgentConfig.load("Atlas")
+    assert [(g.repo, g.public) for g in cfg.github] == [
+        ("kainoa00/mooz", False),
+        ("kainoa00/site", True),
+    ]
+    assert cfg.web_search is False
+    assert cli.main(["sources", "list", "--agent", "Atlas"]) == 0
+    assert "github:kainoa00/mooz" in capsys.readouterr().out
+    assert cli.main(["sources", "add", "github:not a repo", "--agent", "Atlas"]) == 2

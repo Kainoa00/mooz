@@ -47,22 +47,33 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     init.add_argument("--model", help="override the default model for that brain")
     init.add_argument("--voice", dest="voice_id", help="ElevenLabs voice ID")
     init.add_argument(
-        "--source", action="append", default=[], help="a folder it may read (private)"
+        "--source",
+        action="append",
+        default=[],
+        help="a folder (or github:owner/repo) it may read, privately",
     )
     init.add_argument(
         "--public-source",
         action="append",
         default=[],
-        help="a folder anyone in the meeting may ask about",
+        help="a folder (or github:owner/repo) anyone in the meeting may ask about",
+    )
+    init.add_argument(
+        "--no-web-search",
+        dest="web_search",
+        action="store_false",
+        help="don't let research tasks search the web",
     )
     init.add_argument("--force", action="store_true", help="replace an existing agent's settings")
 
-    sources = sub.add_parser("sources", help="manage the folders an agent may read")
+    sources = sub.add_parser(
+        "sources", help="manage the folders and GitHub repos an agent may read"
+    )
     sources_sub = sources.add_subparsers(dest="action", required=True)
     s_list = sources_sub.add_parser("list")
     agent_option(s_list)
     s_add = sources_sub.add_parser("add")
-    s_add.add_argument("path")
+    s_add.add_argument("path", help="a folder, or github:owner/repo")
     s_add.add_argument("--label")
     s_add.add_argument("--public", action="store_true", help="anyone in the meeting may ask")
     agent_option(s_add)
@@ -97,32 +108,46 @@ def cmd_init(args: argparse.Namespace) -> int:
     if (agent_dir(args.name) / "agent.toml").exists() and not args.force:
         raise ConfigError(f"{args.name} already exists. Use --force to replace its settings.")
     cfg = AgentConfig(
-        name=args.name.strip(), brain=args.brain, model=args.model, voice_id=args.voice_id
+        name=args.name.strip(),
+        brain=args.brain,
+        model=args.model,
+        voice_id=args.voice_id,
+        web_search=args.web_search,
     )
     cfg.validate()
     for path in args.source:
-        cfg.add_source(Path(path))
+        _add(cfg, path)
     for path in args.public_source:
-        cfg.add_source(Path(path), public=True)
+        _add(cfg, path, public=True)
     target = cfg.save()
     print(f"Created {cfg.name} ({cfg.brain}) at {target.parent}")
     _print_sources(cfg)
     return 0
 
 
+def _add(cfg: AgentConfig, path: str, *, label: str | None = None, public: bool = False) -> str:
+    if path.startswith("github:"):
+        repo = cfg.add_github(path, label=label, public=public)
+        return repo.label
+    return cfg.add_source(Path(path), label=label, public=public).label
+
+
 def _print_sources(cfg: AgentConfig) -> None:
-    if not cfg.sources:
+    if not cfg.sources and not cfg.github:
         print("  No sources yet. Add one with: mooz-agent sources add PATH --agent " + cfg.name)
     for s in cfg.sources:
         print(f"  {s.label:<20} {'public ' if s.public else 'private'}  {s.path}")
+    for g in cfg.github:
+        print(f"  {g.label:<20} {'public ' if g.public else 'private'}  github:{g.repo}")
+    print(f"  Web search for research tasks: {'on' if cfg.web_search else 'off'}")
 
 
 def cmd_sources(args: argparse.Namespace) -> int:
     cfg = _load_agent(args)
     if args.action == "add":
-        source = cfg.add_source(Path(args.path), label=args.label, public=args.public)
+        label = _add(cfg, args.path, label=args.label, public=args.public)
         cfg.save()
-        print(f"Added {source.label} ({'public' if source.public else 'private'})")
+        print(f"Added {label} ({'public' if args.public else 'private'})")
     elif args.action == "remove":
         cfg.remove_source(args.label)
         cfg.save()

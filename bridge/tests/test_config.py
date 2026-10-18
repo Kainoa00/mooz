@@ -119,3 +119,38 @@ def test_a_source_inside_the_agents_home_is_refused(
     inside.mkdir(parents=True)
     with pytest.raises(ConfigError, match="private"):
         AgentConfig(name="Atlas").add_source(inside)
+
+
+def test_github_repos_are_sources_with_the_same_rules(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MOOZ_HOME", str(tmp_path / "home"))
+    (tmp_path / "web").mkdir()
+    cfg = AgentConfig(name="Atlas")
+    cfg.add_source(tmp_path / "web", label="web")
+    repo = cfg.add_github("kainoa00/mooz")
+    public = cfg.add_github("kainoa00/web", public=True)  # "web" is taken by the folder
+    with pytest.raises(ConfigError, match="already exists"):
+        cfg.add_github("kainoa00/other", label="mooz")
+
+    assert (repo.label, repo.repo, repo.public) == ("mooz", "kainoa00/mooz", False)
+    assert public.label == "web-2" and public.public
+    assert cfg.visible_github(owner=False) == [public]
+    for bad in ["kainoa00", "a/b/c", "../x", "x/.."]:
+        with pytest.raises(ConfigError, match="owner/name"):
+            cfg.add_github(bad)
+
+    cfg.web_search = False
+    cfg.save()
+    loaded = AgentConfig.load("Atlas")
+    assert loaded.github == cfg.github and loaded.web_search is False
+    loaded.remove_source("mooz")
+    assert [g.label for g in loaded.github] == ["web-2"]
+
+
+def test_web_search_is_on_unless_turned_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MOOZ_HOME", str(tmp_path / "home"))
+    AgentConfig(name="Atlas").save()
+    assert AgentConfig.load("Atlas").web_search is True

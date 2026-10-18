@@ -15,6 +15,7 @@ Brain = Literal["claude", "grok"]
 BRAINS: tuple[Brain, ...] = ("claude", "grok")
 _NAME = re.compile(r"^[A-Za-z][A-Za-z0-9' -]{1,23}$")
 _LABEL = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
+_REPO = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]{1,100}$")
 
 
 class ConfigError(Exception):
@@ -44,6 +45,15 @@ class Source:
 
 
 @dataclass
+class GitHubRepo:
+    """A GitHub repository the agent can read (issues, PRs, CI). Same public/private rule."""
+
+    label: str
+    repo: str  # owner/name
+    public: bool = False
+
+
+@dataclass
 class AgentConfig:
     name: str
     brain: Brain = "claude"
@@ -51,6 +61,9 @@ class AgentConfig:
     voice_id: str | None = None
     language: str = "en"
     sources: list[Source] = field(default_factory=list)
+    github: list[GitHubRepo] = field(default_factory=list)
+    # Owner research tasks may search the web (the owner's own provider usage).
+    web_search: bool = True
 
     @property
     def home(self) -> Path:
@@ -68,12 +81,45 @@ class AgentConfig:
             )
         if self.brain not in BRAINS:
             raise ConfigError(f"brain must be claude or grok, not {self.brain!r}")
-        labels = [s.label for s in self.sources]
+        labels = self._labels()
         if len(labels) != len(set(labels)):
             raise ConfigError("source labels must be unique")
 
+    def _labels(self) -> list[str]:
+        return [s.label for s in self.sources] + [g.label for g in self.github]
+
+    def _new_label(self, label: str | None, default: str) -> str:
+        taken = set(self._labels())
+        if label is not None:
+            label = _slug(label)
+            if label in taken:
+                raise ConfigError(f"A source called {label!r} already exists")
+        else:
+            base = _slug(default)[:36] or "source"
+            label, n = base, 2
+            while label in taken:
+                label, n = f"{base}-{n}", n + 1
+        if not _LABEL.match(label):
+            raise ConfigError(f"Invalid source label {label!r}")
+        return label
+
     def visible_sources(self, *, owner: bool) -> list[Source]:
         return [s for s in self.sources if owner or s.public]
+
+    def visible_github(self, *, owner: bool) -> list[GitHubRepo]:
+        return [g for g in self.github if owner or g.public]
+
+    def add_github(
+        self, repo: str, *, label: str | None = None, public: bool = False
+    ) -> GitHubRepo:
+        repo = repo.strip().removeprefix("github:").strip("/")
+        if not _REPO.match(repo) or repo.split("/", 1)[1] in (".", ".."):
+            raise ConfigError(f"{repo!r} is not a GitHub repository (owner/name)")
+        entry = GitHubRepo(
+            label=self._new_label(label, repo.split("/", 1)[1]), repo=repo, public=public
+        )
+        self.github.append(entry)
+        return entry
 
     def add_source(self, path: Path, *, label: str | None = None, public: bool = False) -> Source:
         folder = path.expanduser().resolve()
@@ -81,26 +127,16 @@ class AgentConfig:
             raise ConfigError(f"{folder} does not exist or is not a folder")
         if folder.is_relative_to(agents_root().resolve()):
             raise ConfigError(f"{folder} holds your agents' private settings and memory")
-        taken = {s.label for s in self.sources}
-        if label is not None:
-            label = _slug(label)
-            if label in taken:
-                raise ConfigError(f"A source called {label!r} already exists")
-        else:
-            base = _slug(folder.name)[:36] or "source"
-            label, n = base, 2
-            while label in taken:
-                label, n = f"{base}-{n}", n + 1
-        if not _LABEL.match(label):
-            raise ConfigError(f"Invalid source label {label!r}")
+        label = self._new_label(label, folder.name)
         source = Source(label=label, path=folder, public=public)
         self.sources.append(source)
         return source
 
     def remove_source(self, label: str) -> None:
-        before = len(self.sources)
+        before = len(self.sources) + len(self.github)
         self.sources = [s for s in self.sources if s.label != label]
-        if len(self.sources) == before:
+        self.github = [g for g in self.github if g.label != label]
+        if len(self.sources) + len(self.github) == before:
             raise ConfigError(f"No source called {label!r}")
 
     def save(self) -> Path:
@@ -117,8 +153,12 @@ class AgentConfig:
             data["model"] = self.model
         if self.voice_id:
             data["voice_id"] = self.voice_id
+        data["web_search"] = self.web_search
         data["sources"] = [
             {"label": s.label, "path": str(s.path), "public": s.public} for s in self.sources
+        ]
+        data["github"] = [
+            {"label": g.label, "repo": g.repo, "public": g.public} for g in self.github
         ]
         target = home / "agent.toml"
         tmp = target.with_suffix(".toml.tmp")
@@ -148,6 +188,11 @@ class AgentConfig:
                 Source(label=str(s["label"]), path=Path(s["path"]), public=bool(s.get("public")))
                 for s in data.get("sources", [])
             ],
+            github=[
+                GitHubRepo(label=str(g["label"]), repo=str(g["repo"]), public=bool(g.get("public")))
+                for g in data.get("github", [])
+            ],
+            web_search=bool(data.get("web_search", True)),
         )
         cfg.validate()
         return cfg

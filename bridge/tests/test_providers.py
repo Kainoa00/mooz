@@ -47,3 +47,19 @@ async def test_the_configured_brain_is_used(
         _, _, brain = build_providers(http=http, me=ME, config=config)
     assert isinstance(brain, ToolLoopBrain) and isinstance(brain.model, model_type)
     assert brain.toolbox is not None and brain.toolbox.config is config
+
+
+async def test_github_and_web_search_come_from_the_agents_settings(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MOOZ_PROVIDERS", "fake")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_" + "t" * 36)
+    plain = AgentConfig(name="Atlas")
+    with_github = AgentConfig(name="Atlas", web_search=False)
+    with_github.add_github("kainoa00/mooz")
+    async with aiohttp.ClientSession() as http:
+        _, _, a = build_providers(http=http, me=ME, config=plain)
+        _, _, b = build_providers(http=http, me=ME, config=with_github)
+    assert isinstance(a, ToolLoopBrain) and isinstance(b, ToolLoopBrain)
+    assert a.toolbox is not None and a.toolbox.github is None and a.web_search is True
+    assert b.toolbox is not None and b.toolbox.github is not None and b.web_search is False

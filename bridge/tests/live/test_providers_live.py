@@ -140,3 +140,12 @@ async def test_research_reads_files_searches_the_web_and_reports(
     assert any(p.startswith("Reading launch.md") or p.startswith("Searching") for p in progress)
     assert any(p.startswith("Searched the web") for p in progress), f"{name}: {progress}"
     assert len(answer.spoken.split()) <= 60
+
+
+def test_github_reads_a_public_repository() -> None:
+    from mooz_agent.tools.github import GitHub
+
+    gh = GitHub(os.environ.get("GITHUB_TOKEN") or None)
+    repo = os.environ.get("MOOZ_LIVE_GITHUB_REPO", "livekit/livekit")
+    assert gh.pulls(repo, "all").startswith("#")
+    assert gh.ci(repo).startswith("CI on ")
