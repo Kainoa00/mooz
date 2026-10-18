@@ -123,3 +123,33 @@ def test_long_base64_lines_are_redacted_wherever_they_appear() -> None:
     assert redact(f"+{line}") == f"+{REDACTED}"  # in a diff
     assert redact(line) == REDACTED
     assert redact("a normal sentence that happens to be long enough to be sixty chars") != REDACTED
+
+
+def test_redaction_stays_fast_on_hostile_input() -> None:
+    import time as _time
+
+    for hostile in (
+        "a." * 200_000,
+        "a" * 400_000,
+        "x=" * 200_000,
+        "a://b:" * 70_000,
+        "k='" * 130_000,
+    ):
+        start = _time.monotonic()
+        redact(hostile)
+        assert _time.monotonic() - start < 1.0
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "\r\n".join(KEY_LINES[2:]),  # CRLF file, BEGIN out of view
+        "\n".join(f" -{line}" for line in KEY_LINES[1:]),  # combined diff
+        "-----BEGIN PGP PRIVATE KEY BLOCK-----\nlQOYBGX"
+        + "a" * 60
+        + "\n=AbCd\n-----END PGP PRIVATE KEY BLOCK-----",
+    ],
+)
+def test_keys_in_other_shapes_are_redacted(text: str) -> None:
+    out = redact(text)
+    assert "MIIEow" not in out and "pWQx9" not in out and "lQOYBGX" not in out and "AbCd" not in out

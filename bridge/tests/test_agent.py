@@ -40,13 +40,17 @@ class FakeRoom:
         self.replayed = False
         self.people: list[Speaker] = []
         self.replies: list[str | None] = []
+        self.sources: list[frozenset[str]] = []
 
     def participants(self) -> list[Speaker]:
         return list(self.people)
 
-    async def send_chat(self, text: str, reply_to: str | None = None) -> None:
+    async def send_chat(
+        self, text: str, reply_to: str | None = None, sources: frozenset[str] = frozenset()
+    ) -> None:
         self.sent.append(text)
         self.replies.append(reply_to)
+        self.sources.append(sources)
 
     def notes_allowed(self) -> bool:
         return False

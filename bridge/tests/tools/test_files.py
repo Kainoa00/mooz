@@ -255,3 +255,25 @@ def test_mooz_home_is_never_visible(repo: Path) -> None:
     with pytest.raises(FileAccessError):
         read_file(repo, ".mooz/agents/atlas/memory.jsonl")
     assert search(repo, "private") == "No matches for 'private'"
+
+
+def test_agents_home_is_hidden_by_where_it_is_not_just_its_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "share" / "agentdata"  # a custom MOOZ_HOME not called .mooz
+    (home / "agents" / "atlas").mkdir(parents=True)
+    (home / "agents" / "atlas" / "notes.txt").write_text("private\n")
+    monkeypatch.setenv("MOOZ_HOME", str(home))
+    share = tmp_path / "share"
+    assert "agentdata" in list_files(share)  # the folder itself is just a folder
+    assert "agents" not in list_files(share, "agentdata")
+    with pytest.raises(FileAccessError):
+        read_file(share, "agentdata/agents/atlas/notes.txt")
+    assert search(share, "private") == "No matches for 'private'"
+
+
+def test_memory_and_settings_files_are_never_readable(repo: Path) -> None:
+    for name in ("memory.jsonl", "agent.toml"):
+        (repo / name).write_text("secret\n")
+        with pytest.raises(FileAccessError):
+            read_file(repo, name)

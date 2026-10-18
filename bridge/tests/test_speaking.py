@@ -14,7 +14,9 @@ class Recorder:
     def __init__(self) -> None:
         self.events: list[str] = []
 
-    async def send_chat(self, text: str, reply_to: str | None = None) -> None:
+    async def send_chat(
+        self, text: str, reply_to: str | None = None, sources: frozenset[str] = frozenset()
+    ) -> None:
         self.events.append(f"chat:{text}")
 
     async def capture_frame(self, frame: rtc.AudioFrame) -> None:
@@ -63,7 +65,9 @@ async def test_resamples_frames_that_are_not_48k() -> None:
     async def capture(frame: rtc.AudioFrame) -> None:
         frames.append(frame)
 
-    async def chat(_: str, reply_to: str | None = None) -> None:
+    async def chat(
+        _: str, reply_to: str | None = None, sources: frozenset[str] = frozenset()
+    ) -> None:
         return None
 
     await Mouth(send_chat=chat, capture_frame=capture, tts=Tts24k()).say(Answer("hi", ""))

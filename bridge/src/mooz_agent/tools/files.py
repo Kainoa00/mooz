@@ -14,6 +14,7 @@ from pathlib import Path
 
 import regex
 
+from ..config import agents_root
 from .redact import redact
 
 MAX_LINES = 400
@@ -33,6 +34,7 @@ DENIED_FILES = (
     ".env", ".env.*", "*.pem", "*.key", "*.p12", "*.pfx", "*.keystore", "*.jks",
     "id_rsa*", "id_dsa*", "id_ecdsa*", "id_ed25519*", ".netrc", ".npmrc", ".pypirc",
     ".git-credentials", "*credentials*", ".htpasswd",
+    "memory.jsonl", "agent.toml",  # an agent's own memory and settings, wherever they are
 )  # fmt: skip
 # .mooz holds agents' own settings and private memory.
 DENIED_DIRS = frozenset({".ssh", ".gnupg", ".aws", ".git", ".hg", ".svn", ".mooz"})
@@ -54,6 +56,9 @@ def is_denied_name(name: str) -> bool:
 def _visible(root: Path, path: Path) -> bool:
     """True if `path` (already resolved) is inside `root` and nothing on the way is denied."""
     if not path.is_relative_to(root):
+        return False
+    # Agents' settings and memory, wherever MOOZ_HOME puts them (not only in a .mooz folder).
+    if path.is_relative_to(agents_root().resolve()):
         return False
     return not any(is_denied_name(part) for part in path.relative_to(root).parts)
 

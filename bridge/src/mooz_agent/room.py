@@ -19,6 +19,7 @@ CHAT_TOPIC = "lk.chat"
 MOOZ_TOPIC = "mooz.v0"
 NOTES_OPT_OUT_ATTRIBUTE = "notes_opt_out"
 REPLY_TO_ATTRIBUTE = "reply_to"
+SOURCES_ATTRIBUTE = "sources"
 SAMPLE_RATE = 48_000
 NUM_CHANNELS = 1
 # Leave this long after the last person does, so the agent doesn't keep an empty room open.
@@ -39,8 +40,10 @@ class ChatMessage:
     speaker: Speaker
     text: str
     timestamp: float
-    # For an agent's reply: the person it answers (the `reply_to` text stream attribute).
+    # For an agent's reply: the person it answers, and whose words it may repeat (the
+    # `reply_to` and `sources` text stream attributes).
     about: str | None = None
+    sources: frozenset[str] = frozenset()
 
 
 class _ParticipantLike(Protocol):
@@ -198,10 +201,18 @@ class MeetingRoom:
         """Return when the meeting ends for us (left, removed by the host, or connection lost)."""
         await self._closed.wait()
 
-    async def send_chat(self, text: str, reply_to: str | None = None) -> None:
-        """Post to chat. `reply_to` names the person this answers (see docs/protocol.md)."""
-        attributes = {REPLY_TO_ATTRIBUTE: reply_to} if reply_to else None
-        await self._room.local_participant.send_text(text, topic=CHAT_TOPIC, attributes=attributes)
+    async def send_chat(
+        self, text: str, reply_to: str | None = None, sources: frozenset[str] = frozenset()
+    ) -> None:
+        """Post to chat, saying whom it answers and whose words it drew on (docs/protocol.md)."""
+        attributes: dict[str, str] = {}
+        if reply_to:
+            attributes[REPLY_TO_ATTRIBUTE] = reply_to
+        if sources:
+            attributes[SOURCES_ATTRIBUTE] = ",".join(sorted(sources))
+        await self._room.local_participant.send_text(
+            text, topic=CHAT_TOPIC, attributes=attributes or None
+        )
 
     async def disconnect(self) -> None:
         if self._alone_timer:
@@ -250,10 +261,8 @@ class MeetingRoom:
         if participant is None or not self.on_chat:
             return
         speaker = speaker_from_participant(participant)
+        attrs = (reader.info.attributes or {}) if speaker.kind == "agent" else {}
         # Only an agent's reply says whom it answers; a person's message is about themselves.
-        about = (
-            (reader.info.attributes or {}).get(REPLY_TO_ATTRIBUTE)
-            if speaker.kind == "agent"
-            else None
-        )
-        self.on_chat(ChatMessage(speaker, text, time.time(), about=about or None))
+        about = attrs.get(REPLY_TO_ATTRIBUTE) or None
+        sources = frozenset(i for i in attrs.get(SOURCES_ATTRIBUTE, "").split(",") if i)
+        self.on_chat(ChatMessage(speaker, text, time.time(), about=about, sources=sources))

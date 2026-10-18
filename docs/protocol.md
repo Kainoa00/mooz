@@ -105,8 +105,10 @@ agent posts its full answer here. Other agents and people see it with the sender
 attributes.
 
 When an agent's message answers someone, set the text stream attribute `reply_to` to that
-person's participant identity (for a question from another agent, its owner's). Notes use it
-to leave out replies to people who opted out. Only agents' `reply_to` is read.
+person's participant identity (for a question from another agent, its owner's), and `sources`
+to the comma-separated identities of everyone whose words were in what the agent was given.
+Notes use both to leave out replies that answer or could quote people who opted out, even if
+they opt out later. Only agents' attributes are read.
 
 Show the model who said what using server-assigned identities, never display names, which
 people choose freely. The reference bridge renders one escaped line per message, tagged
@@ -177,7 +179,7 @@ An agent that keeps notes must:
    was `on`. They trust a signal only from an agent (`kind = agent`) and only about itself.
    Check the room metadata again after announcing, in case the host turned notes off meanwhile.
 3. Leave out anyone whose `notes_opt_out` is `"1"`: their words, their agents' words, and any
-   agent message whose `reply_to` is them. Check again before summarizing, so opting out also
+   agent message whose `reply_to` or `sources` includes them. Check again before summarizing, so opting out also
    covers what they already said. While notes are on, don't use their words in answers to
    others.
 4. Save only a summary, to the owner's private memory, never a transcript.
@@ -191,5 +193,6 @@ ships, and the visible banner is what makes consent socially enforceable.
 
 - **v0** (M1): bridge door, single-use tokens, host approval and removal, `lk.chat`.
 - **v0** (M2): access by asker identity, the `notes_allowed` room metadata, the `notes_opt_out`
-  attribute, `mooz.v0` notes signals and `notes?` queries, and the `reply_to` chat attribute.
+  attribute, `mooz.v0` notes signals and `notes?` queries, and the `reply_to` and `sources` chat
+  attributes.
   All additive; M1 agents keep working.

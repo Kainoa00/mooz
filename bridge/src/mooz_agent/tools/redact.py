@@ -6,12 +6,13 @@ import re
 
 REDACTED = "[redacted]"
 
-_KEY_BEGIN = re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")
-_KEY_END = re.compile(r"-----END [A-Z0-9 ]*PRIVATE KEY-----")
+_KEY_BEGIN = re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----")
+_KEY_END = re.compile(r"-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----")
 # A line that is nothing but base64 (a key body, a certificate, an encoded secret), optionally
-# behind a diff marker. Short tails just before an END marker are caught separately.
-_BASE64_LINE = re.compile(r"^([ \t+\-]?)[ \t]*[A-Za-z0-9+/]{60,}={0,2}[ \t]*$")
-_BASE64_TAIL = re.compile(r"^[ \t+\-]?[ \t]*[A-Za-z0-9+/]{4,}={0,2}[ \t]*$")
+# behind diff markers (two for a merge's combined diff) and before a CR. Short tails just before
+# an END marker (including a PGP "=checksum") are caught separately.
+_BASE64_LINE = re.compile(r"^([ \t+\-]{0,2})[ \t]*[A-Za-z0-9+/]{60,}={0,2}[ \t\r]*$")
+_BASE64_TAIL = re.compile(r"^[ \t+\-]{0,2}[ \t]*[A-Za-z0-9+/=]{4,}[ \t\r]*$")
 _TOKENS = [
     re.compile(p)
     for p in (
@@ -27,7 +28,9 @@ _TOKENS = [
     )
 ]
 # scheme://user:password@host -> keep the user, hide the password
-_URL_CREDENTIALS = re.compile(r"(\b[a-zA-Z][a-zA-Z0-9+.\-]*://[^/\s:@]+:)([^@\s/]+)(@)")
+_URL_CREDENTIALS = re.compile(
+    r"((?<![a-zA-Z0-9+.\-])[a-zA-Z][a-zA-Z0-9+.\-]*+://[^/\s:@]++:)([^@\s/]++)(@)"
+)
 
 # Identifier words that mark a value as secret. "key" only counts next to a qualifier,
 # so sort_key or PRIMARY_KEY stay readable.
@@ -38,9 +41,12 @@ _SECRET_WORDS = frozenset(
 _KEY_QUALIFIERS = frozenset("api access private secret signing encryption master".split())
 _IDENT_PART = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
 
-_ASSIGN_QUOTED = re.compile(r"(\b[A-Za-z_][A-Za-z0-9_.\-]*)(\s*[:=]\s*)([\"'])([^\"'\s]{4,})\3")
+# The name may start only where a name starts, and never gives characters back, so this stays
+# linear on hostile input like "a.a.a.a…" (whole files and git output go through it).
+_NAME = r"((?<![A-Za-z0-9_.\-])[A-Za-z_][A-Za-z0-9_.\-]*+)"
+_ASSIGN_QUOTED = re.compile(_NAME + r"(\s*[:=]\s*)([\"'])([^\"'\s]{4,})\3")
 _ASSIGN_BARE = re.compile(
-    r"(\b[A-Za-z_][A-Za-z0-9_.\-]*)(\s*[:=]\s*)([A-Za-z0-9_\-+/=.~!#$%^&*]{4,})(?=$|[\s,;])",
+    _NAME + r"(\s*[:=]\s*)([A-Za-z0-9_\-+/=.~!#$%^&*]{4,}+)(?=$|[\s,;])",
     re.MULTILINE,
 )
 

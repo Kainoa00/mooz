@@ -125,7 +125,8 @@ when the meeting ends, the agent saves a **summary** (never a transcript) to you
 Anyone can click **Leave me out**. From then on, and for what they already said in that
 meeting, notes drop:
 - their own words, and their agent's,
-- agents' replies to them (mooz agents mark whom each reply answers),
+- agents' replies that answer them or could repeat what they said (mooz agents mark both on
+  each reply),
 - and while notes are on, agents' answers to others don't use their words either.
 
 What it can't catch: someone else repeating what you said in their own words, or an agent

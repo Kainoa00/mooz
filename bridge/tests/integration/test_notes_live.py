@@ -77,9 +77,12 @@ async def test_replies_say_whom_they_answer_and_queries_reach_agents(room_name: 
     await human.connect(LIVEKIT_URL, mint(room_name, "p_zach", "Zach", {"kind": "human"}))
     try:
         await wait_for(lambda: len(atlas.participants()) == 2 and len(grok.participants()) == 2)
-        await atlas.send_chat("You asked: when is lunch", reply_to="p_zach")
+        await atlas.send_chat(
+            "You asked: when is lunch", reply_to="p_zach", sources=frozenset({"p_zach", "p_lee"})
+        )
         await wait_for(lambda: len(heard) == 1)
         assert heard[0].about == "p_zach" and heard[0].speaker.identity == "a_atlas"
+        assert heard[0].sources == {"p_zach", "p_lee"}
 
         await human.local_participant.publish_data(
             json.dumps({"type": "notes?"}), reliable=True, topic=MOOZ_TOPIC

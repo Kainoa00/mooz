@@ -17,6 +17,8 @@ from .redact import redact
 
 GIT_TIMEOUT = 5.0
 MAX_OUTPUT_CHARS = 40_000
+# Read at most this much of git's output before filtering and redacting it.
+MAX_RAW_CHARS = 1_000_000
 MAX_LOG = 20
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 _REF = re.compile(r"^(?!-)(?!.*\.\.)[A-Za-z0-9._/~^@{}-]{1,100}$")
@@ -104,7 +106,8 @@ def _git(root: Path, *args: str, patch: bool = False) -> str:
         raise FileAccessError("git: " + message.replace(str(root), ".").removeprefix("fatal: "))
     # Hide secrets files and redact before truncating: a cut can't split a secret, and
     # hidden files never use up the output budget.
-    out = redact(_hide_sensitive(result.stdout) if patch else result.stdout)
+    raw = result.stdout[:MAX_RAW_CHARS]
+    out = redact(_hide_sensitive(raw) if patch else raw)
     if len(out) > MAX_OUTPUT_CHARS:
         out = out[:MAX_OUTPUT_CHARS] + "\n… output truncated"
     return out.rstrip() or "(no output)"

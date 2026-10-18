@@ -79,6 +79,8 @@ class AgentConfig:
         folder = path.expanduser().resolve()
         if not folder.is_dir():
             raise ConfigError(f"{folder} does not exist or is not a folder")
+        if folder.is_relative_to(agents_root().resolve()):
+            raise ConfigError(f"{folder} holds your agents' private settings and memory")
         taken = {s.label for s in self.sources}
         if label is not None:
             label = _slug(label)

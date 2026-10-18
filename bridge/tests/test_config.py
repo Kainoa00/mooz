@@ -109,3 +109,13 @@ def test_public_and_private_views(home: Path) -> None:
 
     assert [s.label for s in cfg.visible_sources(owner=True)] == ["pub", "priv"]
     assert [s.label for s in cfg.visible_sources(owner=False)] == ["pub"]
+
+
+def test_a_source_inside_the_agents_home_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MOOZ_HOME", str(tmp_path / "home"))
+    inside = tmp_path / "home" / "agents" / "atlas"
+    inside.mkdir(parents=True)
+    with pytest.raises(ConfigError, match="private"):
+        AgentConfig(name="Atlas").add_source(inside)

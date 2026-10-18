@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from collections import deque
 from collections.abc import Callable
@@ -17,8 +18,10 @@ class Utterance:
     text: str
     timestamp: float
     via: Literal["voice", "chat"]
-    # The person this line answers, if it's an agent's reply (for notes opt-outs).
+    # For an agent's reply (used by notes opt-outs): the person it answers, and everyone
+    # whose words were in what it was given, so it may repeat them.
     about: str | None = None
+    sources: frozenset[str] = frozenset()
 
 
 class TranscriptBuffer:
@@ -41,11 +44,13 @@ class TranscriptBuffer:
         *,
         roles: Callable[[Speaker], str] | None = None,
         exclude: Callable[[Utterance], bool] | None = None,
+        included: list[Utterance] | None = None,
     ) -> str:
         """The transcript as the model sees it, newest lines kept when it is too long.
 
         With `roles`, each message is one line tagged with the speaker's server-derived role
-        (see `render_line`), so nothing anyone says can pass as someone else's line.
+        (see `render_line`), so nothing anyone says can pass as someone else's line. The lines
+        that made it in are appended to `included`.
         """
         lines: list[str] = []
         size = 0
@@ -58,6 +63,8 @@ class TranscriptBuffer:
                 break
             lines.append(line)
             size += added
+            if included is not None:
+                included.append(u)
         return "\n".join(reversed(lines))
 
     def _evict(self) -> None:
@@ -66,15 +73,19 @@ class TranscriptBuffer:
             self._items.popleft()
 
 
-def flatten(text: str) -> str:
-    """One line, with no markup: newlines and angle brackets can't fake structure."""
-    return (
-        text.replace("\r\n", "\n")
-        .replace("\r", "\n")
-        .replace("\n", "\\n")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-    )
+# Everything Python (and so a model's tokenizer view of "a new line") treats as a line break.
+_LINE_BREAKS = re.compile(r"\r\n|[\r\n\v\f\x1c-\x1e\x85\u2028\u2029]")
+# Invisible and direction-changing characters (also refused in display names).
+_INVISIBLE = re.compile(r"[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]")
+
+
+def flatten(text: str, *, markup: bool = True) -> str:
+    """One visible line: no kind of line break or hidden character can fake structure.
+
+    With `markup`, angle brackets are escaped too, so text can't close a <transcript> block.
+    """
+    text = _LINE_BREAKS.sub("\\\\n", _INVISIBLE.sub("", text))
+    return text.replace("<", "&lt;").replace(">", "&gt;") if markup else text
 
 
 def render_line(u: Utterance, roles: Callable[[Speaker], str] | None = None) -> str:

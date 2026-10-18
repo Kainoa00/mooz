@@ -86,18 +86,20 @@ class NotesKeeper:
         self.active = False
 
     @staticmethod
-    def _people(u: Utterance) -> list[str]:
-        """The people a line belongs to (an agent speaks for its owner)."""
+    def people(u: Utterance) -> list[str]:
+        """The people a line belongs to: its speaker (an agent speaks for its owner), and for
+        a reply, whom it answers and whose words it drew on."""
         people = [u.speaker.identity]
         if u.speaker.kind == "agent" and u.speaker.owner_identity:
             people.append(u.speaker.owner_identity)
         if u.about:
             people.append(u.about)
+        people.extend(u.sources)
         return people
 
     def excluded(self, u: Utterance) -> bool:
         """True if anyone this line belongs to has opted out of notes."""
-        return any(self._opted_out(p) for p in self._people(u))
+        return any(self._opted_out(p) for p in self.people(u))
 
     def _told(self, u: Utterance) -> bool:
         # Agents don't see the banner; their owners do.

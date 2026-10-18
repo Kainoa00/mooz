@@ -186,7 +186,12 @@ class ToolLoopBrain:
                 f"{asker.name} (not your owner: you can only use public sources and public "
                 "memory for them)"
             )
-        asked = flatten(question) if question else "(they said your name; respond briefly)"
+        # The request sits after the transcript block, so it keeps its < and > (List<String>).
+        asked = (
+            flatten(question, markup=False)
+            if question
+            else "(they said your name; respond briefly)"
+        )
         return (
             "Recent meeting transcript (oldest first, one message per line):\n"
             f"<transcript>\n{transcript}\n</transcript>\n\n"

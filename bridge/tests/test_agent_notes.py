@@ -32,6 +32,7 @@ class NotesRoom(FakeRoom):
         self.on_participant_joined = None
         self.on_notes_policy_changed = None
         self.flip_policy_on_signal = False
+        self.during_on_broadcast = None
 
     def notes_allowed(self) -> bool:
         return self.allowed
@@ -41,8 +42,12 @@ class NotesRoom(FakeRoom):
 
     async def send_signal(self, message: dict[str, object], to: list[str] | None = None) -> None:
         self.signals.append((message, to))
-        if self.flip_policy_on_signal and message == ON:
-            self.allowed = False
+        if message == ON and to is None:
+            if self.flip_policy_on_signal:
+                self.allowed = False
+            if self.during_on_broadcast:
+                self.during_on_broadcast()
+                await asyncio.sleep(0)  # let what arrived meanwhile run
 
 
 def make(tmp_path: Path, allowed: bool = True) -> tuple[NotesRoom, Agent, MemoryStore]:
@@ -301,3 +306,53 @@ async def test_browsers_can_ask_whether_notes_are_on(tmp_path: Path) -> None:
     await agent.idle()
     assert room.signals[-1] == (ON, ["p_lee"])
     await agent.aclose()
+
+
+async def test_replies_drawing_on_someone_who_later_opts_out_are_dropped(tmp_path: Path) -> None:
+    room, agent, memory = make(tmp_path)
+    hear(agent, KAI, "Atlas, keep notes")
+    await agent.idle()
+    hear(agent, ZACH, "my salary is ninety thousand")
+    hear(agent, KAI, "Atlas, what did Zach say?", via="chat")
+    await agent.idle()
+    assert ZACH.identity in room.sources[-1]  # the reply says whose words it may contain
+    assert room.on_chat is not None
+    room.on_chat(
+        ChatMessage(
+            GROK, "Zach earns a lot", 1.0, about=KAI.identity, sources=frozenset({ZACH.identity})
+        )
+    )
+    room.opted_out.add(ZACH.identity)  # opts out only afterwards
+    hear(agent, KAI, "Atlas, stop keeping notes")
+    await agent.idle()
+    [saved] = notes(memory)
+    assert "You asked: what did Zach say" not in saved  # the reply that could quote him
+    assert "earns" not in saved and "ninety" not in saved
+    assert "Atlas, what did Zach say?" in saved  # Kainoa's own question stays
+
+
+async def test_someone_asking_during_the_announcement_is_told_notes_are_on(tmp_path: Path) -> None:
+    room, agent, memory = make(tmp_path)
+    lee = Speaker("p_lee", "Lee", "human")
+    room.during_on_broadcast = lambda: room.on_signal(lee, {"type": "notes?"})  # type: ignore[misc]
+    hear(agent, KAI, "Atlas, keep notes")
+    await agent.idle()
+    assert (ON, ["p_lee"]) in room.signals
+    hear(agent, lee, "count me in")
+    hear(agent, KAI, "Atlas, stop keeping notes")
+    await agent.idle()
+    assert any("count me in" in n for n in notes(memory))
+
+
+async def test_notes_cant_restart_while_the_last_ones_are_saving(tmp_path: Path) -> None:
+    room, agent, memory = make_with(SlowSummaries, tmp_path)
+    hear(agent, KAI, "Atlas, keep notes")
+    await agent.idle()
+    hear(agent, KAI, "first session")
+    hear(agent, KAI, "Atlas, stop keeping notes")
+    await asyncio.sleep(0.05)  # stopping, waiting on a slow summary
+    hear(agent, KAI, "Atlas, keep notes")
+    await agent.idle()
+    assert any("still saving" in m for m in room.sent)
+    assert agent.notes is not None and not agent.notes.active
+    assert any("first session" in n for n in notes(memory))
