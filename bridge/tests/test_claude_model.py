@@ -155,3 +155,78 @@ async def test_model_is_configurable() -> None:
     )
 
     assert client.calls[0]["model"] == "claude-haiku-5-5"
+
+
+# -- research mode ---------------------------------------------------------------------
+
+
+async def test_research_mode_drops_the_answer_schema_and_adds_web_search() -> None:
+    client = FakeClient(
+        Response([Block("tool_use", id="r", name="report_findings", input={"spoken": "Ok."})])
+    )
+    conv = ClaudeModel(client=client).conversation(
+        system="SYS", tools=[READ], mode="research", web_search=True
+    )
+
+    turn = await conv.send("Task: look into CI")
+
+    assert turn.calls == (ToolCall("r", "report_findings", {"spoken": "Ok."}),)
+    call = client.calls[0]
+    assert call["output_config"] == {"effort": "high"}  # no format: it reports with a tool
+    assert call["tools"][-1] == {"type": "web_search_20260209", "name": "web_search", "max_uses": 5}
+    assert call["timeout"] >= 60
+
+
+async def test_research_without_web_search() -> None:
+    client = FakeClient(Response([Block("text", text="done")]))
+    conv = ClaudeModel(client=client).conversation(system="S", tools=[READ], mode="research")
+    await conv.send("x")
+    assert all(t.get("type") != "web_search_20260209" for t in client.calls[0]["tools"])
+
+
+async def test_a_paused_server_turn_is_resumed_and_its_searches_reported() -> None:
+    search = Block(
+        "server_tool_use", id="s1", name="web_search", input={"query": "livekit text streams"}
+    )
+    client = FakeClient(
+        Response([search, Block("web_search_tool_result")], stop_reason="pause_turn"),
+        Response(
+            [Block("tool_use", id="c1", name="read_file", input={"path": "a.md"})],
+            stop_reason="tool_use",
+        ),
+    )
+    conv = ClaudeModel(client=client).conversation(
+        system="S", tools=[READ], mode="research", web_search=True
+    )
+
+    turn = await conv.send("x")
+
+    assert turn.searches == ("livekit text streams",)
+    assert turn.calls == (ToolCall("c1", "read_file", {"path": "a.md"}),)
+    # Resumed by resending the paused assistant turn, with no extra user message.
+    second = client.calls[1]["messages"]
+    assert [m["role"] for m in second] == ["user", "assistant"]
+
+
+async def test_endless_pausing_is_an_error() -> None:
+    paused = Response(
+        [Block("server_tool_use", id="s", name="web_search", input={"query": "q"})],
+        stop_reason="pause_turn",
+    )
+    client = FakeClient(*[paused] * 10)
+    conv = ClaudeModel(client=client).conversation(
+        system="S", tools=[READ], mode="research", web_search=True
+    )
+    with pytest.raises(BrainError, match="kept pausing"):
+        await conv.send("x")
+
+
+async def test_a_plain_research_answer_is_never_read_aloud() -> None:
+    client = FakeClient(
+        Response([Block("text", text="## Findings\nSee https://x.example and `ci.yml`")])
+    )
+    conv = ClaudeModel(client=client).conversation(system="S", tools=[READ], mode="research")
+    turn = await conv.send("x")
+    assert turn.answer is not None
+    assert "https" not in turn.answer.spoken and "#" not in turn.answer.spoken
+    assert "https://x.example" in turn.answer.details

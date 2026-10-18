@@ -37,6 +37,11 @@ class BrainError(Exception):
     """The model could not be reached or returned an error."""
 
 
+def plain_answer(text: str) -> Answer:
+    """A research result that skipped report_findings: it goes to chat, never read aloud."""
+    return Answer("I've finished. The details are in the chat.", text.strip())
+
+
 class Brain(Protocol):
     async def answer(self, *, question: str, asker: Speaker, transcript: str) -> Answer:
         """Answer a question addressed to the agent, given the recent meeting transcript."""

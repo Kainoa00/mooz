@@ -17,13 +17,16 @@ import openai
 
 from ..brain import ANSWER_SCHEMA, Mode, ModelTurn, ToolCall
 from ..tools.toolbox import ToolResult, ToolSpec
-from .base import Answer, BrainError
+from .base import Answer, BrainError, plain_answer
 
 log = logging.getLogger(__name__)
 
 XAI_BASE_URL = "https://api.x.ai/v1"
 DEFAULT_GROK_MODEL = "grok-4.7"
 MAX_OUTPUT_TOKENS = 8000
+RESEARCH_MAX_OUTPUT_TOKENS = 16_000
+RESEARCH_TIMEOUT = 180.0
+WEB_SEARCH_TOOL = {"type": "web_search"}
 
 
 def _strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
@@ -55,6 +58,18 @@ def _tool_param(spec: ToolSpec) -> dict[str, Any]:
     }
 
 
+def _searches(output: Sequence[Any]) -> list[str]:
+    """Queries from xAI's own web search steps (shown as task progress)."""
+    queries = []
+    for item in output:
+        if item.type != "web_search_call":
+            continue
+        query = getattr(getattr(item, "action", None), "query", None)
+        if isinstance(query, str) and query.strip():
+            queries.append(query.strip())
+    return queries
+
+
 def _args(raw: str) -> dict[str, object]:
     try:
         value = json.loads(raw or "{}")
@@ -64,11 +79,22 @@ def _args(raw: str) -> dict[str, object]:
 
 
 class GrokConversation:
-    def __init__(self, client: Any, *, model: str, system: str, tools: Sequence[ToolSpec]) -> None:
+    def __init__(
+        self,
+        client: Any,
+        *,
+        model: str,
+        system: str,
+        tools: Sequence[ToolSpec],
+        mode: Mode = "answer",
+        web_search: bool = False,
+    ) -> None:
         self._client = client
         self._model = model
         self._system = system
+        self._mode = mode
         self._tools = [_tool_param(t) for t in tools]
+        self._web_search = mode == "research" and web_search
         self._last_id: str | None = None
 
     async def send(self, user: str) -> ModelTurn:
@@ -86,27 +112,45 @@ class GrokConversation:
             ]
         )
 
-    async def _call(self, items: list[dict[str, Any]]) -> ModelTurn:
+    def _kwargs(self, items: list[dict[str, Any]]) -> dict[str, Any]:
+        research = self._mode == "research"
         kwargs: dict[str, Any] = {
             "model": self._model,
             "instructions": self._system,  # not carried over by previous_response_id
             "input": items,
-            "max_output_tokens": MAX_OUTPUT_TOKENS,
-            "text": {
+            "max_output_tokens": RESEARCH_MAX_OUTPUT_TOKENS if research else MAX_OUTPUT_TOKENS,
+        }
+        if research:
+            # Research ends with the report_findings tool, not a JSON answer format.
+            kwargs["timeout"] = RESEARCH_TIMEOUT
+        else:
+            kwargs["text"] = {
                 "format": {
                     "type": "json_schema",
                     "name": "meeting_answer",
                     "schema": ANSWER_SCHEMA,
                     "strict": True,
                 }
-            },
-        }
-        if self._tools:
-            kwargs["tools"] = self._tools
+            }
+        tools = [*self._tools, *([dict(WEB_SEARCH_TOOL)] if self._web_search else [])]
+        if tools:
+            kwargs["tools"] = tools
         if self._last_id:
             kwargs["previous_response_id"] = self._last_id
+        return kwargs
+
+    async def _call(self, items: list[dict[str, Any]]) -> ModelTurn:
         try:
-            response: Any = await self._client.responses.create(**kwargs)
+            try:
+                response: Any = await self._client.responses.create(**self._kwargs(items))
+            except openai.BadRequestError as err:
+                if not self._web_search:
+                    raise
+                # xAI doesn't document web search alongside function tools: if it refuses
+                # the combination, carry on without web search for the rest of the task.
+                log.warning("Grok refused web search with our tools (%s); continuing without", err)
+                self._web_search = False
+                response = await self._client.responses.create(**self._kwargs(items))
         except openai.APIStatusError as err:
             log.error("Grok returned %s: %s", err.status_code, err.message)
             raise BrainError(f"Grok returned {err.status_code}") from err
@@ -117,17 +161,20 @@ class GrokConversation:
         self._last_id = response.id
         if response.status == "incomplete":
             raise BrainError("Grok's answer was cut off")
+        searches = tuple(_searches(response.output))
         calls = tuple(
             ToolCall(id=item.call_id, name=item.name, args=_args(item.arguments))
             for item in response.output
             if item.type == "function_call"
         )
         if calls:
-            return ModelTurn(calls=calls)
+            return ModelTurn(calls=calls, searches=searches)
         parts = [c for item in response.output if item.type == "message" for c in item.content]
         if any(c.type == "refusal" for c in parts):
             return ModelTurn(refused=True)
         text = "".join(c.text for c in parts if c.type == "output_text").strip()
+        if self._mode == "research":
+            return ModelTurn(answer=plain_answer(text), searches=searches)
         try:
             data = json.loads(text)
             answer = Answer(str(data["spoken"]).strip(), str(data.get("details", "")).strip())
@@ -154,4 +201,11 @@ class GrokModel:
         mode: Mode = "answer",
         web_search: bool = False,
     ) -> GrokConversation:
-        return GrokConversation(self._client, model=self._model, system=system, tools=tools)
+        return GrokConversation(
+            self._client,
+            model=self._model,
+            system=system,
+            tools=tools,
+            mode=mode,
+            web_search=web_search,
+        )

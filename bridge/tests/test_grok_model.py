@@ -212,3 +212,69 @@ async def test_optional_tool_arguments_become_required_but_nullable() -> None:
     assert params["properties"]["source"] == {"type": ["string", "null"], "enum": ["a", "b", None]}
     assert params["properties"]["regex"] == {"type": ["boolean", "null"]}
     assert spec.parameters["required"] == ["query"]  # the shared spec is untouched
+
+
+# -- research mode ---------------------------------------------------------------------
+
+
+@dataclass
+class Action:
+    type: str = "search"
+    query: str = ""
+
+
+@dataclass
+class SearchItem:
+    type: str
+    action: Action | None = None
+
+
+async def test_research_mode_drops_the_answer_format_and_adds_web_search() -> None:
+    report = Item(
+        "function_call", call_id="r", name="report_findings", arguments='{"spoken": "Ok."}'
+    )
+    client = FakeClient(
+        Resp("resp_1", [SearchItem("web_search_call", Action(query="ci flake")), report])
+    )  # type: ignore[list-item]
+    conv = GrokModel(client=client).conversation(
+        system="S", tools=[READ], mode="research", web_search=True
+    )
+
+    turn = await conv.send("x")
+
+    call = client.calls[0]
+    assert "text" not in call
+    assert call["tools"][-1] == {"type": "web_search"}
+    assert call["timeout"] >= 60
+    assert turn.searches == ("ci flake",)
+    assert turn.calls == (ToolCall("r", "report_findings", {"spoken": "Ok."}),)
+
+
+async def test_if_xai_rejects_web_search_with_functions_it_carries_on_without() -> None:
+    rejected = openai.BadRequestError(
+        "web_search can't be combined with function tools",
+        response=httpx.Response(400, request=httpx.Request("POST", XAI_BASE_URL)),
+        body=None,
+    )
+    plain = Resp("resp_2", [Item("message", content=[Content("output_text", text="Found it.")])])
+    client = FakeClient(rejected, plain, plain)
+    conv = GrokModel(client=client).conversation(
+        system="S", tools=[READ], mode="research", web_search=True
+    )
+
+    turn = await conv.send("x")
+    await conv.send("again")
+
+    assert turn.answer is not None and turn.answer.details == "Found it."
+    assert {"type": "web_search"} in client.calls[0]["tools"]
+    assert {"type": "web_search"} not in client.calls[1]["tools"]
+    assert {"type": "web_search"} not in client.calls[2]["tools"]
+
+
+async def test_a_400_in_answer_mode_is_still_an_error() -> None:
+    rejected = openai.BadRequestError(
+        "bad", response=httpx.Response(400, request=httpx.Request("POST", XAI_BASE_URL)), body=None
+    )
+    conv = GrokModel(client=FakeClient(rejected)).conversation(system="S", tools=[READ])
+    with pytest.raises(BrainError):
+        await conv.send("x")

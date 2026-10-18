@@ -1,6 +1,7 @@
 """Real API calls. Run with MOOZ_LIVE_TESTS=1 and keys in the environment (costs money)."""
 
 import os
+from pathlib import Path
 
 import aiohttp
 import pytest
@@ -63,3 +64,79 @@ async def test_grok_answers_briefly_from_the_transcript() -> None:
     )
 
     assert "migration" in answer.spoken.lower()
+
+
+def _models() -> list[tuple[str, object]]:
+    from mooz_agent.providers.grok import GrokModel
+
+    models: list[tuple[str, object]] = []
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        models.append(("claude", ClaudeModel()))
+    if os.environ.get("XAI_API_KEY"):
+        models.append(("grok", GrokModel()))
+    return models
+
+
+def _brain(model: object, tmp_path: Path, *, web_search: bool) -> ToolLoopBrain:
+    from mooz_agent.config import AgentConfig
+    from mooz_agent.memory import MemoryStore
+    from mooz_agent.tools.toolbox import ToolBox
+
+    (tmp_path / "plans").mkdir()
+    (tmp_path / "plans" / "launch.md").write_text("# Launch\nWe launch the beta on March 30th.\n")
+    config = AgentConfig(name="Atlas")
+    config.add_source(tmp_path / "plans", label="plans")
+    memory = MemoryStore(tmp_path / "memory.jsonl")
+    return ToolLoopBrain(
+        model=model,  # type: ignore[arg-type]
+        agent_name="Atlas",
+        owner_name="Kainoa",
+        owner_identity="p_k",
+        toolbox=ToolBox(config, memory, owner_name="Kainoa"),
+        memory=memory,
+        web_search=web_search,
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "model"),
+    _models()
+    or [
+        pytest.param(
+            "none", None, marks=pytest.mark.skip(reason="needs ANTHROPIC_API_KEY or XAI_API_KEY")
+        )
+    ],
+)
+async def test_quick_answers_use_the_owners_files(name: str, model: object, tmp_path: Path) -> None:
+    brain = _brain(model, tmp_path, web_search=False)
+    answer = await brain.answer(
+        question="when do we launch the beta? check the plans folder",
+        asker=Speaker("p_k", "Kainoa", "human"),
+        transcript="",
+    )
+    assert "30" in answer.spoken, f"{name}: {answer}"
+
+
+@pytest.mark.parametrize(
+    ("name", "model"),
+    _models()
+    or [
+        pytest.param(
+            "none", None, marks=pytest.mark.skip(reason="needs ANTHROPIC_API_KEY or XAI_API_KEY")
+        )
+    ],
+)
+async def test_research_reads_files_searches_the_web_and_reports(
+    name: str, model: object, tmp_path: Path
+) -> None:
+    brain = _brain(model, tmp_path, web_search=True)
+    progress: list[str] = []
+    answer = await brain.research(
+        title="Look into our beta launch date in the plans folder, and search the web for "
+        "the year the LiveKit project was first released",
+        progress=progress.append,
+    )
+    assert "30" in f"{answer.spoken} {answer.details}", f"{name}: {answer}"
+    assert any(p.startswith("Reading launch.md") or p.startswith("Searching") for p in progress)
+    assert any(p.startswith("Searched the web") for p in progress), f"{name}: {progress}"
+    assert len(answer.spoken.split()) <= 60
