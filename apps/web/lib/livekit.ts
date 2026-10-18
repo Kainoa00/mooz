@@ -1,4 +1,5 @@
-import { AccessToken } from "livekit-server-sdk";
+import { AccessToken, TrackSource } from "livekit-server-sdk";
+import type { AgentIdentity } from "./agents";
 
 export interface LivekitConfig {
   url: string;
@@ -42,6 +43,35 @@ export async function mintHumanToken(input: {
     roomJoin: true,
     room: input.room,
     canPublish: true,
+    canSubscribe: true,
+    canPublishData: true,
+    canUpdateOwnMetadata: false,
+  });
+  return at.toJwt();
+}
+
+/**
+ * A join token for an approved agent: microphone audio and data only (no camera,
+ * no screen share), with its owner baked into attributes it cannot change.
+ */
+export async function mintAgentToken(agent: AgentIdentity): Promise<string> {
+  const { apiKey, apiSecret } = livekitConfig();
+  const at = new AccessToken(apiKey, apiSecret, {
+    identity: agent.identity,
+    name: agent.name,
+    ttl: TOKEN_TTL,
+    attributes: {
+      kind: "agent",
+      door: "bridge",
+      owner_id: agent.ownerIdentity,
+      owner_name: agent.ownerName,
+    },
+  });
+  at.addGrant({
+    roomJoin: true,
+    room: agent.slug,
+    canPublish: true,
+    canPublishSources: [TrackSource.MICROPHONE],
     canSubscribe: true,
     canPublishData: true,
     canUpdateOwnMetadata: false,

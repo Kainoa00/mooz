@@ -19,6 +19,25 @@ const MIGRATIONS = [
      created_at INTEGER NOT NULL
    );
    CREATE INDEX participants_by_room ON participants(room_slug);`,
+  `CREATE TABLE agent_codes (
+     code_hash TEXT PRIMARY KEY,
+     room_slug TEXT NOT NULL REFERENCES rooms(slug),
+     owner_identity TEXT NOT NULL REFERENCES participants(identity),
+     expires_at INTEGER NOT NULL,
+     used_at INTEGER
+   );
+   CREATE TABLE agent_requests (
+     id TEXT PRIMARY KEY,
+     room_slug TEXT NOT NULL REFERENCES rooms(slug),
+     owner_identity TEXT NOT NULL REFERENCES participants(identity),
+     agent_name TEXT NOT NULL,
+     agent_identity TEXT NOT NULL UNIQUE,
+     claim_secret_hash TEXT NOT NULL,
+     status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'denied')),
+     created_at INTEGER NOT NULL,
+     decided_at INTEGER
+   );
+   CREATE INDEX agent_requests_by_room ON agent_requests(room_slug, status);`,
 ];
 
 function migrate(db: Db): void {

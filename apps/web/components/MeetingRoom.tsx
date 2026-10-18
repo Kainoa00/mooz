@@ -9,6 +9,8 @@ import {
 } from "@livekit/components-react";
 import { Track } from "livekit-client";
 import { useState } from "react";
+import { AgentRequestsTray } from "./AgentRequestsTray";
+import { BringAgentDialog } from "./BringAgentDialog";
 import { ChatPanel } from "./ChatPanel";
 import { JoinForm, type JoinResult } from "./JoinForm";
 import { MoozTile } from "./MoozTile";
@@ -47,8 +49,12 @@ export function MeetingRoom({ slug }: { slug: string }) {
       <header className="flex items-center justify-between border-b border-zinc-800 px-4 py-2 text-sm">
         <span className="font-semibold">mooz</span>
         <span className="font-mono text-muted">{slug}</span>
-        <span>{session.isHost ? "You are the host" : session.name}</span>
+        <span className="flex items-center gap-3">
+          <span>{session.isHost ? "You are the host" : session.name}</span>
+          <BringAgentDialog slug={slug} />
+        </span>
       </header>
+      {session.isHost && <AgentRequestsTray slug={slug} />}
       <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[1fr_320px]">
         <div className="min-h-0">
           <Stage />

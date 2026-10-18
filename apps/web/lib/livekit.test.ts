@@ -39,3 +39,35 @@ describe("mintHumanToken", () => {
     expect(claims.video?.roomAdmin).toBeFalsy();
   });
 });
+
+describe("mintAgentToken", () => {
+  it("lets an agent join one room with audio and data only, labelled with its owner", async () => {
+    const { mintAgentToken } = await import("./livekit");
+    const jwt = await mintAgentToken({
+      identity: "a_1",
+      slug: "abc-defg-hij",
+      name: "Grok",
+      ownerIdentity: "p_9",
+      ownerName: "Zach",
+    });
+
+    const claims = await new TokenVerifier(LK_KEY, LK_SECRET).verify(jwt);
+    expect(claims.sub).toBe("a_1");
+    expect(claims.name).toBe("Grok");
+    expect(claims.attributes).toEqual({
+      kind: "agent",
+      door: "bridge",
+      owner_id: "p_9",
+      owner_name: "Zach",
+    });
+    expect(claims.video).toMatchObject({
+      roomJoin: true,
+      room: "abc-defg-hij",
+      canSubscribe: true,
+      canPublishData: true,
+      canUpdateOwnMetadata: false,
+      canPublishSources: ["microphone"],
+    });
+    expect(claims.video?.roomAdmin).toBeFalsy();
+  });
+});

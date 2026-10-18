@@ -1,0 +1,171 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  AGENT_CODE_TTL_MS,
+  claimAgentCode,
+  createAgentCode,
+  decideAgentRequest,
+  getClaimStatus,
+  listPendingRequests,
+} from "./agents";
+import { getDb } from "./db";
+import { addParticipant, createRoom } from "./rooms";
+import { useTestEnv } from "@/test/helpers";
+
+beforeEach(useTestEnv);
+afterEach(() => vi.useRealTimers());
+
+function meeting() {
+  const db = getDb();
+  const { slug } = createRoom(db);
+  const host = addParticipant(db, { slug, name: "Kainoa", isHost: true });
+  const guest = addParticipant(db, { slug, name: "Zach", isHost: false });
+  return { db, slug, host, guest };
+}
+
+describe("createAgentCode", () => {
+  it("makes a readable one-time code bound to its owner", () => {
+    const { db, guest } = meeting();
+
+    const { code, expiresAt } = createAgentCode(db, guest);
+
+    expect(code).toMatch(/^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/);
+    expect(expiresAt - Date.now()).toBeGreaterThan(AGENT_CODE_TTL_MS - 1000);
+  });
+});
+
+describe("claimAgentCode", () => {
+  it("creates a pending request owned by the code's creator", () => {
+    const { db, slug, guest } = meeting();
+    const { code } = createAgentCode(db, guest);
+
+    const claim = claimAgentCode(db, { code, name: "Grok" });
+
+    expect(claim).toMatchObject({ slug, status: "pending" });
+    expect(listPendingRequests(db, slug)).toEqual([
+      expect.objectContaining({ id: claim.requestId, agentName: "Grok", ownerName: "Zach" }),
+    ]);
+  });
+
+  it("accepts the code regardless of case and dashes", () => {
+    const { db, guest } = meeting();
+    const { code } = createAgentCode(db, guest);
+
+    expect(() => claimAgentCode(db, { code: code.toLowerCase().replaceAll("-", ""), name: "Grok" })).not.toThrow();
+  });
+
+  it("can only be used once", () => {
+    const { db, guest } = meeting();
+    const { code } = createAgentCode(db, guest);
+    claimAgentCode(db, { code, name: "Grok" });
+
+    expect(() => claimAgentCode(db, { code, name: "Other" })).toThrowError(
+      expect.objectContaining({ status: 400, code: "invalid_code" }),
+    );
+  });
+
+  it("rejects an expired code", () => {
+    vi.useFakeTimers();
+    const { db, guest } = meeting();
+    const { code } = createAgentCode(db, guest);
+    vi.advanceTimersByTime(AGENT_CODE_TTL_MS + 1);
+
+    expect(() => claimAgentCode(db, { code, name: "Grok" })).toThrowError(
+      expect.objectContaining({ code: "invalid_code" }),
+    );
+  });
+
+  it("rejects an unknown code", () => {
+    const { db } = meeting();
+
+    expect(() => claimAgentCode(db, { code: "AAAA-BBBB-CCCC", name: "Grok" })).toThrowError(
+      expect.objectContaining({ code: "invalid_code" }),
+    );
+  });
+
+  it("does not burn the code when the name is rejected", () => {
+    const { db, guest } = meeting();
+    const { code } = createAgentCode(db, guest);
+
+    expect(() => claimAgentCode(db, { code, name: "mooz" })).toThrow();
+    expect(() => claimAgentCode(db, { code, name: "Grok" })).not.toThrow();
+  });
+
+  it("rejects a name taken by another agent or a person in the meeting", () => {
+    const { db, host, guest } = meeting();
+    claimAgentCode(db, { code: createAgentCode(db, host).code, name: "Atlas" });
+
+    expect(() => claimAgentCode(db, { code: createAgentCode(db, guest).code, name: "atlas" })).toThrowError(
+      expect.objectContaining({ code: "name_taken" }),
+    );
+    expect(() => claimAgentCode(db, { code: createAgentCode(db, guest).code, name: "Kainoa" })).toThrowError(
+      expect.objectContaining({ code: "name_taken" }),
+    );
+  });
+
+  it("frees the name of a denied agent", () => {
+    const { db, slug, host } = meeting();
+    const first = claimAgentCode(db, { code: createAgentCode(db, host).code, name: "Atlas" });
+    decideAgentRequest(db, { slug, requestId: first.requestId, approve: false });
+
+    expect(() => claimAgentCode(db, { code: createAgentCode(db, host).code, name: "Atlas" })).not.toThrow();
+  });
+});
+
+describe("decideAgentRequest and getClaimStatus", () => {
+  it("withholds the agent identity until the host approves", () => {
+    const { db, slug, guest } = meeting();
+    const claim = claimAgentCode(db, { code: createAgentCode(db, guest).code, name: "Grok" });
+
+    expect(getClaimStatus(db, claim.requestId, claim.claimSecret)).toEqual({ status: "pending" });
+
+    decideAgentRequest(db, { slug, requestId: claim.requestId, approve: true });
+
+    expect(getClaimStatus(db, claim.requestId, claim.claimSecret)).toEqual({
+      status: "approved",
+      agent: {
+        identity: expect.stringMatching(/^a_/),
+        slug,
+        name: "Grok",
+        ownerIdentity: guest.identity,
+        ownerName: "Zach",
+      },
+    });
+    expect(listPendingRequests(db, slug)).toEqual([]);
+  });
+
+  it("reports a denial", () => {
+    const { db, slug, guest } = meeting();
+    const claim = claimAgentCode(db, { code: createAgentCode(db, guest).code, name: "Grok" });
+
+    decideAgentRequest(db, { slug, requestId: claim.requestId, approve: false });
+
+    expect(getClaimStatus(db, claim.requestId, claim.claimSecret)).toEqual({ status: "denied" });
+  });
+
+  it("rejects polling with the wrong claim secret", () => {
+    const { db, guest } = meeting();
+    const claim = claimAgentCode(db, { code: createAgentCode(db, guest).code, name: "Grok" });
+
+    expect(() => getClaimStatus(db, claim.requestId, "wrong")).toThrowError(
+      expect.objectContaining({ status: 404, code: "request_not_found" }),
+    );
+    expect(() => getClaimStatus(db, claim.requestId, undefined)).toThrowError(
+      expect.objectContaining({ status: 404 }),
+    );
+  });
+
+  it("cannot decide a request from another room or decide twice", () => {
+    const { db, slug, guest } = meeting();
+    const other = createRoom(db);
+    const claim = claimAgentCode(db, { code: createAgentCode(db, guest).code, name: "Grok" });
+
+    expect(() => decideAgentRequest(db, { slug: other.slug, requestId: claim.requestId, approve: true })).toThrowError(
+      expect.objectContaining({ status: 404 }),
+    );
+
+    decideAgentRequest(db, { slug, requestId: claim.requestId, approve: true });
+    expect(() => decideAgentRequest(db, { slug, requestId: claim.requestId, approve: false })).toThrowError(
+      expect.objectContaining({ status: 409, code: "already_decided" }),
+    );
+  });
+});
