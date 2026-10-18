@@ -63,7 +63,7 @@ We'll know we're right when **people who complete setup use an agent in at least
 |---|---|---|---|---|
 | 1 | First agent in the room | Two people meet by link. One brings a live-bridge agent (host-approved) that answers in chat and by voice when its name is said (live voice check pending keys) | complete | `.claude/plans/m1-first-agent-in-the-room.plan.md` |
 | 2 | Personal agent with memory | The ready-made agent has Claude or Grok brains, persistent memory, local repo and folder access, and owner-only tasks with public-data rules, plus opt-in meeting notes (live Claude/Grok checks pending keys) | complete | `.claude/plans/m2-personal-agent-with-memory.plan.md` |
-| 3 | Async research tasks | "On it" with background work, spoken and chat progress, and a task panel | pending | — |
+| 3 | Async research tasks | "On it" with background work, spoken and chat progress, and a task panel | in-progress | `.claude/plans/m3-async-research-tasks.plan.md` |
 | 4 | Connector door | Grok, Claude or ChatGPT joins via a private MCP link: queued question, one-tap prefill, browser-side voice | pending | — |
 | 5 | Many agents, one floor | Multiple agents, one speaker at a time, agent-to-agent with the 3-turn pause, naming rules hardened | pending | — |
 | 6 | Local voice and launch | OpenAI-compatible local voice (VoiceStudio), VPS guide, meeting summary export, security hardening backlog (below), README and demo, v0.1 release | pending | — |
