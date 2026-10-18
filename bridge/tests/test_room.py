@@ -23,7 +23,7 @@ def test_humans_are_humans() -> None:
 def test_agents_carry_their_owner() -> None:
     assert speaker_from_participant(
         P("a_1", "Grok", {"kind": "agent", "owner_id": "p_1", "owner_name": "Zach"})
-    ) == Speaker(identity="a_1", name="Grok", kind="agent", owner_identity="p_1")
+    ) == Speaker(identity="a_1", name="Grok", kind="agent", owner_identity="p_1", owner_name="Zach")
 
 
 def test_missing_attributes_default_to_human_and_identity_as_name() -> None:

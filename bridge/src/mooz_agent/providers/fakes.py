@@ -50,6 +50,17 @@ class FakeTTS:
             await asyncio.sleep(0)
 
 
+class EchoBrain:
+    """Repeats the question back. Used for offline demos and end-to-end tests."""
+
+    def __init__(self) -> None:
+        self.questions: list[tuple[str, Speaker, str]] = []
+
+    async def answer(self, *, question: str, asker: Speaker, transcript: str) -> Answer:
+        self.questions.append((question, asker, transcript))
+        return Answer(f"You asked: {question}")
+
+
 class FakeBrain:
     """Answers from a fixed reply, recording every question it was asked."""
 

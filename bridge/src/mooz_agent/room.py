@@ -24,6 +24,7 @@ class Speaker:
     name: str
     kind: Literal["human", "agent"]
     owner_identity: str | None = None
+    owner_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -51,6 +52,7 @@ def speaker_from_participant(p: _ParticipantLike) -> Speaker:
         name=p.name or p.identity,
         kind=kind,
         owner_identity=attrs.get("owner_id") if kind == "agent" else None,
+        owner_name=attrs.get("owner_name") if kind == "agent" else None,
     )
 
 
@@ -69,6 +71,7 @@ class MeetingRoom:
         self.on_chat: ChatHandler | None = None
         self.on_human_track: TrackHandler | None = None
         self.on_human_track_ended: TrackEndedHandler | None = None
+        self._closed = asyncio.Event()
 
     @property
     def me(self) -> Speaker:
@@ -80,12 +83,17 @@ class MeetingRoom:
     async def connect(self, url: str, token: str) -> None:
         self._room.on("track_subscribed", self._handle_track_subscribed)
         self._room.on("track_unsubscribed", self._handle_track_unsubscribed)
+        self._room.on("disconnected", lambda *_: self._closed.set())
         self._room.register_text_stream_handler(CHAT_TOPIC, self._handle_chat_stream)
         await self._room.connect(url, token, rtc.RoomOptions(auto_subscribe=True))
         track = rtc.LocalAudioTrack.create_audio_track("agent-voice", self.voice)
         options = rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE)
         await self._room.local_participant.publish_track(track, options)
         log.info("joined room %s as %s", self._room.name, self.me.identity)
+
+    async def wait_closed(self) -> None:
+        """Return when the meeting ends for us (left, removed by the host, or connection lost)."""
+        await self._closed.wait()
 
     async def send_chat(self, text: str) -> None:
         await self._room.local_participant.send_text(text, topic=CHAT_TOPIC)

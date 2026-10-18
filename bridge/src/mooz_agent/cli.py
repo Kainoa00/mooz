@@ -62,6 +62,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not args.name:
         print("mooz-agent: --name is required (or set MOOZ_AGENT_NAME)", file=sys.stderr)
         return 2
+    from .providers import ProviderConfigError, check_environment
+
+    try:
+        check_environment()
+    except ProviderConfigError as err:
+        print(f"mooz-agent: {err}", file=sys.stderr)
+        return 2
     try:
         grant = asyncio.run(obtain_grant(server=args.server, code=args.code, name=args.name))
         print(

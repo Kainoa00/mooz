@@ -43,7 +43,7 @@ export function AgentRequestsTray({ slug }: { slug: string }) {
   return (
     <aside aria-label="Agents waiting to join" className="fixed right-4 top-14 z-40 flex w-80 flex-col gap-2">
       {requests.map((r) => (
-        <div key={r.id} data-testid="agent-request" className="flex flex-col gap-2 rounded-xl bg-surface p-3 text-sm shadow-lg">
+        <div key={r.id} data-testid="agent-request" className="flex flex-col gap-2 rounded-xl border border-zinc-700 bg-zinc-900 p-3 text-sm text-white shadow-lg">
           <span>
             🤖 <strong>{r.ownerName}&apos;s {r.agentName}</strong> wants to join. It will hear the meeting and
             can speak when addressed.
@@ -52,7 +52,7 @@ export function AgentRequestsTray({ slug }: { slug: string }) {
             <button type="button" onClick={() => decide(r.id, "approve")} className="rounded-lg bg-agent px-3 py-1 text-white">
               Approve
             </button>
-            <button type="button" onClick={() => decide(r.id, "deny")} className="rounded-lg border border-zinc-400 px-3 py-1">
+            <button type="button" onClick={() => decide(r.id, "deny")} className="rounded-lg border border-zinc-500 px-3 py-1 text-zinc-200">
               Deny
             </button>
           </div>

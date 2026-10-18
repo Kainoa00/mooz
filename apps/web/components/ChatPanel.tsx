@@ -23,7 +23,7 @@ export function ChatPanel() {
   }
 
   return (
-    <section aria-label="Chat" className="flex h-full flex-col border-l border-zinc-200 dark:border-zinc-800">
+    <section aria-label="Chat" className="flex min-h-0 flex-col border-t border-zinc-800 md:h-full md:border-l md:border-t-0">
       <ol ref={listRef} data-testid="chat-messages" className="flex flex-1 flex-col gap-3 overflow-y-auto p-3">
         {chatMessages.map((m) => {
           const who = { name: m.from?.name, attributes: m.from?.attributes ?? {} };
@@ -46,8 +46,8 @@ export function ChatPanel() {
           aria-label="Message"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          placeholder="Message, or @Agent to ask an agent"
-          className="flex-1 rounded-lg border border-zinc-300 bg-transparent px-3 py-2 text-sm dark:border-zinc-700"
+          placeholder="Message · @Name asks an agent"
+          className="min-w-0 flex-1 rounded-lg border border-zinc-700 bg-transparent px-3 py-2 text-sm"
         />
         <button type="submit" disabled={isSending} className="rounded-lg bg-accent px-3 py-2 text-sm text-white">
           Send

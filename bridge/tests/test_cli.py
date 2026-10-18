@@ -6,6 +6,22 @@ from mooz_agent.claim import AgentGrant, ClaimError
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def offline(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MOOZ_PROVIDERS", "fake")
+
+
+def test_missing_keys_fail_before_joining(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("MOOZ_PROVIDERS")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("ELEVEN_API_KEY", raising=False)
+
+    assert cli.main(["connect", "X", "--server", "http://s", "--name", "Atlas"]) == 2
+    assert "ANTHROPIC_API_KEY and ELEVEN_API_KEY" in capsys.readouterr().err
+
+
 def test_parse_connect_arguments() -> None:
     args = cli.parse_args(
         ["connect", "ABCD-EFGH-JKLM", "--server", "https://m.example", "--name", "Atlas"]
