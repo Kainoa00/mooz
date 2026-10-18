@@ -135,3 +135,42 @@ def test_git_never_writes_the_index(repo: Path) -> None:
     git_diff(repo)
 
     assert index.stat().st_mtime_ns == before
+
+
+def test_a_secrets_file_renamed_in_history_stays_hidden(repo: Path) -> None:
+    (repo / ".env").write_text(
+        "DATABASE_URL=postgres://admin:hunter2pw@db/prod\nADMIN_PIN=483920\n"
+    )
+    run(repo, "commit", "-qam", "update env")
+    run(repo, "mv", ".env", "settings.cfg")
+    (repo / "settings.cfg").write_text(
+        "DATABASE_URL=postgres://admin:hunter2pw@db/prod\nADMIN_PIN=483920\nDEBUG=1\n"
+    )
+    run(repo, "add", "-A")
+    run(repo, "commit", "-qm", "rename env")
+    for out in (git_show(repo, "HEAD"), git_diff(repo, "HEAD~1", "HEAD")):
+        assert "hunter2pw" not in out and "483920" not in out
+        assert "hidden" in out and ".env" not in out
+
+
+def test_hidden_sections_leave_other_files_visible(repo: Path) -> None:
+    (repo / "app.py").write_text("print('v3')\n")
+    (repo / ".env").write_text("TOKEN=third_secret_value_789\n")
+    out = git_diff(repo)
+    assert "print('v3')" in out
+    assert "third_secret_value" not in out and ".env" not in out
+    assert "(changes to a sensitive file are hidden)" in out
+
+
+def test_merge_commits_hide_secrets_in_combined_diffs(repo: Path) -> None:
+    run(repo, "checkout", "-q", "-b", "feature")
+    (repo / ".env").write_text("TOKEN=feature_side_secret_1\n")
+    run(repo, "commit", "-qam", "feature env")
+    run(repo, "checkout", "-q", "main")
+    (repo / ".env").write_text("TOKEN=main_side_secret_2\n")
+    run(repo, "commit", "-qam", "main env")
+    subprocess.run(["git", "merge", "-q", "feature"], cwd=repo, capture_output=True, check=False)
+    (repo / ".env").write_text("TOKEN=resolved_secret_value_3\n")
+    run(repo, "commit", "-qam", "merge feature")
+    out = git_show(repo, "HEAD")
+    assert "diff --cc" not in out and "secret_value_3" not in out and "side_secret" not in out

@@ -60,3 +60,36 @@ def test_redacts_secret_assignments(line: str, expected: str) -> None:
 )
 def test_leaves_ordinary_code_alone(safe: str) -> None:
     assert redact(safe) == safe
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        (
+            "DATABASE_URL=postgres://admin:hunter2pw@db.internal/prod",
+            f"DATABASE_URL=postgres://admin:{REDACTED}@db.internal/prod",
+        ),
+        ("ADMIN_PIN=483920", f"ADMIN_PIN={REDACTED}"),
+        ("authToken: abcd1234", f"authToken: {REDACTED}"),
+        ("STRIPE_PRIVATE_KEY=abcd-efgh", f"STRIPE_PRIVATE_KEY={REDACTED}"),
+        ("client_secret = 'zxcv'", f"client_secret = '{REDACTED}'"),
+    ],
+)
+def test_redacts_more_secret_shapes(line: str, expected: str) -> None:
+    assert redact(line) == expected
+
+
+@pytest.mark.parametrize(
+    "safe",
+    [
+        "sort_key = 'name_desc'",
+        "PRIMARY_KEY = id",
+        "PORT=8080",
+        "mapping = 'abcd1234'",
+        "TIMEOUT = 30",
+        "token = self.session.token",
+        "https://example.com/docs",
+    ],
+)
+def test_keeps_ordinary_config_readable(safe: str) -> None:
+    assert redact(safe) == safe

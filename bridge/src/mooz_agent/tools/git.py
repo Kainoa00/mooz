@@ -12,7 +12,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from .files import DENIED_DIRS, DENIED_FILES, FileAccessError, resolve_inside
+from .files import FileAccessError, is_denied_name, resolve_inside
 from .redact import redact
 
 GIT_TIMEOUT = 5.0
@@ -21,11 +21,6 @@ MAX_LOG = 20
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 _REF = re.compile(r"^(?!-)(?!.*\.\.)[A-Za-z0-9._/~^@{}-]{1,100}$")
 _FILTER_KEY = re.compile(r"^filter\.(.+)\.(clean|smudge|process|required)$")
-
-# Keep secrets files out of diffs and patches, on top of output redaction.
-_EXCLUDES = [f":(exclude,glob)**/{p}" for p in DENIED_FILES] + [
-    f":(exclude,glob)**/{d}/**" for d in sorted(DENIED_DIRS)
-]
 
 
 def _validate_ref(ref: str) -> str:
@@ -43,6 +38,7 @@ def _env() -> dict[str, str]:
         "GIT_OPTIONAL_LOCKS": "0",  # never write the index while reading
         "GIT_ATTR_SOURCE": EMPTY_TREE,  # ignore in-tree .gitattributes
         "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,  # and the repo's own config is neutralized below
     }
 
 
@@ -91,7 +87,7 @@ def _filter_overrides(root: Path) -> list[str]:
     return out
 
 
-def _git(root: Path, *args: str) -> str:
+def _git(root: Path, *args: str, patch: bool = False) -> str:
     root = root.resolve()
     overrides = [
         "-c",
@@ -106,10 +102,46 @@ def _git(root: Path, *args: str) -> str:
         if "not a git repository" in message:
             raise FileAccessError("This source is not a git repository")
         raise FileAccessError("git: " + message.replace(str(root), ".").removeprefix("fatal: "))
-    out = result.stdout
+    # Hide secrets files before truncating, so they never use up the output budget.
+    out = _hide_sensitive(result.stdout) if patch else result.stdout
     if len(out) > MAX_OUTPUT_CHARS:
         out = out[:MAX_OUTPUT_CHARS] + "\n… output truncated"
     return redact(out.rstrip()) or "(no output)"
+
+
+# A file section starts with its diff header; merges use the combined "--cc" form.
+_SECTION = re.compile(r"^(?=diff --(?:git|cc|combined) )", re.MULTILINE)
+_HUNK_OR_BINARY = re.compile(r"^(?:@@|Binary files |GIT binary patch)", re.MULTILINE)
+_PATH_TOKENS = re.compile(r'[\s/"\\{}]+|=>')
+_STAT_LINE = re.compile(r"^ (.+?) +\| ", re.MULTILINE)
+
+
+def _mentions_denied(text: str) -> bool:
+    return any(is_denied_name(t) for t in _PATH_TOKENS.split(text) if t)
+
+
+def _hide_sensitive(patch: str) -> str:
+    """Hide every file section (and stat line) that touches a secrets file, on either side.
+
+    Pathspec excludes run before rename detection, so a .env renamed to settings.cfg would
+    show up as a brand-new settings.cfg with the secrets in it. Instead git sees every path,
+    pairs renames and copies, and each section is dropped if any path in its header (old,
+    new, rename/copy from/to) is denied. Over-hiding a file is fine; leaking one is not.
+    """
+    parts = _SECTION.split(patch)
+    preamble = _STAT_LINE.sub(
+        lambda m: " (sensitive file) | " if _mentions_denied(m.group(1)) else m.group(0),
+        parts[0],
+    )
+    out = [preamble]
+    for section in parts[1:]:
+        hunk = _HUNK_OR_BINARY.search(section)
+        header = section[: hunk.start()] if hunk else section
+        if _mentions_denied(header):
+            out.append("(changes to a sensitive file are hidden)\n")
+        else:
+            out.append(section)
+    return "".join(out)
 
 
 def git_status(root: Path) -> str:
@@ -126,17 +158,17 @@ def git_log(root: Path, path: str | None = None, n: int = 10) -> str:
     return _git(root, *args)
 
 
+_PATCH_FLAGS = (
+    "--stat", "--patch", "--find-renames", "--find-copies", "--no-color", "--no-ext-diff",
+    "--no-textconv",
+)  # fmt: skip
+
+
 def git_show(root: Path, ref: str = "HEAD") -> str:
     ref = _validate_ref(ref)
-    return _git(
-        root, "show", "--stat", "--patch", "--no-color", "--no-ext-diff", "--no-textconv",
-        ref, "--", ".", *_EXCLUDES,
-    )  # fmt: skip
+    return _git(root, "show", *_PATCH_FLAGS, ref, "--", ".", patch=True)
 
 
 def git_diff(root: Path, ref_a: str | None = None, ref_b: str | None = None) -> str:
     refs = [_validate_ref(r) for r in (ref_a, ref_b) if r is not None]
-    return _git(
-        root, "diff", "--stat", "--patch", "--no-color", "--no-ext-diff", "--no-textconv",
-        *refs, "--", ".", *_EXCLUDES,
-    )  # fmt: skip
+    return _git(root, "diff", *_PATCH_FLAGS, *refs, "--", ".", patch=True)

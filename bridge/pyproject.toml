@@ -15,6 +15,7 @@ dependencies = [
   "python-dotenv>=1.0",
   "tomli-w>=1.2.0,<2",
   "openai>=3.35.1,<4",
+  "regex>=2025.9.1",
 ]
 
 [project.scripts]
@@ -28,6 +29,7 @@ dev = [
   "respx>=0.23.1",
   "ruff>=0.17.1",
   "mypy>=2.4.0",
+  "types-regex>=2026.9.29.20261005",
 ]
 
 [build-system]

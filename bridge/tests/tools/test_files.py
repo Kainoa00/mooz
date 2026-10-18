@@ -195,3 +195,26 @@ def test_symlinked_directories_are_not_followed_out(tmp_path: Path) -> None:
     assert "No matches" in search(root, "deploy")
     with pytest.raises(FileAccessError):
         list_files(root, "linked")
+
+
+def test_catastrophic_regexes_cannot_hang_the_agent(tmp_path: Path) -> None:
+    import time as _time
+
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "a.txt").write_text("a" * 60 + "b\n")
+
+    start = _time.monotonic()
+    with pytest.raises(FileAccessError, match="too slow"):
+        search(root, "(a|aa)+$", regex=True)
+
+    assert _time.monotonic() - start < 2
+
+
+def test_file_names_with_secrets_are_redacted_in_listings(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "backup-AKIAIOSFODNN7EXAMPLE.txt").write_text("x")
+
+    assert "AKIAIOSFODNN7EXAMPLE" not in list_files(root)
+    assert "AKIAIOSFODNN7EXAMPLE" not in list_files(root, pattern="*.txt")
