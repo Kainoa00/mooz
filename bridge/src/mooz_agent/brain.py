@@ -41,8 +41,13 @@ MEMORY_WRITE_TOOLS = frozenset({"remember", "forget"})
 # The request has to *start* with the instruction ("remember that…", "forget m_…"), like a
 # task command: "has anyone added notes to issue 12?" mustn't let the issue's text write.
 _ASKING = r"^(?:(?:please|can you|could you|would you|will you|ok|okay)[\s,]+)*"
-_REMEMBER = re.compile(_ASKING + r"(?:remember|note that|make a note)\b", re.I)
-_FORGET = re.compile(_ASKING + r"forget\b", re.I)
+# Not "can you remember what…?" (recalling) nor "forget it, …" (never mind).
+_REMEMBER = re.compile(
+    _ASKING + r"(?:remember\b(?!\s+(?:what|when|where|who|whom|why|how|whether|if)\b)"
+    r"|note that\b|make a note\b)",
+    re.I,
+)
+_FORGET = re.compile(_ASKING + r"forget\b(?!\s+(?:it|that|this|about\s+it)\s*(?:[,.;:!?]|$))", re.I)
 _PUBLIC_NOTE = re.compile(
     _ASKING + r"remember\s+publicly\b|\b(?:anyone|everyone)\s+(?:may|can)\s+know\b", re.I
 )

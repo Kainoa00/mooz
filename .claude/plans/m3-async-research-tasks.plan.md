@@ -11,6 +11,7 @@ Research covers the owner's folders and repos (from M2), their **GitHub** issues
 
 ## Decisions (confirmed 2026-10-18)
 1. **Web research.** Owner tasks can search the web: Claude's server-side `web_search_20260209`, and xAI's `{"type": "web_search"}` for Grok. It's on by default for owner tasks, never available for guests' questions, and can be turned off per agent (`web_search = false` in `agent.toml`). It costs the owner's provider usage, capped at 5 searches per task. Web fetch (opening arbitrary URLs) stays off: it would be an exfiltration channel for anything the agent can read.
+   - **Changed after the security review:** xAI's web search also opens web pages, the same exfiltration channel, so it is **off by default for Grok** (`init --web-search` or `web_search = true` turns it on, with a warning at connect). Claude stays on by default. The cap is about 5 per task: a step that pauses mid-search can run a few more.
 2. **Private results.** If the owner says "…privately" or "…just for me", the result goes only to the owner: their task panel, plus a direct chat message to them. Nothing is spoken. Everyone else sees "🔒 Private task for Kainoa" with its status but not its title. By default, results go to the room as the PRD says.
 3. **GitHub.** Read-only: issues, PRs (with review state and changed files) and CI check status. The owner provides a `GITHUB_TOKEN`; a fine-grained, read-only token is recommended. Repos are added like folders, with the same private and public rules: `mooz-agent sources add github:owner/repo [--public]`. Writing to GitHub (comments, issues) waits for a later milestone.
 4. **Results are kept.** Every finished task is saved to the owner's private memory, tagged `task-result`. Like meeting notes, these stay out of the standing prompt and are found with `recall`. If the meeting ends while a task is running, the agent finishes it within its own time budget, saves it, and then exits; the CLI says so and Ctrl-C stops it at once.
@@ -150,11 +151,11 @@ MOOZ_LIVE_TESTS=1 uv run pytest -m live   # opt-in: real Claude and Grok researc
 | Tasks outliving the meeting | Low | Finish within the task's own budget, save to memory, then exit; Ctrl-C stops at once |
 
 ## Acceptance
-- [ ] All tasks complete, each as its own conventional commit, merged to `main`
-- [ ] Validation passes in CI, with bridge and web coverage at 80% or higher
-- [ ] Only owners start or cancel tasks; guests' questions never become tasks
-- [ ] The agent keeps answering while tasks run, and reports back by chat right away and by voice at a quiet moment
-- [ ] Private results never reach anyone but the owner
-- [ ] The E2E task test passes in the browser with the real bridge
-- [ ] `security-reviewer` on Tasks 2–5 and `code-reviewer` on the milestone diff, every finding fixed and re-reviewed
+- [x] All tasks complete, each as its own conventional commit, merged to `main`
+- [x] Validation passes in CI, with bridge and web coverage at 80% or higher (bridge 94%, web 95%)
+- [x] Only owners start or cancel tasks; guests' questions never become tasks
+- [x] The agent keeps answering while tasks run, and reports back by chat right away and by voice at a quiet moment (no one speaking, no one just finished)
+- [x] Private results never reach anyone but the owner (and any owner request phrased privately is answered only to them)
+- [x] The E2E task test passes in the browser with the real bridge
+- [x] `security-reviewer` on the milestone (three re-review rounds) and `code-reviewer` on the milestone diff (approved after one re-review); every finding fixed or, for the residual prompt-injection risk, documented
 - [ ] Opt-in live tests pass for Claude and Grok research with web search, and for GitHub (needs your keys)

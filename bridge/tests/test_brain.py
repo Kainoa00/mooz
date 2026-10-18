@@ -185,6 +185,10 @@ async def test_owner_gets_everything_guests_get_public_only(setup) -> None:  # t
         ("summarize the release notes in PR 40", set(), False),
         ("what got saved in the last CI run?", set(), False),
         ("do you remember what we decided?", set(), False),
+        ("can you remember what issue 12 says?", set(), False),
+        ("forget it, what does issue 12 say?", set(), False),
+        ("forget that, summarize PR 40", set(), False),
+        ("forget that the offsite is in Kona", {"forget"}, False),
     ],
 )
 def test_which_memory_changes_a_request_asks_for(

@@ -63,7 +63,7 @@ We'll know we're right when **people who complete setup use an agent in at least
 |---|---|---|---|---|
 | 1 | First agent in the room | Two people meet by link. One brings a live-bridge agent (host-approved) that answers in chat and by voice when its name is said (live voice check pending keys) | complete | `.claude/plans/m1-first-agent-in-the-room.plan.md` |
 | 2 | Personal agent with memory | The ready-made agent has Claude or Grok brains, persistent memory, local repo and folder access, and owner-only tasks with public-data rules, plus opt-in meeting notes (live Claude/Grok checks pending keys) | complete | `.claude/plans/m2-personal-agent-with-memory.plan.md` |
-| 3 | Async research tasks | "On it" with background work, spoken and chat progress, and a task panel | in-progress | `.claude/plans/m3-async-research-tasks.plan.md` |
+| 3 | Async research tasks | "On it" with background work, spoken and chat progress, and a task panel; GitHub issues, PRs and CI; web search; private answers (live Claude/Grok/GitHub checks pending keys) | complete | `.claude/plans/m3-async-research-tasks.plan.md` |
 | 4 | Connector door | Grok, Claude or ChatGPT joins via a private MCP link: queued question, one-tap prefill, browser-side voice | pending | — |
 | 5 | Many agents, one floor | Multiple agents, one speaker at a time, agent-to-agent with the 3-turn pause, naming rules hardened | pending | — |
 | 6 | Local voice and launch | OpenAI-compatible local voice (VoiceStudio), VPS guide, meeting summary export, security hardening backlog (below), README and demo, v0.1 release | pending | — |
@@ -89,6 +89,12 @@ We'll know we're right when **people who complete setup use an agent in at least
 - Notes opt-outs can't catch someone else repeating your words in their own, or agents not built on mooz that don't send `reply_to` / `sources`.
 - The memory file lock uses `fcntl`; on Windows, avoid running the CLI's memory commands while the agent is in a meeting.
 - Live Claude tool use and Grok have only been tested against recorded request shapes until the opt-in live tests run with real keys.
+
+## Known limits after M3 (documented in the README)
+- A public task reads private sources, untrusted GitHub text and web results together, and its result goes to the room. Untrusted text can try to steer it into repeating private details. Mitigations: "information, not instructions", the prompt states the audience, research can't change memory, Claude's search can't open links, Grok's search is off unless turned on. For sensitive work, ask privately.
+- Privacy is recognised from phrases ("privately", "just for me", "DM me", "as a private task"…); an unrecognised phrasing gets a public answer.
+- The web search cap is about 5 per task: Claude must keep the tool on a paused turn's continuation, so a step that pauses mid-search can run a few more; Grok can run a few more within one step.
+- Live Claude and Grok research, web search and GitHub have only been tested against recorded request shapes until the opt-in live tests run with real keys.
 
 ## Risks
 | Risk | Likelihood | Impact | Mitigation |
