@@ -10,6 +10,7 @@ from typing import Any, Protocol
 
 from .addressing import AddressDetector
 from .claim import AgentGrant, ClaimError
+from .config import AgentConfig
 from .listening import Listener, track_frames
 from .providers.base import Answer, Brain, BrainError, SpeechToText, TextToSpeech
 from .room import ChatHandler, ChatMessage, Speaker, TrackEndedHandler, TrackHandler
@@ -165,7 +166,7 @@ class Agent:
         await self.listener.aclose()
 
 
-async def run(grant: AgentGrant) -> None:
+async def run(grant: AgentGrant, config: AgentConfig) -> None:
     """Join the meeting from an approved grant and run until the meeting ends for us."""
     import aiohttp
 
@@ -182,7 +183,7 @@ async def run(grant: AgentGrant) -> None:
                 raise ClaimError(
                     "connect_failed", f"Could not join the meeting's media server: {err}"
                 ) from err
-            stt, tts, brain = build_providers(http=http, me=room.me)
+            stt, tts, brain = build_providers(http=http, me=room.me, config=config)
             agent = Agent(room=room, stt=stt, tts=tts, brain=brain)
             agent.wire()
             await room.wait_closed()
