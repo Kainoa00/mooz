@@ -2,6 +2,7 @@ import { TokenVerifier } from "livekit-server-sdk";
 import { beforeEach, describe, expect, it } from "vitest";
 import { getDb } from "@/lib/db";
 import { claimAgentCode, createAgentCode } from "@/lib/agents";
+import { setNotesOptOut } from "@/lib/notes";
 import { addParticipant, createRoom, findParticipant } from "@/lib/rooms";
 import { LK_KEY, LK_SECRET, jsonRequest, params, setCookies, useTestEnv } from "@/test/helpers";
 import { POST } from "./route";
@@ -96,7 +97,7 @@ describe("POST /api/rooms/[slug]/join", () => {
   describe("rejoining after a reload", () => {
     async function joinOnce(slug: string, body: Record<string, unknown>, cookie = "") {
       const res = await POST(jsonRequest(url(slug), body, cookie ? { cookie } : {}), params({ slug }));
-      const json = (await res.json()) as { identity: string; isHost: boolean };
+      const json = (await res.json()) as { identity: string; isHost: boolean; token: string };
       return { res, json, secret: setCookies(res)[`mooz_p_${slug}`] };
     }
 
@@ -139,6 +140,17 @@ describe("POST /api/rooms/[slug]/join", () => {
       const again = await joinOnce(slug, { name: "Kai", rejoin: true }, `${host}; mooz_p_${slug}=${first.secret}`);
 
       expect(again.json).toMatchObject({ identity: first.json.identity, isHost: true });
+    });
+
+    it("keeps a notes opt-out on rejoin", async () => {
+      const { slug } = createRoom(getDb());
+      const first = await joinOnce(slug, { name: "Zach" });
+      setNotesOptOut(getDb(), first.json.identity, true);
+
+      const again = await joinOnce(slug, { name: "Zach", rejoin: true }, `mooz_p_${slug}=${first.secret}`);
+
+      const claims = await new TokenVerifier(LK_KEY, LK_SECRET).verify(again.json.token);
+      expect(claims.attributes).toEqual({ kind: "human", notes_opt_out: "1" });
     });
   });
 });

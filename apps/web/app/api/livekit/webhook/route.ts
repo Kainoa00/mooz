@@ -2,11 +2,14 @@ import { WebhookReceiver } from "livekit-server-sdk";
 import { isRevokedAgent } from "@/lib/agents";
 import { getDb } from "@/lib/db";
 import { errorResponse, HttpError } from "@/lib/http";
-import { livekitConfig, removeFromRoom } from "@/lib/livekit";
+import { livekitConfig, removeFromRoom, setRoomMetadata } from "@/lib/livekit";
+import { getNotesPolicy, notesMetadata } from "@/lib/notes";
+import { getRoomByLivekitName } from "@/lib/rooms";
 
 /**
  * LiveKit calls this for room events (configured in livekit.yaml). A removed agent
- * that reconnects with a token it still holds is kicked the moment it joins.
+ * that reconnects with a token it still holds is kicked the moment it joins, and a
+ * room LiveKit starts again (after everyone left) gets its notes policy back.
  */
 export async function POST(req: Request): Promise<Response> {
   try {
@@ -21,6 +24,10 @@ export async function POST(req: Request): Promise<Response> {
     const room = event.room?.name;
     if (event.event === "participant_joined" && identity && room && isRevokedAgent(getDb(), identity)) {
       await removeFromRoom(room, identity);
+    }
+    if (event.event === "room_started" && room) {
+      const meeting = getRoomByLivekitName(getDb(), room);
+      if (meeting && getNotesPolicy(getDb(), meeting.slug)) await setRoomMetadata(room, notesMetadata(true));
     }
     return Response.json({ ok: true });
   } catch (err) {

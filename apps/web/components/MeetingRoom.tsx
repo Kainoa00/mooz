@@ -18,6 +18,8 @@ import { ChatPanel } from "./ChatPanel";
 import { JoinForm, type JoinResult } from "./JoinForm";
 import { MeetingContext } from "./MeetingContext";
 import { MoozTile } from "./MoozTile";
+import { NotesBanner } from "./NotesBanner";
+import { NotesPolicyToggle } from "./NotesPolicyToggle";
 
 function Stage() {
   const tracks = useTracks(
@@ -69,9 +71,11 @@ export function MeetingRoom({ slug }: { slug: string }) {
             <span className="font-mono text-muted">{slug}</span>
             <span className="flex items-center gap-3">
               <span>{session.isHost ? "You are the host" : session.name}</span>
+              {session.isHost && <NotesPolicyToggle slug={slug} />}
               <BringAgentDialog slug={slug} />
             </span>
           </header>
+          <NotesBanner slug={slug} />
           {session.isHost && <AgentRequestsTray slug={slug} />}
           <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(0,1fr)_minmax(0,40%)] md:grid-cols-[1fr_320px] md:grid-rows-1">
             <div className="flex min-h-0 flex-col">

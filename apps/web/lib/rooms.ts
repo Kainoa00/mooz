@@ -39,6 +39,14 @@ export function getRoom(db: Db, slug: string): Room | undefined {
   return row && { slug: row.slug, livekitRoom: row.livekit_room, createdAt: row.created_at };
 }
 
+/** Look a meeting up by its internal LiveKit room name (as LiveKit webhooks report it). */
+export function getRoomByLivekitName(db: Db, livekitRoom: string): Room | undefined {
+  const row = db.prepare("SELECT slug FROM rooms WHERE livekit_room = ?").get(livekitRoom) as
+    | { slug: string }
+    | undefined;
+  return row && getRoom(db, row.slug);
+}
+
 export function isHost(db: Db, slug: string, secret: string | undefined): boolean {
   if (!secret) return false;
   const row = db

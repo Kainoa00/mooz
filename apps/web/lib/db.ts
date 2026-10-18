@@ -63,6 +63,9 @@ const MIGRATIONS = [
   // as the LiveKit room name, and each approval may mint exactly one token.
   `UPDATE rooms SET livekit_room = 'lk_' || lower(hex(randomblob(8))) WHERE livekit_room = slug;
    ALTER TABLE agent_requests ADD COLUMN token_issued_at INTEGER;`,
+  // Meeting notes consent: the host's per-meeting policy and each person's opt-out.
+  `ALTER TABLE rooms ADD COLUMN notes_allowed INTEGER NOT NULL DEFAULT 0;
+   ALTER TABLE participants ADD COLUMN notes_opt_out INTEGER NOT NULL DEFAULT 0;`,
 ];
 
 function migrate(db: Db): void {

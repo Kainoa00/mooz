@@ -57,13 +57,17 @@ export async function mintHumanToken(input: {
   room: string;
   identity: string;
   name: string;
+  /** Leave this person out of agents' meeting notes (kept across reconnects). */
+  notesOptOut?: boolean;
 }): Promise<string> {
   const { apiKey, apiSecret } = livekitConfig();
+  const attributes: Record<string, string> = { kind: "human" };
+  if (input.notesOptOut) attributes.notes_opt_out = "1";
   const at = new AccessToken(apiKey, apiSecret, {
     identity: input.identity,
     name: input.name,
     ttl: TOKEN_TTL,
-    attributes: { kind: "human" },
+    attributes,
   });
   at.addGrant({
     roomJoin: true,
@@ -105,13 +109,42 @@ export async function mintAgentToken(agent: AgentIdentity): Promise<string> {
   return at.toJwt();
 }
 
-/** Disconnect a participant now (used when the host removes an agent). */
-export async function removeFromRoom(room: string, identity: string): Promise<void> {
+function roomService(): RoomServiceClient {
   const { apiUrl, apiKey, apiSecret } = livekitConfig();
+  return new RoomServiceClient(apiUrl, apiKey, apiSecret);
+}
+
+/** Run a room-service call where "no such room or participant" just means nothing to do. */
+async function ignoringNotFound(call: () => Promise<unknown>): Promise<void> {
   try {
-    await new RoomServiceClient(apiUrl, apiKey, apiSecret).removeParticipant(room, identity);
+    await call();
   } catch (err) {
-    // Already gone (left, or never connected) is fine; anything else is not.
     if (!(err instanceof ServerError && err.status === 404 && err.code === "not_found")) throw err;
   }
+}
+
+/** Disconnect a participant now (used when the host removes an agent). */
+export async function removeFromRoom(room: string, identity: string): Promise<void> {
+  // Already gone (left, or never connected) is fine; anything else is not.
+  await ignoringNotFound(() => roomService().removeParticipant(room, identity));
+}
+
+/**
+ * Set room metadata everyone in the room can read. A room nobody is in yet doesn't
+ * exist in LiveKit; the webhook applies the metadata when it starts.
+ */
+export async function setRoomMetadata(room: string, metadata: string): Promise<void> {
+  await ignoringNotFound(() => roomService().updateRoomMetadata(room, metadata));
+}
+
+/**
+ * Set server-owned attributes on a participant (they can't change these themselves).
+ * Someone not connected right now gets them in their next token instead.
+ */
+export async function setParticipantAttributes(
+  room: string,
+  identity: string,
+  attributes: Record<string, string>,
+): Promise<void> {
+  await ignoringNotFound(() => roomService().updateParticipant(room, identity, { attributes }));
 }

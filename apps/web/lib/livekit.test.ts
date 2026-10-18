@@ -60,6 +60,13 @@ describe("mintHumanToken", () => {
     });
     expect(claims.video?.roomAdmin).toBeFalsy();
   });
+
+  it("carries a notes opt-out so it survives a reconnect", async () => {
+    const jwt = await mintHumanToken({ room: "r", identity: "p_1", name: "Zach", notesOptOut: true });
+
+    const claims = await new TokenVerifier(LK_KEY, LK_SECRET).verify(jwt);
+    expect(claims.attributes).toEqual({ kind: "human", notes_opt_out: "1" });
+  });
 });
 
 describe("mintAgentToken", () => {

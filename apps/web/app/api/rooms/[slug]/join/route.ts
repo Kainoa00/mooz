@@ -4,6 +4,7 @@ import { errorResponse, readJson } from "@/lib/http";
 import { livekitConfig, mintHumanToken } from "@/lib/livekit";
 import { parseDisplayName } from "@/lib/names";
 import { activeAgentNames } from "@/lib/agents";
+import { getNotesOptOut } from "@/lib/notes";
 import { addParticipant, findParticipant, isHost, renameParticipant } from "@/lib/rooms";
 import { assertSameOrigin, requireRoom } from "@/lib/session";
 
@@ -27,7 +28,12 @@ export async function POST(
     const participant = returning
       ? { ...renameParticipant(db, returning, name, host), secret: secret as string }
       : addParticipant(db, { slug, name, isHost: host });
-    const token = await mintHumanToken({ room: room.livekitRoom, identity: participant.identity, name });
+    const token = await mintHumanToken({
+      room: room.livekitRoom,
+      identity: participant.identity,
+      name,
+      notesOptOut: getNotesOptOut(db, participant.identity),
+    });
 
     const res = Response.json({
       token,
