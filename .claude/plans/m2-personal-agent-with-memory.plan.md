@@ -12,11 +12,16 @@ Turn the M1 agent, which only knows what was said in the meeting, into **your** 
 
 The defining rule is the PRD's access model, enforced in code rather than in the prompt. When the owner asks, the agent can use everything it has been given. When anyone else asks, its tools can only see what the owner marked **public**, and it can't add to the owner's memory. Long-running research tasks ("on it", report back later) stay in M3. In M2, questions that need tools are answered within a short spoken-answer time budget.
 
-## Decisions to confirm (recommendations in bold)
-1. **Meeting memory.** **Explicit only.** The agent remembers what its owner tells it to ("Atlas, remember the deploy freeze starts Friday"). The alternative is automatic notes of every meeting. Those would record other people without their say, so they wait for a later opt-in feature that is announced to the room.
-2. **GitHub (issues, PRs, CI status).** **Not in M2; it comes in M3 with research tasks**, because those questions are slow ("why is CI failing?"). M2 covers local clones and folders, including read-only git history and diffs.
-3. **Grok model.** **`grok-4.7`** (xAI's current documented example), configurable like Claude's.
-4. **Where agent data lives.** **`~/.mooz/agents/<name>/`**, holding `agent.toml` (settings and sources) and `memory.jsonl`. API keys stay in environment variables or `.env`, never in the agent folder.
+## Decisions (confirmed 2026-10-18)
+1. **Meeting memory.** By default the agent remembers what its owner tells it to ("Atlas, remember the deploy freeze starts Friday"). **Opt-in meeting notes ship in v0.1 (this milestone).** The consent model:
+   - The **host allows** notes for the meeting. This is off by default.
+   - The **owner asks** their agent to keep notes in that meeting.
+   - **Everyone sees** a banner and a chat line saying "📝 Kainoa's Atlas is keeping notes".
+   - **Anyone can opt out** with "Leave me out", and their words are excluded.
+   - The agent saves a **summary, not a transcript**, to the owner's private memory on the owner's machine.
+2. **GitHub (issues, PRs, CI status).** Comes in M3 with research tasks. M2 covers local clones and folders, including read-only git history and diffs.
+3. **Grok model.** `grok-4.7`, configurable.
+4. **Where agent data lives.** `~/.mooz/agents/<name>/` (`agent.toml`, `memory.jsonl`). API keys stay in environment variables or `.env`.
 
 ## Key architecture decisions
 - **One provider-neutral tool loop.** A `ToolBox` holds the tools and their JSON schemas and runs them. A `ModelAdapter` per provider turns tool calls and results into its API's format:
@@ -35,6 +40,12 @@ The defining rule is the PRD's access model, enforced in code rather than in the
 - **Read-only git.** A fixed set of subcommands (`log`, `show`, `diff`, `status`) runs with no shell. Refs are validated, and any argument starting with `-` is rejected, which prevents option injection. A timeout and an output cap apply.
 - **Spoken-answer budget.** At most 4 model turns and about 20 seconds per question. On the first tool call, the agent says "One sec, checking." (voice only, no chat clutter). If the budget runs out, it says so plainly; M3 will turn that into an async task.
 - **Stable owner identity.** Rejoining the meeting (page reload) reuses the participant identity from the participant cookie. The agent therefore keeps recognizing its owner, and LiveKit replaces the old connection.
+- **Meeting notes consent is server-held state the agent can't fake.**
+  - "Notes allowed" lives in LiveKit **room metadata**, which only the server sets on the host's request.
+  - Each person's "leave me out" is a server-set **participant attribute** (`notes_opt_out`).
+  - The bridge reads both and won't keep notes unless they're allowed. It drops every opted-out speaker's voice and chat from the notes log.
+  - A bridge that doesn't announce notes is indistinguishable from one that isn't taking them. The guarantee only covers the agent we ship, so the visible banner is what makes consent socially enforceable.
+  - Agents announce note-taking on the `mooz.v0` data topic, and the UI shows the banner from that. Late joiners get the current state sent to them directly.
 
 ## Patterns to Mirror
 | Category | Source | Pattern |
@@ -132,7 +143,28 @@ The defining rule is the PRD's access model, enforced in code rather than in the
 - **Action**: `build_providers` selects the brain from config and env keys, loads the `ToolBox` (sources and memory), and passes `on_working` to speak the filler through `Mouth.say(..., chat=False)`. `MOOZ_PROVIDERS=fake` uses a `ScriptedAdapter` that maps simple phrases ("read FILE", "remember X", "what do you remember") to real tool calls. The offline demo and E2E therefore exercise the real ToolBox and scope rules.
 - **Validate**: agent tests (the owner reads a private file; a non-owner gets "not available"; a non-owner can't `remember`); an integration test through LiveKit with two humans.
 
-### Task 10: End-to-end access test, docs, review
+### Task 10: Meeting notes consent: server and UI (web, TDD)
+- **Action**:
+  - The host toggles "Allow agents to keep notes" with `POST /api/rooms/{slug}/notes-policy {allowed}`. The server stores it and calls LiveKit `updateRoomMetadata` with `{notes_allowed}`.
+  - Any participant can click "Leave me out of notes" with `POST /api/rooms/{slug}/notes-opt-out {optOut}`. The server calls `updateParticipant` to set `notes_opt_out` on that participant.
+  - The UI shows a persistent banner whenever any agent announces it's keeping notes, plus the opt-out control. The host gets the policy toggle in the header.
+- **Validate**: Vitest covers the routes: host-only policy, the participant can only opt themselves out, same-origin enforced, and LiveKit calls mocked. Playwright covers the toggle, banner and opt-out.
+
+### Task 11: Meeting notes in the bridge (TDD)
+- **Action**:
+  - When the owner says "Atlas, keep notes" (or "stop keeping notes"), the agent checks room metadata. If notes aren't allowed, it says so.
+  - If they are allowed, it announces in chat and on `mooz.v0` (`{type: "notes", state: "on"}`), and resends that announcement to anyone who joins later.
+  - It collects a notes log that skips anyone whose `notes_opt_out` is set, re-checked on every utterance.
+  - Every 15 minutes, when notes stop, and when the meeting ends, it asks the brain for a summary and saves it to memory as private, tagged `meeting-notes`.
+  - Opted-out speakers and their words never reach the summarizer.
+  - Non-owners can't turn notes on or off.
+- **Validate**:
+  - Agent tests: notes are refused when the host disallows them, and a non-owner can't start them.
+  - An opted-out speaker's words never reach the summary prompt, even when the opt-out happens mid-meeting.
+  - The banner announcement is sent, late joiners get it, and the summary is saved private.
+  - An integration test reads room metadata and attributes from a real LiveKit room.
+
+### Task 12: End-to-end access test, docs, review
 - **Action**: Playwright `agent-access.spec.ts`. Zach's agent has a private source (with `secret.txt`) and a public one (with `notes.txt`).
   - Kainoa asks `@Atlas read secret.txt` and gets "not available".
   - Kainoa reads `notes.txt` successfully.
@@ -167,4 +199,5 @@ MOOZ_LIVE_TESTS=1 uv run pytest -m live   # opt-in: real Claude (tools) and Grok
 - [ ] The access matrix test passes: non-owners never see private sources or memory, and only owners write memory
 - [ ] The E2E access test passes in the browser with the real bridge
 - [ ] `security-reviewer` pass on Tasks 2–4 and `code-reviewer` pass on the milestone diff
+- [ ] Meeting notes only run when the host allows them and the owner asks; every participant sees the banner; opted-out speakers never reach the notes
 - [ ] Opt-in live tests pass for Claude tool use and Grok (needs your keys)

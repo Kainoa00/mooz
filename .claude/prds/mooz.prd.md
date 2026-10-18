@@ -41,11 +41,12 @@ We'll know we're right when **people who complete setup use an agent in at least
 - Access rules: anyone may ask an agent questions. Only the owner can start long tasks. For live-bridge agents, a non-owner asker gets answers only from data the owner marked public, enforced at the tool layer. For connector assistants, the owner's tap is the safeguard.
 - Voice runs on each agent owner's side (bridge process or browser tab), using the owner's ElevenLabs key (speech-to-text and voice) or any OpenAI-compatible local speech server (VoiceStudio documented). The mooz server holds no AI or voice keys.
 - Agents are always labeled ("🤖 Kainoa's Grok", agent badge on tile) and can never appear as a human participant.
-- Nothing is persisted after a meeting except settings (SQLite). The host can export a meeting summary before leaving.
+- Nothing is persisted on the mooz server after a meeting except settings (SQLite). The host can export a meeting summary before leaving.
+- Opt-in meeting notes. The host allows them, an agent's owner asks for them, and everyone sees a banner. Anyone can opt out, and their words are left out. The notes are saved as a summary, not a transcript, to the owner's private memory on the owner's machine.
 - `docker compose up` for local use, plus a deployment guide for a small VPS with HTTPS. MIT license. README with a demo video.
 
 **Out of scope**
-- Recording or saving transcripts: privacy default, and not needed to test the hypothesis.
+- Recording or saving verbatim transcripts, audio or video: privacy default. Opt-in notes save summaries only.
 - Mobile apps: the browser is enough for v0.1.
 - Joining Zoom, Meet or Teams: Zoom's bot review and auth burden per self-hoster is too heavy (v0.2+ adapter, via Recall.ai or a browser bot).
 - Phone dial-in (needed for Instinct and phone-based agents): requires a paid SIP trunk (v0.2).
