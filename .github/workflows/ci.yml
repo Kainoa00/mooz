@@ -28,11 +28,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
+      - name: Start LiveKit dev server
+        run: docker compose up -d livekit
+        working-directory: .
       - run: uv sync --locked
       - run: uv run ruff check
       - run: uv run ruff format --check
       - run: uv run mypy
-      - run: uv run pytest --cov --cov-fail-under=80
+      # Unit + integration (against the LiveKit dev server); live API tests are opt-in.
+      - run: uv run pytest -m "not live" --cov --cov-fail-under=80
 
   e2e:
     runs-on: ubuntu-latest
