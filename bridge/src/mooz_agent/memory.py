@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import secrets
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -41,6 +42,7 @@ def _words(text: str) -> list[str]:
 class MemoryStore:
     def __init__(self, path: Path) -> None:
         self.path = path
+        self._lock = threading.Lock()  # tool calls run in worker threads
         self._notes: list[Note] = self._load()
 
     def _load(self) -> list[Note]:
@@ -66,7 +68,7 @@ class MemoryStore:
         return notes
 
     def _save(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as f:
@@ -94,16 +96,18 @@ class MemoryStore:
             created_at=time.time(),
             tags=list(tags or []),
         )
-        self._notes.append(note)
-        self._save()
+        with self._lock:
+            self._notes.append(note)
+            self._save()
         return note
 
     def forget(self, note_id: str) -> bool:
-        before = len(self._notes)
-        self._notes = [n for n in self._notes if n.id != note_id]
-        if len(self._notes) == before:
-            return False
-        self._save()
+        with self._lock:
+            before = len(self._notes)
+            self._notes = [n for n in self._notes if n.id != note_id]
+            if len(self._notes) == before:
+                return False
+            self._save()
         return True
 
     def recall(self, query: str, *, owner: bool, limit: int = 8) -> list[Note]:

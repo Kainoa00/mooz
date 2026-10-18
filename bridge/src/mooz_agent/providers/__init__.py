@@ -12,7 +12,7 @@ from ..room import Speaker
 from .base import Brain, SpeechToText, TextToSpeech
 
 if TYPE_CHECKING:
-    from ..brain import Model
+    from ..brain import Model, ToolLoopBrain
 
 
 class ProviderConfigError(Exception):
@@ -47,15 +47,32 @@ def _model(config: AgentConfig) -> Model:
     return ClaudeModel(model=config.model or os.environ.get("MOOZ_CLAUDE_MODEL") or DEFAULT_MODEL)
 
 
+def build_brain(model: Model, me: Speaker, config: AgentConfig) -> ToolLoopBrain:
+    """The tool loop with this agent's sources and memory, owned by whoever the room says."""
+    from ..brain import ToolLoopBrain
+    from ..memory import MemoryStore
+    from ..tools.toolbox import ToolBox
+
+    owner_name = me.owner_name or "your owner"
+    memory = MemoryStore(config.memory_path)
+    return ToolLoopBrain(
+        model=model,
+        agent_name=me.name,
+        owner_name=owner_name,
+        owner_identity=me.owner_identity,
+        toolbox=ToolBox(config, memory, owner_name=owner_name),
+        memory=memory,
+    )
+
+
 def build_providers(
     *, http: aiohttp.ClientSession, me: Speaker, config: AgentConfig
 ) -> tuple[SpeechToText, TextToSpeech, Brain]:
     if os.environ.get("MOOZ_PROVIDERS") == "fake":
-        from .fakes import EchoBrain, FakeSTT, FakeTTS
+        from .fakes import FakeSTT, FakeTTS, OfflineModel
 
-        return FakeSTT({}), FakeTTS(), EchoBrain()
+        return FakeSTT({}), FakeTTS(), build_brain(OfflineModel(), me, config)
 
-    from ..brain import ToolLoopBrain
     from .elevenlabs import ElevenLabsSTT, ElevenLabsTTS
 
     check_environment(config.brain)
@@ -63,10 +80,4 @@ def build_providers(
     stt = ElevenLabsSTT(api_key=eleven_key, http=http, keyterms=[me.name], language=config.language)
     voice = config.voice_id or os.environ.get("MOOZ_VOICE_ID")
     tts = ElevenLabsTTS(api_key=eleven_key, voice_id=voice, http=http)
-    brain = ToolLoopBrain(
-        model=_model(config),
-        agent_name=me.name,
-        owner_name=me.owner_name or "your owner",
-        owner_identity=me.owner_identity,
-    )
-    return stt, tts, brain
+    return stt, tts, build_brain(_model(config), me, config)

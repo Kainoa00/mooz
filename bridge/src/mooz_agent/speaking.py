@@ -24,7 +24,14 @@ class Mouth:
         self._tts = tts
         self._floor = asyncio.Lock()  # never talk over ourselves
 
-    async def say(self, answer: Answer, on_first_frame: Callable[[], None] | None = None) -> None:
+    async def say(
+        self,
+        answer: Answer,
+        on_first_frame: Callable[[], None] | None = None,
+        *,
+        chat: bool = True,
+    ) -> None:
+        """Post the answer to chat (unless `chat` is False), then speak its spoken part."""
         async with self._floor:
             first = True
 
@@ -35,8 +42,11 @@ class Mouth:
                 first = False
                 await self._capture_frame(frame)
 
-            chat = answer.spoken if not answer.details else f"{answer.spoken}\n\n{answer.details}"
-            await self._send_chat(chat)
+            if chat:
+                text = (
+                    answer.spoken if not answer.details else f"{answer.spoken}\n\n{answer.details}"
+                )
+                await self._send_chat(text)
             resampler: rtc.AudioResampler | None = None
             async for frame in self._tts.synthesize(answer.spoken):
                 if frame.sample_rate != SAMPLE_RATE:
