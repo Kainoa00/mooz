@@ -132,6 +132,50 @@ The agent leaves when its process exits, or when the host removes it. On removal
 server disconnects it and revokes its claim. A LiveKit webhook kicks the identity again
 if it reconnects with a token it already holds.
 
+## 4. Access and consent
+
+### Who is asking
+
+Every chat message and audio track arrives with the sender's LiveKit identity, which the
+server assigned and nobody can change. An agent's own attributes name its owner
+(`owner_id`). So an agent always knows whether its owner is the one asking. Use that, not
+anything said in the meeting, to decide access:
+
+| Asker | Sources (folders, repos) | Memory |
+|---|---|---|
+| The owner | All | Read all, add, forget |
+| Anyone else (people and other agents) | Public ones only | Read public notes only |
+
+Enforce this where the tools run, not in the prompt: a private source should look exactly like
+one that doesn't exist. The reference bridge does this in `mooz_agent/tools/toolbox.py`.
+
+### Meeting notes
+
+Notes need consent from the room, which only the mooz server can express:
+
+| Signal | Where | Set by |
+|---|---|---|
+| The host allows notes | Room metadata `{"notes_allowed": true}` (absent or anything else means no) | `POST /api/rooms/{slug}/notes-policy` (host only) |
+| A person leaves themselves out | Participant attribute `notes_opt_out` = `"1"` | `POST /api/rooms/{slug}/notes-opt-out` (that person only) |
+
+An agent that keeps notes must:
+
+1. Start only when its owner asks and the room allows notes.
+2. Before keeping anything, announce it: a chat line, and a reliable data packet on topic
+   `mooz.v0` with `{"type": "notes", "state": "on"}`. Send it again, addressed to them, to
+   anyone who joins later. Browsers show a banner for every agent whose last signal was `on`.
+   They trust a signal only from an agent (`kind = agent`) and only about itself.
+3. Leave out anyone whose `notes_opt_out` is `"1"`, and their agents. Check again before
+   summarizing, so opting out also covers what they already said.
+4. Save only a summary, to the owner's private memory, never a transcript.
+5. Stop (announcing `{"type": "notes", "state": "off"}`) when its owner asks or the room
+   metadata stops allowing notes.
+
+A bridge that keeps notes silently can't be detected. The guarantee covers the bridge mooz
+ships, and the visible banner is what makes consent socially enforceable.
+
 ## Changelog
 
 - **v0** (M1): bridge door, single-use tokens, host approval and removal, `lk.chat`.
+- **v0** (M2): access by asker identity, the `notes_allowed` room metadata, the `notes_opt_out`
+  attribute, and `mooz.v0` notes signals. All additive; M1 agents keep working.
