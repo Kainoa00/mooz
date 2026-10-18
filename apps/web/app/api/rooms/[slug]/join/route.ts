@@ -4,7 +4,7 @@ import { errorResponse, readJson } from "@/lib/http";
 import { livekitConfig, mintHumanToken } from "@/lib/livekit";
 import { parseDisplayName } from "@/lib/names";
 import { activeAgentNames } from "@/lib/agents";
-import { addParticipant, isHost } from "@/lib/rooms";
+import { addParticipant, findParticipant, isHost, renameParticipant } from "@/lib/rooms";
 import { assertSameOrigin, requireRoom } from "@/lib/session";
 
 export async function POST(
@@ -17,9 +17,16 @@ export async function POST(
     const db = getDb();
     const room = requireRoom(db, slug);
 
-    const name = parseDisplayName((await readJson(req)).name, activeAgentNames(db, slug));
+    const body = await readJson(req);
+    const name = parseDisplayName(body.name, activeAgentNames(db, slug));
     const host = isHost(db, slug, readCookie(req, hostCookie(slug)));
-    const participant = addParticipant(db, { slug, name, isHost: host });
+    // A reload in the same tab rejoins as the same person, so agents keep recognizing
+    // their owner. A new tab (no rejoin flag) is a new participant.
+    const secret = readCookie(req, participantCookie(slug));
+    const returning = body.rejoin === true ? findParticipant(db, slug, secret) : undefined;
+    const participant = returning
+      ? { ...renameParticipant(db, returning, name, host), secret: secret as string }
+      : addParticipant(db, { slug, name, isHost: host });
     const token = await mintHumanToken({ room: room.livekitRoom, identity: participant.identity, name });
 
     const res = Response.json({

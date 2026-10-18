@@ -60,6 +60,16 @@ export function addParticipant(
   return { identity, slug: input.slug, name: input.name, isHost: input.isHost, secret };
 }
 
+/** Update a returning participant's name (and host flag) in place, keeping their identity. */
+export function renameParticipant(db: Db, participant: Participant, name: string, isHost: boolean): Participant {
+  db.prepare("UPDATE participants SET name = ?, is_host = ? WHERE identity = ?").run(
+    name,
+    isHost ? 1 : 0,
+    participant.identity,
+  );
+  return { ...participant, name, isHost };
+}
+
 export function findParticipant(
   db: Db,
   slug: string,

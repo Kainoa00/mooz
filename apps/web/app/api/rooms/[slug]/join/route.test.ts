@@ -92,4 +92,53 @@ describe("POST /api/rooms/[slug]/join", () => {
 
     expect(res.status).toBe(200);
   });
+
+  describe("rejoining after a reload", () => {
+    async function joinOnce(slug: string, body: Record<string, unknown>, cookie = "") {
+      const res = await POST(jsonRequest(url(slug), body, cookie ? { cookie } : {}), params({ slug }));
+      const json = (await res.json()) as { identity: string; isHost: boolean };
+      return { res, json, secret: setCookies(res)[`mooz_p_${slug}`] };
+    }
+
+    it("keeps the same identity so the agent still knows its owner", async () => {
+      const { slug } = createRoom(getDb());
+      const first = await joinOnce(slug, { name: "Zach" });
+
+      const again = await joinOnce(slug, { name: "Zach B", rejoin: true }, `mooz_p_${slug}=${first.secret}`);
+
+      expect(again.json.identity).toBe(first.json.identity);
+      expect(again.secret).toBe(first.secret);
+      expect(findParticipant(getDb(), slug, first.secret)?.name).toBe("Zach B");
+    });
+
+    it("gives a second tab its own identity unless it asks to rejoin", async () => {
+      const { slug } = createRoom(getDb());
+      const first = await joinOnce(slug, { name: "Zach" });
+
+      const secondTab = await joinOnce(slug, { name: "Zach" }, `mooz_p_${slug}=${first.secret}`);
+
+      expect(secondTab.json.identity).not.toBe(first.json.identity);
+    });
+
+    it("ignores another meeting's cookie", async () => {
+      const db = getDb();
+      const a = createRoom(db);
+      const b = createRoom(db);
+      const first = await joinOnce(a.slug, { name: "Zach" });
+
+      const other = await joinOnce(b.slug, { name: "Zach", rejoin: true }, `mooz_p_${a.slug}=${first.secret}`);
+
+      expect(other.json.identity).not.toBe(first.json.identity);
+    });
+
+    it("keeps host status on rejoin", async () => {
+      const { slug, hostSecret } = createRoom(getDb());
+      const host = `mooz_host_${slug}=${hostSecret}`;
+      const first = await joinOnce(slug, { name: "Kai" }, host);
+
+      const again = await joinOnce(slug, { name: "Kai", rejoin: true }, `${host}; mooz_p_${slug}=${first.secret}`);
+
+      expect(again.json).toMatchObject({ identity: first.json.identity, isHost: true });
+    });
+  });
 });

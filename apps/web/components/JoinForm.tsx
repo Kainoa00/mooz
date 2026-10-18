@@ -20,16 +20,28 @@ export function JoinForm({ slug, onJoined }: { slug: string; onJoined: (r: JoinR
     e.preventDefault();
     setBusy(true);
     setError(null);
+    const marker = `mooz_joined_${slug}`;
+    let rejoin = false;
+    try {
+      rejoin = sessionStorage.getItem(marker) !== null; // set by an earlier join in this tab
+    } catch {
+      // storage unavailable (private mode): join as new
+    }
     const res = await fetch(`/api/rooms/${slug}/join`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, rejoin }),
     }).catch(() => null);
     const body = res ? await readBody(res) : null;
     if (!res?.ok || !body) {
       setError(errorMessage(body, "Could not join. Check your connection and try again."));
       setBusy(false);
       return;
+    }
+    try {
+      sessionStorage.setItem(marker, String(body.identity));
+    } catch {
+      // ignore
     }
     onJoined({ ...(body as unknown as Omit<JoinResult, "name">), name: name.trim() });
   }
