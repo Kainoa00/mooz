@@ -9,3 +9,9 @@ rtc:
   use_external_ip: false
 logging:
   level: info
+# Lets the web app kick removed agents that try to rejoin. api_key must be one of
+# the keys in LIVEKIT_KEYS (the dev key here).
+webhook:
+  api_key: devkey
+  urls:
+    - http://web:3000/api/livekit/webhook

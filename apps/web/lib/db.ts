@@ -59,6 +59,10 @@ const MIGRATIONS = [
    DROP TABLE agent_requests;
    ALTER TABLE agent_requests_v3 RENAME TO agent_requests;
    CREATE INDEX agent_requests_by_room ON agent_requests(room_slug, status);`,
+  // Security re-review: rooms that predate migration 3 still used their public slug
+  // as the LiveKit room name, and each approval may mint exactly one token.
+  `UPDATE rooms SET livekit_room = 'lk_' || lower(hex(randomblob(8))) WHERE livekit_room = slug;
+   ALTER TABLE agent_requests ADD COLUMN token_issued_at INTEGER;`,
 ];
 
 function migrate(db: Db): void {

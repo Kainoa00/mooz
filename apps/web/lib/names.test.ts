@@ -5,6 +5,15 @@ describe("parseDisplayName", () => {
   it("collapses whitespace", () => {
     expect(parseDisplayName("  Kainoa   K  ")).toBe("Kainoa K");
   });
+
+
+  it.each(["Mehr\u200Cdad", "Kai \u{1F469}\u200D\u{1F4BB}"])("keeps joiners real names need: %j", (name) => {
+    expect(parseDisplayName(name)).toBe(name);
+  });
+
+  it.each(["Ka\u200Binoa", "\u202Eanioak", "\u2066Kai\u2069"])("rejects invisible or bidi tricks: %j", (name) => {
+    expect(() => parseDisplayName(name)).toThrowError(expect.objectContaining({ code: "invalid_name" }));
+  });
 });
 
 describe("parseAgentName", () => {

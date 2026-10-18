@@ -3,7 +3,10 @@ import {
   AGENT_CODE_TTL_MS,
   APPROVAL_WINDOW_MS,
   MAX_NAME_ATTEMPTS,
+  PENDING_TTL_MS,
   activeAgentNames,
+  isRevokedAgent,
+  markTokenIssued,
   revokeAgent,
   claimAgentCode,
   createAgentCode,
@@ -211,9 +214,33 @@ describe("security hardening", () => {
 
     expect(getClaimStatus(db, claim.requestId, claim.claimSecret)).toEqual({ status: "revoked" });
     expect(activeAgentNames(db, slug)).toEqual([]);
-    expect(() => revokeAgent(db, { slug, agentIdentity: identity })).toThrowError(
-      expect.objectContaining({ status: 404 }),
+    // Repeatable, so a failed disconnect can be retried.
+    expect(() => revokeAgent(db, { slug, agentIdentity: identity })).not.toThrow();
+    expect(isRevokedAgent(db, identity)).toBe(true);
+  });
+
+  it("lets a pending request lapse so it cannot squat a name", () => {
+    vi.useFakeTimers();
+    const { db, slug, guest } = meeting();
+    const claim = claimAgentCode(db, { code: createAgentCode(db, guest).code, name: "Bob" });
+    vi.advanceTimersByTime(PENDING_TTL_MS + 1);
+
+    expect(activeAgentNames(db, slug)).toEqual([]);
+    expect(listPendingRequests(db, slug)).toEqual([]);
+    expect(getClaimStatus(db, claim.requestId, claim.claimSecret)).toEqual({ status: "expired" });
+    expect(() => decideAgentRequest(db, { slug, requestId: claim.requestId, approve: true })).toThrowError(
+      expect.objectContaining({ status: 409 }),
     );
+  });
+
+  it("hands out each approval's token only once", () => {
+    const { db, slug, guest } = meeting();
+    const claim = claimAgentCode(db, { code: createAgentCode(db, guest).code, name: "Grok" });
+    decideAgentRequest(db, { slug, requestId: claim.requestId, approve: true });
+
+    expect(markTokenIssued(db, claim.requestId)).toBe(true);
+    expect(markTokenIssued(db, claim.requestId)).toBe(false);
+    expect(getClaimStatus(db, claim.requestId, claim.claimSecret)).toEqual({ status: "expired" });
   });
 
   it("cannot revoke an agent from another meeting", () => {

@@ -51,6 +51,9 @@ describe("agent claim flow", () => {
     expect(claims.sub).toBe(approved.identity);
     expect(claims.attributes?.kind).toBe("agent");
     expect(claims.attributes?.owner_name).toBe("Zach");
+
+    // A second poll (or anyone replaying the claim secret) gets nothing more.
+    expect(await (await poll(requestId, claimSecret)).json()).toEqual({ status: "expired" });
   });
 
   it("rejects a bad code", async () => {

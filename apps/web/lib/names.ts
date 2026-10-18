@@ -2,9 +2,10 @@ import { HttpError } from "./http";
 
 const MAX_DISPLAY_NAME = 40;
 
-// Control and format characters (zero-width, bidi overrides) let a name render as
-// something else; the robot marker is reserved for agents.
-const DECEPTIVE = /[\p{Cc}\p{Cf}]|🤖/u;
+// Control characters, bidi controls and invisible spacers let a name render as
+// something else; the robot marker is reserved for agents. Joiners (U+200C/U+200D)
+// stay allowed: Persian and Indic names and emoji sequences need them.
+const DECEPTIVE = /[\p{Cc}\u061C\u200B\u200E\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]|🤖/u;
 
 /**
  * Trim and validate a human display name. People cannot use the agent marker,

@@ -48,6 +48,15 @@ describe("POST /api/rooms/[slug]/agents/[identity]/remove", () => {
     expect(getClaimStatus(db, claim.requestId, claim.claimSecret).status).toBe("revoked");
   });
 
+  it("can be retried after LiveKit fails, without leaving the agent in the room", async () => {
+    const { slug, hostSecret, identity } = approvedAgent();
+    removeFromRoom.mockRejectedValueOnce(new Error("livekit unreachable"));
+
+    expect((await call(slug, identity, `mooz_host_${slug}=${hostSecret}`)).status).toBe(500);
+    expect((await call(slug, identity, `mooz_host_${slug}=${hostSecret}`)).status).toBe(200);
+    expect(removeFromRoom).toHaveBeenCalledTimes(2);
+  });
+
   it("is host-only", async () => {
     const { slug, zach, identity } = approvedAgent();
 

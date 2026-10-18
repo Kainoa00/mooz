@@ -44,9 +44,11 @@ export function publicOrigin(req: Request): string {
  */
 export function assertSameOrigin(req: Request): void {
   const fetchSite = req.headers.get("sec-fetch-site");
-  if (fetchSite && fetchSite !== "same-origin" && fetchSite !== "none") {
+  if (fetchSite) {
+    if (fetchSite === "same-origin" || fetchSite === "none") return;
     throw new HttpError(403, "cross_site", "Cross-site requests are not allowed");
   }
+  // Older browsers without Fetch Metadata: fall back to comparing Origin.
   const origin = req.headers.get("origin");
   if (origin && origin !== publicOrigin(req)) {
     throw new HttpError(403, "cross_site", "Cross-site requests are not allowed");

@@ -10,6 +10,8 @@ export const AGENT_CODE_TTL_MS = 10 * 60 * 1000;
 export const APPROVAL_WINDOW_MS = 10 * 60 * 1000;
 /** Rejected names a single code may try before it is burned. */
 export const MAX_NAME_ATTEMPTS = 5;
+/** Pending requests the host never answers lapse, so they cannot squat names forever. */
+export const PENDING_TTL_MS = 10 * 60 * 1000;
 
 // No I, O, 0 or 1: codes are read off a screen and typed into a terminal.
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -57,8 +59,11 @@ export function createAgentCode(db: Db, owner: Participant): { code: string; exp
 /** Names of agents that are waiting or in the meeting (their wake words). */
 export function activeAgentNames(db: Db, slug: string): string[] {
   const rows = db
-    .prepare("SELECT agent_name FROM agent_requests WHERE room_slug = ? AND status IN ('pending', 'approved')")
-    .all(slug) as { agent_name: string }[];
+    .prepare(
+      `SELECT agent_name FROM agent_requests
+       WHERE room_slug = ? AND (status = 'approved' OR (status = 'pending' AND created_at > ?))`,
+    )
+    .all(slug, Date.now() - PENDING_TTL_MS) as { agent_name: string }[];
   return rows.map((r) => r.agent_name);
 }
 
@@ -128,9 +133,9 @@ export function listPendingRequests(db: Db, slug: string): PendingRequest[] {
     .prepare(
       `SELECT r.id, r.agent_name, p.name AS owner_name, r.created_at
        FROM agent_requests r JOIN participants p ON p.identity = r.owner_identity
-       WHERE r.room_slug = ? AND r.status = 'pending' ORDER BY r.created_at`,
+       WHERE r.room_slug = ? AND r.status = 'pending' AND r.created_at > ? ORDER BY r.created_at`,
     )
-    .all(slug) as { id: string; agent_name: string; owner_name: string; created_at: number }[];
+    .all(slug, Date.now() - PENDING_TTL_MS) as { id: string; agent_name: string; owner_name: string; created_at: number }[];
   return rows.map((r) => ({
     id: r.id,
     agentName: r.agent_name,
@@ -146,9 +151,10 @@ export function decideAgentRequest(
   // A single conditional update, so concurrent approve/deny cannot both win.
   const { changes } = db
     .prepare(
-      "UPDATE agent_requests SET status = ?, decided_at = ? WHERE id = ? AND room_slug = ? AND status = 'pending'",
+      `UPDATE agent_requests SET status = ?, decided_at = ?
+       WHERE id = ? AND room_slug = ? AND status = 'pending' AND created_at > ?`,
     )
-    .run(input.approve ? "approved" : "denied", Date.now(), input.requestId, input.slug);
+    .run(input.approve ? "approved" : "denied", Date.now(), input.requestId, input.slug, Date.now() - PENDING_TTL_MS);
   if (changes === 1) return;
   const exists = db
     .prepare("SELECT 1 FROM agent_requests WHERE id = ? AND room_slug = ?")
@@ -157,14 +163,34 @@ export function decideAgentRequest(
   throw new HttpError(409, "already_decided", "This agent request was already decided");
 }
 
-/** Host removes an approved agent. Its claim can never mint another token. */
+/**
+ * Host removes an agent. Its claim can never mint another token, and the LiveKit
+ * webhook kicks it if it reconnects with one it already holds. Repeatable, so a
+ * failed disconnect can be retried.
+ */
 export function revokeAgent(db: Db, input: { slug: string; agentIdentity: string }): void {
   const { changes } = db
     .prepare(
-      "UPDATE agent_requests SET status = 'revoked', decided_at = ? WHERE agent_identity = ? AND room_slug = ? AND status = 'approved'",
+      `UPDATE agent_requests SET status = 'revoked', decided_at = COALESCE(decided_at, ?)
+       WHERE agent_identity = ? AND room_slug = ? AND status IN ('approved', 'revoked')`,
     )
     .run(Date.now(), input.agentIdentity, input.slug);
   if (changes !== 1) throw new HttpError(404, "agent_not_found", "No such agent in this meeting");
+}
+
+export function isRevokedAgent(db: Db, agentIdentity: string): boolean {
+  return (
+    db.prepare("SELECT 1 FROM agent_requests WHERE agent_identity = ? AND status = 'revoked'").get(agentIdentity) !==
+    undefined
+  );
+}
+
+/** Record that an approval's single token was handed out. False if it already was. */
+export function markTokenIssued(db: Db, requestId: string): boolean {
+  const { changes } = db
+    .prepare("UPDATE agent_requests SET token_issued_at = ? WHERE id = ? AND token_issued_at IS NULL")
+    .run(Date.now(), requestId);
+  return changes === 1;
 }
 
 /** What a bridge sees when it polls. Unknown ids and wrong secrets look the same. */
@@ -172,8 +198,8 @@ export function getClaimStatus(db: Db, requestId: string, claimSecret: string | 
   const row = claimSecret
     ? (db
         .prepare(
-          `SELECT r.status, r.decided_at, r.room_slug, rm.livekit_room, r.agent_name, r.agent_identity,
-                  r.owner_identity, p.name AS owner_name
+          `SELECT r.status, r.created_at, r.decided_at, r.token_issued_at, r.room_slug, rm.livekit_room,
+                  r.agent_name, r.agent_identity, r.owner_identity, p.name AS owner_name
            FROM agent_requests r
            JOIN participants p ON p.identity = r.owner_identity
            JOIN rooms rm ON rm.slug = r.room_slug
@@ -182,7 +208,9 @@ export function getClaimStatus(db: Db, requestId: string, claimSecret: string | 
         .get(requestId, hashSecret(claimSecret)) as
         | {
             status: "pending" | "approved" | "denied" | "revoked";
+            created_at: number;
             decided_at: number | null;
+            token_issued_at: number | null;
             room_slug: string;
             livekit_room: string;
             agent_name: string;
@@ -193,8 +221,11 @@ export function getClaimStatus(db: Db, requestId: string, claimSecret: string | 
         | undefined)
     : undefined;
   if (!row) throw new HttpError(404, "request_not_found", "No such agent request");
+  if (row.status === "pending" && Date.now() - row.created_at > PENDING_TTL_MS) return { status: "expired" };
   if (row.status !== "approved") return { status: row.status };
-  if (Date.now() - (row.decided_at ?? 0) > APPROVAL_WINDOW_MS) return { status: "expired" };
+  if (row.token_issued_at !== null || Date.now() - (row.decided_at ?? 0) > APPROVAL_WINDOW_MS) {
+    return { status: "expired" };
+  }
   return {
     status: "approved",
     agent: {

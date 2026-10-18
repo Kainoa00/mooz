@@ -1,4 +1,4 @@
-import { AccessToken, RoomServiceClient, TrackSource } from "livekit-server-sdk";
+import { AccessToken, RoomServiceClient, ServerError, TrackSource } from "livekit-server-sdk";
 import type { AgentIdentity } from "./agents";
 
 export interface LivekitConfig {
@@ -45,6 +45,8 @@ export function livekitConfig(): LivekitConfig {
 }
 
 const TOKEN_TTL = "1h";
+/** Agent tokens are single-use and short-lived; LiveKit refreshes them while connected. */
+const AGENT_TOKEN_TTL = "5m";
 
 /**
  * A join token for a human participant. Participants cannot edit their own
@@ -83,7 +85,7 @@ export async function mintAgentToken(agent: AgentIdentity): Promise<string> {
   const at = new AccessToken(apiKey, apiSecret, {
     identity: agent.identity,
     name: agent.name,
-    ttl: TOKEN_TTL,
+    ttl: AGENT_TOKEN_TTL,
     attributes: {
       kind: "agent",
       door: "bridge",
@@ -110,6 +112,6 @@ export async function removeFromRoom(room: string, identity: string): Promise<vo
     await new RoomServiceClient(apiUrl, apiKey, apiSecret).removeParticipant(room, identity);
   } catch (err) {
     // Already gone (left, or never connected) is fine; anything else is not.
-    if (!/not.?found/i.test(String(err))) throw err;
+    if (!(err instanceof ServerError && err.status === 404 && err.code === "not_found")) throw err;
   }
 }

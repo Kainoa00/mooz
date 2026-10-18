@@ -32,6 +32,12 @@ describe("assertSameOrigin", () => {
     expect(() => assertSameOrigin(req({ origin: "http://localhost:3000" }))).not.toThrow();
   });
 
+  it("trusts Fetch Metadata over Origin, so a TLS proxy without forwarded headers still works", () => {
+    expect(() =>
+      assertSameOrigin(req({ "sec-fetch-site": "same-origin", origin: "https://localhost:3000" })),
+    ).not.toThrow();
+  });
+
   it("rejects sibling-site and cross-site requests", () => {
     expect(() => assertSameOrigin(req({ "sec-fetch-site": "same-site" }))).toThrow();
     expect(() => assertSameOrigin(req({ origin: "http://localhost:4000" }))).toThrow();
