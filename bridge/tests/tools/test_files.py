@@ -202,7 +202,7 @@ def test_catastrophic_regexes_cannot_hang_the_agent(tmp_path: Path) -> None:
 
     root = tmp_path / "root"
     root.mkdir()
-    (root / "a.txt").write_text("a" * 60 + "b\n")
+    (root / "a.txt").write_text("a" * 60 + " b\n")  # not base64, so redaction leaves it
 
     start = _time.monotonic()
     with pytest.raises(FileAccessError, match="too slow"):
@@ -218,3 +218,40 @@ def test_file_names_with_secrets_are_redacted_in_listings(tmp_path: Path) -> Non
 
     assert "AKIAIOSFODNN7EXAMPLE" not in list_files(root)
     assert "AKIAIOSFODNN7EXAMPLE" not in list_files(root, pattern="*.txt")
+
+
+KEY = (
+    "-----BEGIN PRIVATE KEY-----\n"
+    + ("MIIEvQ" + "B" * 58 + "\n") * 4
+    + "-----END PRIVATE KEY-----\n"
+)
+
+
+def test_keys_inside_ordinary_files_never_leak(repo: Path) -> None:
+    (repo / "settings.py").write_text("DEBUG = True\nKEY = '''\n" + KEY + "'''\nNAME = 'demo'\n")
+    ranged = read_file(repo, "settings.py", start_line=4)
+    found = search(repo, "MIIEvQ")
+    assert "MIIEvQ" not in ranged and "NAME = 'demo'" in ranged
+    assert found == "No matches for 'MIIEvQ'"
+    # Line numbers still match the file after redaction.
+    assert "  10  NAME = 'demo'" in read_file(repo, "settings.py")
+
+
+def test_search_cannot_probe_for_a_secret_value(repo: Path) -> None:
+    (repo / "db.ini").write_text("password = hunter2pw\n")
+    assert search(repo, "hunter2pw") == "No matches for 'hunter2pw'"
+
+
+def test_reading_a_named_pipe_is_refused(repo: Path) -> None:
+    os.mkfifo(repo / "pipe")
+    with pytest.raises(FileAccessError, match="not a regular file"):
+        read_file(repo, "pipe")
+
+
+def test_mooz_home_is_never_visible(repo: Path) -> None:
+    (repo / ".mooz" / "agents" / "atlas").mkdir(parents=True)
+    (repo / ".mooz" / "agents" / "atlas" / "memory.jsonl").write_text('{"text": "private"}\n')
+    assert ".mooz" not in list_files(repo)
+    with pytest.raises(FileAccessError):
+        read_file(repo, ".mooz/agents/atlas/memory.jsonl")
+    assert search(repo, "private") == "No matches for 'private'"

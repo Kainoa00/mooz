@@ -33,7 +33,7 @@ def test_redacts_private_key_blocks() -> None:
     out = redact(f"key:\n{pem}\nend")
 
     assert "abc" not in out and "PRIVATE KEY" not in out
-    assert out == f"key:\n{REDACTED}\nend"
+    assert out == "\n".join(["key:", *[REDACTED] * 4, "end"])  # line numbers still line up
 
 
 @pytest.mark.parametrize(
@@ -93,3 +93,33 @@ def test_redacts_more_secret_shapes(line: str, expected: str) -> None:
 )
 def test_keeps_ordinary_config_readable(safe: str) -> None:
     assert redact(safe) == safe
+
+
+KEY_LINES = [
+    "-----BEGIN RSA PRIVATE KEY-----",
+    *["MIIEow" + "A" * 58] * 3,
+    "pWQx9==",
+    "-----END RSA PRIVATE KEY-----",
+]
+
+
+def test_a_whole_key_keeps_the_line_count() -> None:
+    text = "before\n" + "\n".join(KEY_LINES) + "\nafter"
+    out = redact(text)
+    assert out.count("\n") == text.count("\n")
+    assert "MIIEow" not in out and "pWQx9" not in out
+    assert out.startswith("before\n") and out.endswith("\nafter")
+
+
+def test_part_of_a_key_is_still_redacted() -> None:
+    middle = "\n".join(KEY_LINES[2:])  # a line range starting past BEGIN
+    opened = "\n".join(KEY_LINES[:3])  # truncated before END
+    for out in (redact(middle), redact(opened)):
+        assert "MIIEow" not in out and "pWQx9" not in out
+
+
+def test_long_base64_lines_are_redacted_wherever_they_appear() -> None:
+    line = "MIIEow" + "Ab9+/" * 14
+    assert redact(f"+{line}") == f"+{REDACTED}"  # in a diff
+    assert redact(line) == REDACTED
+    assert redact("a normal sentence that happens to be long enough to be sixty chars") != REDACTED

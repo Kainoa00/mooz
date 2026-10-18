@@ -6,9 +6,12 @@ import re
 
 REDACTED = "[redacted]"
 
-_PRIVATE_KEY = re.compile(
-    r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----", re.DOTALL
-)
+_KEY_BEGIN = re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")
+_KEY_END = re.compile(r"-----END [A-Z0-9 ]*PRIVATE KEY-----")
+# A line that is nothing but base64 (a key body, a certificate, an encoded secret), optionally
+# behind a diff marker. Short tails just before an END marker are caught separately.
+_BASE64_LINE = re.compile(r"^([ \t+\-]?)[ \t]*[A-Za-z0-9+/]{60,}={0,2}[ \t]*$")
+_BASE64_TAIL = re.compile(r"^[ \t+\-]?[ \t]*[A-Za-z0-9+/]{4,}={0,2}[ \t]*$")
 _TOKENS = [
     re.compile(p)
     for p in (
@@ -56,8 +59,30 @@ def _looks_like_code(value: str) -> bool:
     return "." in value and head.isidentifier()
 
 
+def _redact_keys(text: str) -> str:
+    """Private keys, even when only part of one is in view. Keeps the number of lines."""
+    lines = text.split("\n")
+    inside = False
+    for i, line in enumerate(lines):
+        if _KEY_BEGIN.search(line):
+            inside = True
+        ends = bool(_KEY_END.search(line))
+        if inside or ends:
+            lines[i] = REDACTED
+            if ends and not inside:
+                # The end of a key whose start is out of view: its last body lines too.
+                j = i - 1
+                while j >= 0 and _BASE64_TAIL.match(lines[j]):
+                    lines[j] = REDACTED
+                    j -= 1
+            inside = inside and not ends
+        elif m := _BASE64_LINE.match(line):
+            lines[i] = m.group(1) + REDACTED
+    return "\n".join(lines)
+
+
 def redact(text: str) -> str:
-    text = _PRIVATE_KEY.sub(REDACTED, text)
+    text = _redact_keys(text)
     for pattern in _TOKENS:
         text = pattern.sub(REDACTED, text)
     text = _URL_CREDENTIALS.sub(lambda m: f"{m.group(1)}{REDACTED}{m.group(3)}", text)

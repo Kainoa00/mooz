@@ -73,7 +73,9 @@ def _int(args: dict[str, Any], key: str) -> int | None:
 
 
 def _bool(args: dict[str, Any], key: str) -> bool:
-    value = args.get(key, False)
+    value = args.get(key)
+    if value is None:
+        return False
     if not isinstance(value, bool):
         raise ToolArgumentError(f"{key} must be true or false")
     return value

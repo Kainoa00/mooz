@@ -102,11 +102,12 @@ def _git(root: Path, *args: str, patch: bool = False) -> str:
         if "not a git repository" in message:
             raise FileAccessError("This source is not a git repository")
         raise FileAccessError("git: " + message.replace(str(root), ".").removeprefix("fatal: "))
-    # Hide secrets files before truncating, so they never use up the output budget.
-    out = _hide_sensitive(result.stdout) if patch else result.stdout
+    # Hide secrets files and redact before truncating: a cut can't split a secret, and
+    # hidden files never use up the output budget.
+    out = redact(_hide_sensitive(result.stdout) if patch else result.stdout)
     if len(out) > MAX_OUTPUT_CHARS:
         out = out[:MAX_OUTPUT_CHARS] + "\n… output truncated"
-    return redact(out.rstrip()) or "(no output)"
+    return out.rstrip() or "(no output)"
 
 
 # A file section starts with its diff header; merges use the combined "--cc" form.

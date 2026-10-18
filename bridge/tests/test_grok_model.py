@@ -185,3 +185,30 @@ async def test_no_tools_means_no_tools_param_and_model_is_configurable() -> None
 
     assert "tools" not in client.calls[0]
     assert client.calls[0]["model"] == "grok-4.6"
+
+
+async def test_optional_tool_arguments_become_required_but_nullable() -> None:
+    from mooz_agent.tools.toolbox import ToolSpec
+
+    spec = ToolSpec(
+        "search",
+        "Search",
+        {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "source": {"type": "string", "enum": ["a", "b"]},
+                "regex": {"type": "boolean"},
+            },
+            "required": ["query"],
+            "additionalProperties": False,
+        },
+    )
+    client = FakeClient(message("Hi."))
+    await GrokModel(client=client).conversation(system="S", tools=[spec]).send("x")
+    params = client.calls[0]["tools"][0]["parameters"]
+    assert params["required"] == ["query", "source", "regex"]
+    assert params["properties"]["query"] == {"type": "string"}
+    assert params["properties"]["source"] == {"type": ["string", "null"], "enum": ["a", "b", None]}
+    assert params["properties"]["regex"] == {"type": ["boolean", "null"]}
+    assert spec.parameters["required"] == ["query"]  # the shared spec is untouched

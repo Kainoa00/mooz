@@ -26,12 +26,31 @@ DEFAULT_GROK_MODEL = "grok-4.7"
 MAX_OUTPUT_TOKENS = 8000
 
 
+def _strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """OpenAI-style strict mode: every property is required, so optional ones become nullable."""
+    required = list(schema.get("required", []))
+    properties: dict[str, Any] = {}
+    for name, prop in schema.get("properties", {}).items():
+        if name in required:
+            properties[name] = prop
+            continue
+        nullable = {**prop, "type": [prop["type"], "null"]}
+        if "enum" in prop:
+            nullable["enum"] = [*prop["enum"], None]
+        properties[name] = nullable
+    return {
+        **schema,
+        "properties": properties,
+        "required": [*required, *(n for n in properties if n not in required)],
+    }
+
+
 def _tool_param(spec: ToolSpec) -> dict[str, Any]:
     return {
         "type": "function",
         "name": spec.name,
         "description": spec.description,
-        "parameters": spec.parameters,
+        "parameters": _strict_schema(spec.parameters),
         "strict": True,
     }
 

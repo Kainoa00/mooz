@@ -174,3 +174,22 @@ def test_merge_commits_hide_secrets_in_combined_diffs(repo: Path) -> None:
     run(repo, "commit", "-qam", "merge feature")
     out = git_show(repo, "HEAD")
     assert "diff --cc" not in out and "secret_value_3" not in out and "side_secret" not in out
+
+
+def test_output_is_redacted_before_it_is_truncated(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mooz_agent.tools import git as git_module
+
+    key = (
+        "-----BEGIN PRIVATE KEY-----\n"
+        + ("MIIEvQ" + "C" * 58 + "\n") * 20
+        + "-----END PRIVATE KEY-----\n"
+    )
+    filler = "".join(f"line {i} of ordinary settings\n" for i in range(200))
+    (repo / "settings.py").write_text(key + filler)
+    run(repo, "add", "settings.py")
+    run(repo, "commit", "-qm", "add settings")
+    monkeypatch.setattr(git_module, "MAX_OUTPUT_CHARS", 900)
+    out = git_show(repo, "HEAD")
+    assert "MIIEvQ" not in out and "truncated" in out

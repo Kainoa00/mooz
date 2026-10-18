@@ -34,7 +34,8 @@ DENIED_FILES = (
     "id_rsa*", "id_dsa*", "id_ecdsa*", "id_ed25519*", ".netrc", ".npmrc", ".pypirc",
     ".git-credentials", "*credentials*", ".htpasswd",
 )  # fmt: skip
-DENIED_DIRS = frozenset({".ssh", ".gnupg", ".aws", ".git", ".hg", ".svn"})
+# .mooz holds agents' own settings and private memory.
+DENIED_DIRS = frozenset({".ssh", ".gnupg", ".aws", ".git", ".hg", ".svn", ".mooz"})
 VENDORED_DIRS = frozenset(
     {"node_modules", ".venv", "venv", "__pycache__", ".next", ".mypy_cache", ".pytest_cache",
      ".ruff_cache", "dist", "build", "target", ".tox", ".cache"}
@@ -132,6 +133,8 @@ def _read_text(path: Path, shown: str) -> str:
         raise FileAccessError(f"No such file: {shown}")
     if path.is_dir():
         raise FileAccessError(f"{shown} is a folder; list it instead")
+    if not path.is_file():  # a pipe or device would block forever
+        raise FileAccessError(f"{shown} is not a regular file")
     if path.stat().st_size > MAX_FILE_BYTES:
         raise FileAccessError(f"{shown} is too large to read")
     data = path.read_bytes()
@@ -143,7 +146,8 @@ def _read_text(path: Path, shown: str) -> str:
 def read_file(root: Path, path: str, start_line: int = 1, end_line: int | None = None) -> str:
     target = resolve_inside(root, path)
     shown = _rel(root, target)
-    lines = _read_text(target, shown).splitlines()
+    # Redact the whole file first: a line range could start in the middle of a secret.
+    lines = redact(_read_text(target, shown)).splitlines()
     total = len(lines)
     start = max(1, start_line)
     if total and start > total:
@@ -162,7 +166,7 @@ def read_file(root: Path, path: str, start_line: int = 1, end_line: int | None =
         last = number
     header = f"{shown} (lines {start}-{last} of {total})" if total else f"{shown} (empty file)"
     footer = [f"… {total - last} more lines (ask for lines {last + 1}+)"] if last < total else []
-    return redact("\n".join([header, *out, *footer]))
+    return "\n".join([header, *out, *footer])
 
 
 def _matcher(query: str, *, regex_mode: bool) -> Callable[[str], bool]:
@@ -190,7 +194,8 @@ def search(root: Path, query: str, path: str = ".", regex: bool = False, limit: 
         try:
             if file.stat().st_size > MAX_SEARCH_FILE_BYTES:
                 continue
-            text = _read_text(file, "")
+            # Search the redacted text, so a query can't confirm what a secret is.
+            text = redact(_read_text(file, ""))
         except (FileAccessError, OSError):
             continue
         for number, line in enumerate(text.splitlines(), 1):
