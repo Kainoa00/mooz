@@ -17,6 +17,8 @@ class Utterance:
     text: str
     timestamp: float
     via: Literal["voice", "chat"]
+    # The person this line answers, if it's an agent's reply (for notes opt-outs).
+    about: str | None = None
 
 
 class TranscriptBuffer:

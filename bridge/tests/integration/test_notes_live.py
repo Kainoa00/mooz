@@ -6,7 +6,7 @@ import json
 import pytest
 from livekit import api, rtc
 
-from mooz_agent.room import MOOZ_TOPIC, MeetingRoom
+from mooz_agent.room import MOOZ_TOPIC, ChatMessage, MeetingRoom
 
 from .conftest import API_KEY, API_SECRET, LIVEKIT_URL, mint
 from .test_room_live import wait_for
@@ -63,3 +63,30 @@ async def test_reads_policy_and_opt_outs_and_signals(room_name: str) -> None:
         await lk.aclose()
         await human.disconnect()
         await agent.disconnect()
+
+
+async def test_replies_say_whom_they_answer_and_queries_reach_agents(room_name: str) -> None:
+    atlas, grok = MeetingRoom(), MeetingRoom()
+    heard: list[ChatMessage] = []
+    queries: list[tuple[str, dict[str, object]]] = []
+    grok.on_chat = heard.append
+    atlas.on_signal = lambda speaker, message: queries.append((speaker.identity, message))
+    await atlas.connect(LIVEKIT_URL, mint(room_name, "a_atlas", "Atlas", {"kind": "agent"}))
+    await grok.connect(LIVEKIT_URL, mint(room_name, "a_grok", "Grok", {"kind": "agent"}))
+    human = rtc.Room()
+    await human.connect(LIVEKIT_URL, mint(room_name, "p_zach", "Zach", {"kind": "human"}))
+    try:
+        await wait_for(lambda: len(atlas.participants()) == 2 and len(grok.participants()) == 2)
+        await atlas.send_chat("You asked: when is lunch", reply_to="p_zach")
+        await wait_for(lambda: len(heard) == 1)
+        assert heard[0].about == "p_zach" and heard[0].speaker.identity == "a_atlas"
+
+        await human.local_participant.publish_data(
+            json.dumps({"type": "notes?"}), reliable=True, topic=MOOZ_TOPIC
+        )
+        await wait_for(lambda: len(queries) == 1)
+        assert queries == [("p_zach", {"type": "notes?"})]
+    finally:
+        await human.disconnect()
+        await grok.disconnect()
+        await atlas.disconnect()

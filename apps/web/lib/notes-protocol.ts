@@ -6,10 +6,14 @@
  * - An agent announces it is keeping notes on the `mooz.v0` data topic:
  *   `{"type": "notes", "state": "on" | "off"}`. LiveKit stamps the sender, so an announcement
  *   only ever speaks for the agent that sent it.
+ * - A browser that (re)connects asks with `{"type": "notes?"}`; each agent answers it directly.
  */
 
 export const MOOZ_TOPIC = "mooz.v0";
 export const NOTES_OPT_OUT_ATTRIBUTE = "notes_opt_out";
+
+/** Ask every agent whether it is keeping notes (after joining or reconnecting). */
+export const NOTES_QUERY: Uint8Array<ArrayBuffer> = new TextEncoder().encode(JSON.stringify({ type: "notes?" }));
 
 export function notesAllowed(metadata: string | undefined): boolean {
   if (!metadata) return false;

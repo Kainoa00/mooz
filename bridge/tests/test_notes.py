@@ -3,7 +3,15 @@ from pathlib import Path
 import pytest
 
 from mooz_agent.memory import MemoryStore
-from mooz_agent.notes import MAX_LOG_CHARS, NOTES_TAG, NotesKeeper, notes_command
+from mooz_agent.notes import (
+    MAX_LINE_CHARS,
+    MAX_LOG_CHARS,
+    MAX_LOG_CHARS_HARD,
+    NOTES_TAG,
+    RETRY_SECONDS,
+    NotesKeeper,
+    notes_command,
+)
 from mooz_agent.room import Speaker
 from mooz_agent.transcript import Utterance
 
@@ -25,6 +33,14 @@ class Summarizer:
 
 def said(speaker: Speaker, text: str) -> Utterance:
     return Utterance(speaker, text, 1_760_000_000.0, "voice")
+
+
+def fill(keeper: NotesKeeper) -> bool:
+    """Talk until the log asks to be summarized early; True if it did."""
+    for _ in range(MAX_LOG_CHARS // MAX_LINE_CHARS + 1):
+        if keeper.hear(said(KAI, "x" * MAX_LINE_CHARS)):
+            return True
+    return False
 
 
 @pytest.fixture
@@ -97,7 +113,7 @@ async def test_reports_when_the_log_is_full(setup) -> None:  # type: ignore[no-u
     keeper, _, _, _ = setup
     keeper.start()
     assert keeper.hear(said(KAI, "short")) is False
-    assert keeper.hear(said(KAI, "x" * MAX_LOG_CHARS)) is True
+    assert fill(keeper) is True
 
 
 @pytest.mark.parametrize(
@@ -115,3 +131,84 @@ async def test_reports_when_the_log_is_full(setup) -> None:  # type: ignore[no-u
 )
 def test_recognizes_notes_commands(text: str, command: str | None) -> None:
     assert notes_command(text) == command
+
+
+class FailingSummarizer:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def summarize(self, *, transcript: str) -> str:
+        self.calls += 1
+        raise RuntimeError("provider down")
+
+
+class Clock:
+    def __init__(self) -> None:
+        self.now = 1_760_000_000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+async def test_lines_answering_an_opted_out_person_are_left_out(setup) -> None:  # type: ignore[no-untyped-def]
+    keeper, summarizer, _, opted_out = setup
+    atlas = Speaker("a_me", "Atlas", "agent", owner_identity="p_k", owner_name="Kainoa")
+    keeper.start()
+    opted_out.add(ZACH.identity)
+    keeper.hear(
+        Utterance(atlas, "You asked: my hearing is Friday", 1.0, "chat", about=ZACH.identity)
+    )
+    keeper.hear(Utterance(GROK, "Zach told me about Friday", 1.0, "chat", about=KAI.identity))
+    keeper.hear(Utterance(atlas, "Good morning", 1.0, "chat", about=KAI.identity))
+    await keeper.flush()
+    assert summarizer.transcripts == ["Atlas (agent): Good morning"]
+
+
+async def test_people_are_only_kept_once_they_have_been_told(tmp_path: Path) -> None:
+    told: set[str] = {KAI.identity}
+    summarizer = Summarizer()
+    keeper = NotesKeeper(
+        summarizer=summarizer,
+        memory=MemoryStore(tmp_path / "m.jsonl"),
+        opted_out=lambda _: False,
+        admitted=told.__contains__,
+    )
+    keeper.start()
+    keeper.hear(said(ZACH, "I just joined"))
+    told.add(ZACH.identity)
+    keeper.hear(said(ZACH, "now I know"))
+    keeper.hear(said(KAI, "welcome"))
+    await keeper.flush()
+    assert summarizer.transcripts == ["Zach: now I know\nKainoa: welcome"]
+
+
+async def test_a_failing_summary_is_retried_once_in_a_while_not_on_every_line(
+    tmp_path: Path,
+) -> None:
+    clock, summarizer = Clock(), FailingSummarizer()
+    keeper = NotesKeeper(
+        summarizer=summarizer,
+        memory=MemoryStore(tmp_path / "m.jsonl"),
+        opted_out=lambda _: False,
+        clock=clock,
+    )
+    keeper.start()
+    assert fill(keeper) is True
+    assert keeper.hear(said(KAI, "more")) is False  # a flush is already on its way
+    with pytest.raises(RuntimeError):
+        await keeper.flush()
+    assert keeper.unsaved
+    assert keeper.hear(said(KAI, "still failing")) is False  # backing off
+    clock.now += RETRY_SECONDS + 1
+    assert keeper.hear(said(KAI, "try again")) is True
+    assert summarizer.calls == 1
+
+
+def test_long_lines_and_a_stuck_log_are_capped(setup) -> None:  # type: ignore[no-untyped-def]
+    keeper, _, _, _ = setup
+    keeper.start()
+    keeper.hear(said(KAI, "y" * (MAX_LINE_CHARS * 3)))
+    assert keeper.size <= MAX_LINE_CHARS + 2
+    for _ in range(MAX_LOG_CHARS_HARD // MAX_LINE_CHARS + 10):
+        keeper.hear(said(KAI, "z" * MAX_LINE_CHARS))
+    assert keeper.size <= MAX_LOG_CHARS_HARD

@@ -1,11 +1,24 @@
 "use client";
 
-import { useDataChannel, useLocalParticipant, useParticipantAttributes, useParticipants } from "@livekit/components-react";
-import type { Participant } from "livekit-client";
-import { useCallback, useState } from "react";
+import {
+  useConnectionState,
+  useDataChannel,
+  useLocalParticipant,
+  useParticipantAttributes,
+  useParticipants,
+  useRoomContext,
+} from "@livekit/components-react";
+import { ConnectionState, type Participant } from "livekit-client";
+import { useCallback, useEffect, useState } from "react";
 import { errorMessage, readBody } from "@/lib/fetch-json";
 import { isAgent, ownedName } from "@/lib/labels";
-import { MOOZ_TOPIC, NOTES_OPT_OUT_ATTRIBUTE, notesBannerText, parseNotesAnnouncement } from "@/lib/notes-protocol";
+import {
+  MOOZ_TOPIC,
+  NOTES_OPT_OUT_ATTRIBUTE,
+  NOTES_QUERY,
+  notesBannerText,
+  parseNotesAnnouncement,
+} from "@/lib/notes-protocol";
 
 /**
  * Shown to everyone while any agent says it is keeping notes, with a way to be left out.
@@ -29,6 +42,15 @@ export function NotesBanner({ slug }: { slug: string }) {
     });
   }, []);
   useDataChannel(MOOZ_TOPIC, onMessage);
+
+  // On joining and after every reconnect, ask agents directly: an announcement sent while we
+  // were away would otherwise be missed.
+  const room = useRoomContext();
+  const connection = useConnectionState();
+  useEffect(() => {
+    if (connection !== ConnectionState.Connected) return;
+    room.localParticipant.publishData(NOTES_QUERY, { reliable: true, topic: MOOZ_TOPIC }).catch(() => {});
+  }, [connection, room]);
 
   // An agent that left is no longer keeping notes, whatever it last said.
   const agents = useParticipants().filter((p) => isAgent(p) && keeping.has(p.identity));

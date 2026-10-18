@@ -18,6 +18,7 @@ CHAT_TOPIC = "lk.chat"
 # mooz's own messages between agents and browsers (see apps/web/lib/notes-protocol.ts).
 MOOZ_TOPIC = "mooz.v0"
 NOTES_OPT_OUT_ATTRIBUTE = "notes_opt_out"
+REPLY_TO_ATTRIBUTE = "reply_to"
 SAMPLE_RATE = 48_000
 NUM_CHANNELS = 1
 # Leave this long after the last person does, so the agent doesn't keep an empty room open.
@@ -38,6 +39,8 @@ class ChatMessage:
     speaker: Speaker
     text: str
     timestamp: float
+    # For an agent's reply: the person it answers (the `reply_to` text stream attribute).
+    about: str | None = None
 
 
 class _ParticipantLike(Protocol):
@@ -66,6 +69,7 @@ ChatHandler = Callable[[ChatMessage], None]
 TrackHandler = Callable[[Speaker, rtc.Track], None]
 TrackEndedHandler = Callable[[str], None]
 JoinHandler = Callable[[Speaker], None]
+SignalHandler = Callable[[Speaker, dict[str, object]], None]
 
 
 class MeetingRoom:
@@ -80,6 +84,7 @@ class MeetingRoom:
         self.on_human_track_ended: TrackEndedHandler | None = None
         self.on_participant_joined: JoinHandler | None = None
         self.on_notes_policy_changed: Callable[[], None] | None = None
+        self.on_signal: SignalHandler | None = None
         self._opted_out: set[str] = set()
         self._closed = asyncio.Event()
         self._audio_sid: dict[str, str] = {}
@@ -101,6 +106,7 @@ class MeetingRoom:
         self._room.on("participant_disconnected", self._handle_participant_change)
         self._room.on("participant_attributes_changed", self._handle_attributes_changed)
         self._room.on("room_metadata_changed", self._handle_metadata_changed)
+        self._room.on("data_received", self._handle_data)
         self._room.register_text_stream_handler(CHAT_TOPIC, self._handle_chat_stream)
         await self._room.connect(url, token, rtc.RoomOptions(auto_subscribe=True))
         for participant in self._room.remote_participants.values():
@@ -157,6 +163,16 @@ class MeetingRoom:
             json.dumps(message), reliable=True, topic=MOOZ_TOPIC, destination_identities=to or []
         )
 
+    def _handle_data(self, packet: rtc.DataPacket) -> None:
+        if packet.topic != MOOZ_TOPIC or packet.participant is None or not self.on_signal:
+            return
+        try:
+            message = json.loads(packet.data)
+        except ValueError:
+            return
+        if isinstance(message, dict):
+            self.on_signal(speaker_from_participant(packet.participant), message)
+
     # -- presence ------------------------------------------------------------------
 
     def _handle_participant_connected(self, participant: rtc.RemoteParticipant) -> None:
@@ -182,8 +198,10 @@ class MeetingRoom:
         """Return when the meeting ends for us (left, removed by the host, or connection lost)."""
         await self._closed.wait()
 
-    async def send_chat(self, text: str) -> None:
-        await self._room.local_participant.send_text(text, topic=CHAT_TOPIC)
+    async def send_chat(self, text: str, reply_to: str | None = None) -> None:
+        """Post to chat. `reply_to` names the person this answers (see docs/protocol.md)."""
+        attributes = {REPLY_TO_ATTRIBUTE: reply_to} if reply_to else None
+        await self._room.local_participant.send_text(text, topic=CHAT_TOPIC, attributes=attributes)
 
     async def disconnect(self) -> None:
         if self._alone_timer:
@@ -231,4 +249,11 @@ class MeetingRoom:
         participant = self._room.remote_participants.get(participant_identity)
         if participant is None or not self.on_chat:
             return
-        self.on_chat(ChatMessage(speaker_from_participant(participant), text, time.time()))
+        speaker = speaker_from_participant(participant)
+        # Only an agent's reply says whom it answers; a person's message is about themselves.
+        about = (
+            (reader.info.attributes or {}).get(REPLY_TO_ATTRIBUTE)
+            if speaker.kind == "agent"
+            else None
+        )
+        self.on_chat(ChatMessage(speaker, text, time.time(), about=about or None))

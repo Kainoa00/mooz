@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ownedName } from "./labels";
-import { notesAllowed, notesBannerText, parseNotesAnnouncement } from "./notes-protocol";
+import { NOTES_QUERY, notesAllowed, notesBannerText, parseNotesAnnouncement } from "./notes-protocol";
 
 const encode = (value: unknown) => new TextEncoder().encode(typeof value === "string" ? value : JSON.stringify(value));
 
@@ -21,6 +21,11 @@ describe("notes protocol", () => {
     expect(parseNotesAnnouncement(encode({ type: "other", state: "on" }))).toBeNull();
     expect(parseNotesAnnouncement(encode("{nope"))).toBeNull();
     expect(parseNotesAnnouncement(encode([1, 2]))).toBeNull();
+  });
+
+  it("asks agents with a small query message", () => {
+    expect(JSON.parse(new TextDecoder().decode(NOTES_QUERY))).toEqual({ type: "notes?" });
+    expect(parseNotesAnnouncement(NOTES_QUERY)).toBeNull();
   });
 
   it("names every agent keeping notes", () => {

@@ -15,7 +15,7 @@ class Mouth:
     def __init__(
         self,
         *,
-        send_chat: Callable[[str], Awaitable[None]],
+        send_chat: Callable[[str, str | None], Awaitable[None]],
         capture_frame: Callable[[rtc.AudioFrame], Awaitable[None]],
         tts: TextToSpeech,
     ) -> None:
@@ -30,6 +30,7 @@ class Mouth:
         on_first_frame: Callable[[], None] | None = None,
         *,
         chat: bool = True,
+        reply_to: str | None = None,
     ) -> None:
         """Post the answer to chat (unless `chat` is False), then speak its spoken part."""
         async with self._floor:
@@ -46,7 +47,7 @@ class Mouth:
                 text = (
                     answer.spoken if not answer.details else f"{answer.spoken}\n\n{answer.details}"
                 )
-                await self._send_chat(text)
+                await self._send_chat(text, reply_to)
             resampler: rtc.AudioResampler | None = None
             async for frame in self._tts.synthesize(answer.spoken):
                 if frame.sample_rate != SAMPLE_RATE:

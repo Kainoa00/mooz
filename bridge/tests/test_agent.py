@@ -36,10 +36,17 @@ class FakeRoom:
         self.on_human_track_ended = None
         self.on_participant_joined = None
         self.on_notes_policy_changed = None
+        self.on_signal = None
         self.replayed = False
+        self.people: list[Speaker] = []
+        self.replies: list[str | None] = []
 
-    async def send_chat(self, text: str) -> None:
+    def participants(self) -> list[Speaker]:
+        return list(self.people)
+
+    async def send_chat(self, text: str, reply_to: str | None = None) -> None:
         self.sent.append(text)
+        self.replies.append(reply_to)
 
     def notes_allowed(self) -> bool:
         return False
