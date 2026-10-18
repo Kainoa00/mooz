@@ -39,7 +39,8 @@ def build_providers(
 
         return FakeSTT({}), FakeTTS(), EchoBrain()
 
-    from .claude import DEFAULT_MODEL, ClaudeBrain
+    from ..brain import ToolLoopBrain
+    from .claude import DEFAULT_MODEL, ClaudeModel
     from .elevenlabs import ElevenLabsSTT, ElevenLabsTTS
 
     check_environment(config.brain)
@@ -47,10 +48,12 @@ def build_providers(
     stt = ElevenLabsSTT(api_key=eleven_key, http=http, keyterms=[me.name], language=config.language)
     voice = config.voice_id or os.environ.get("MOOZ_VOICE_ID")
     tts = ElevenLabsTTS(api_key=eleven_key, voice_id=voice, http=http)
-    brain = ClaudeBrain(
+    brain = ToolLoopBrain(
+        model=ClaudeModel(
+            model=config.model or os.environ.get("MOOZ_CLAUDE_MODEL") or DEFAULT_MODEL
+        ),
         agent_name=me.name,
         owner_name=me.owner_name or "your owner",
         owner_identity=me.owner_identity,
-        model=config.model or os.environ.get("MOOZ_CLAUDE_MODEL") or DEFAULT_MODEL,
     )
     return stt, tts, brain

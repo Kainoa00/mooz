@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Sequence
 from typing import Any, Literal
 
 import anthropic
 
-from ..room import Speaker
+from ..brain import ANSWER_SCHEMA, ModelTurn, ToolCall
+from ..tools.toolbox import ToolResult, ToolSpec
 from .base import Answer, BrainError
 
 log = logging.getLogger(__name__)
@@ -23,98 +25,71 @@ MAX_TOKENS = 8000
 # the API retries it on a fallback model chosen per refusal category.
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
-ANSWER_SCHEMA: dict[str, object] = {
-    "type": "object",
-    "properties": {
-        "spoken": {
-            "type": "string",
-            "description": "What you say out loud: one to three short sentences of plain speech.",
-        },
-        "details": {
-            "type": "string",
-            "description": (
-                "Optional extra for the meeting chat (markdown, code, links). Empty if none."
-            ),
-        },
-    },
-    "required": ["spoken", "details"],
-    "additionalProperties": False,
-}
 
-DECLINE = Answer("Sorry, I can't help with that one.")
+def _tool_param(spec: ToolSpec) -> dict[str, Any]:
+    return {
+        "name": spec.name,
+        "description": spec.description,
+        "input_schema": spec.parameters,
+        "strict": True,
+    }
 
 
-def _system_prompt(agent_name: str, owner_name: str) -> str:
-    rules = [
-        'Your "spoken" reply is read aloud by a voice. Keep it to one to three short sentences '
-        "(about 40 words at most) of natural speech. No markdown, lists, code, URLs, or file "
-        "paths in it.",
-        "Put anything that only works in writing (code, commands, links, longer explanations) "
-        'in "details"; it goes to the meeting chat. Leave "details" empty when the spoken reply '
-        "is enough.",
-        "If you don't know or the question is unclear, say so briefly or ask one short "
-        "clarifying question.",
-        "You are an AI agent. Never claim or imply that you are a person.",
-        "You only know what was said in this meeting (the transcript you are given) and general "
-        "knowledge. You cannot read files, repositories, or accounts yet; if asked to, say that "
-        "isn't connected yet.",
-        "Several people may be in the meeting; address the person who asked by name when it helps.",
-    ]
-    intro = (
-        f"You are {agent_name}, the personal AI agent of {owner_name}, taking part in a live "
-        "video meeting. People talk to you by saying your name. Everyone in the meeting hears "
-        "what you say."
-    )
-    return intro + "\n\nHow to answer:\n" + "\n".join(f"- {r}" for r in rules)
-
-
-def _asker_label(asker: Speaker, owner_identity: str | None) -> str:
-    if owner_identity and asker.identity == owner_identity:
-        return f"{asker.name} (your owner)"
-    if owner_identity:
-        return f"{asker.name} (not your owner)"
-    return asker.name
-
-
-class ClaudeBrain:
+class ClaudeConversation:
     def __init__(
         self,
+        client: Any,
         *,
-        agent_name: str,
-        owner_name: str,
-        owner_identity: str | None = None,
-        client: anthropic.AsyncAnthropic | None = None,
-        model: str = DEFAULT_MODEL,
-        effort: Effort = DEFAULT_EFFORT,
+        model: str,
+        effort: Effort,
+        system: str,
+        tools: Sequence[ToolSpec],
     ) -> None:
-        # A spoken answer that arrives minutes late is worse than an apology.
-        self._client = client or anthropic.AsyncAnthropic(timeout=30.0, max_retries=1)
+        self._client = client
         self._model = model
         self._effort = effort
-        self._owner_identity = owner_identity
-        self._system = _system_prompt(agent_name, owner_name)
+        self._system = system
+        self._tools = [_tool_param(t) for t in tools]
+        self._messages: list[dict[str, Any]] = []
 
-    async def answer(self, *, question: str, asker: Speaker, transcript: str) -> Answer:
-        who = _asker_label(asker, self._owner_identity)
-        user = (
-            "Recent meeting transcript (oldest first):\n"
-            f"<transcript>\n{transcript}\n</transcript>\n\n"
-            f"{who} just asked you: "
-            f"{question or '(they said your name; respond briefly)'}"
+    async def send(self, user: str) -> ModelTurn:
+        self._messages.append({"role": "user", "content": user})
+        return await self._call()
+
+    async def send_results(self, results: Sequence[tuple[ToolCall, ToolResult]]) -> ModelTurn:
+        self._messages.append(
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": call.id,
+                        "content": result.content,
+                        "is_error": result.is_error,
+                    }
+                    for call, result in results
+                ],
+            }
         )
+        return await self._call()
+
+    async def _call(self) -> ModelTurn:
+        kwargs: dict[str, Any] = {
+            "model": self._model,
+            "max_tokens": MAX_TOKENS,
+            "system": self._system,
+            "messages": self._messages,
+            "output_config": {
+                "effort": self._effort,
+                "format": {"type": "json_schema", "schema": ANSWER_SCHEMA},
+            },
+            "betas": [FALLBACK_BETA],
+            "fallbacks": "default",
+        }
+        if self._tools:
+            kwargs["tools"] = self._tools
         try:
-            response: Any = await self._client.beta.messages.create(
-                model=self._model,
-                max_tokens=MAX_TOKENS,
-                system=self._system,
-                messages=[{"role": "user", "content": user}],
-                output_config={
-                    "effort": self._effort,
-                    "format": {"type": "json_schema", "schema": ANSWER_SCHEMA},
-                },
-                betas=[FALLBACK_BETA],
-                fallbacks="default",
-            )
+            response: Any = await self._client.beta.messages.create(**kwargs)
         except anthropic.APIStatusError as err:
             log.error("Claude returned %s: %s", err.status_code, err.message)
             raise BrainError(f"Claude returned {err.status_code}") from err
@@ -122,15 +97,46 @@ class ClaudeBrain:
             log.error("could not reach Claude: %s", err)
             raise BrainError("could not reach Claude") from err
 
+        # Pass the whole content back unchanged (thinking blocks included) on the next turn.
+        self._messages.append({"role": "assistant", "content": response.content})
         if response.stop_reason == "refusal":
-            return DECLINE
-        # Never read raw or truncated model output aloud.
+            return ModelTurn(refused=True)
         if response.stop_reason == "max_tokens":
             raise BrainError("Claude's answer was cut off")
-        text = "".join(b.text for b in response.content if b.type == "text").strip()
-        try:
-            data = json.loads(text)
-            spoken = str(data["spoken"]).strip()
-        except (ValueError, KeyError, TypeError) as err:
-            raise BrainError("Claude returned an answer in an unexpected format") from err
-        return Answer(spoken, str(data.get("details", "")).strip()) if spoken else DECLINE
+        calls = tuple(
+            ToolCall(id=b.id, name=b.name, args=dict(b.input))
+            for b in response.content
+            if b.type == "tool_use"
+        )
+        if calls:
+            return ModelTurn(calls=calls)
+        return ModelTurn(answer=_parse_answer(response.content))
+
+
+def _parse_answer(content: Sequence[Any]) -> Answer:
+    text = "".join(b.text for b in content if b.type == "text").strip()
+    try:
+        data = json.loads(text)
+        return Answer(str(data["spoken"]).strip(), str(data.get("details", "")).strip())
+    except (ValueError, KeyError, TypeError) as err:
+        # Never read raw model output aloud.
+        raise BrainError("Claude returned an answer in an unexpected format") from err
+
+
+class ClaudeModel:
+    def __init__(
+        self,
+        *,
+        client: Any | None = None,
+        model: str = DEFAULT_MODEL,
+        effort: Effort = DEFAULT_EFFORT,
+    ) -> None:
+        # A spoken answer that arrives minutes late is worse than an apology.
+        self._client = client or anthropic.AsyncAnthropic(timeout=30.0, max_retries=1)
+        self._model = model
+        self._effort = effort
+
+    def conversation(self, *, system: str, tools: Sequence[ToolSpec]) -> ClaudeConversation:
+        return ClaudeConversation(
+            self._client, model=self._model, effort=self._effort, system=system, tools=tools
+        )

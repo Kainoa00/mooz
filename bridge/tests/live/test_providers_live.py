@@ -5,8 +5,9 @@ import os
 import aiohttp
 import pytest
 
+from mooz_agent.brain import ToolLoopBrain
 from mooz_agent.providers.base import Answer
-from mooz_agent.providers.claude import ClaudeBrain
+from mooz_agent.providers.claude import ClaudeModel
 from mooz_agent.providers.elevenlabs import ElevenLabsTTS
 from mooz_agent.room import Speaker
 
@@ -18,7 +19,9 @@ pytestmark = [
 
 @pytest.mark.skipif(not os.environ.get("ANTHROPIC_API_KEY"), reason="needs ANTHROPIC_API_KEY")
 async def test_claude_answers_briefly_from_the_transcript() -> None:
-    brain = ClaudeBrain(agent_name="Atlas", owner_name="Kainoa", owner_identity="p_k")
+    brain = ToolLoopBrain(
+        model=ClaudeModel(), agent_name="Atlas", owner_name="Kainoa", owner_identity="p_k"
+    )
 
     answer = await brain.answer(
         question="what did Zach say is blocking the deploy?",
