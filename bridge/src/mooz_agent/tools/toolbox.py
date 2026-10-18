@@ -1,0 +1,304 @@
+"""The agent's tools, with access decided by who is asking.
+
+The asker's identity comes from LiveKit (server-assigned, unforgeable). The owner sees every
+source and their whole memory; anyone else sees only public sources and public notes, and can
+never change memory. This is enforced here, in code, whatever the model is told or tricked into.
+"""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
+
+from ..config import AgentConfig, Source
+from ..memory import MemoryStore
+from . import files, git
+from .files import FileAccessError
+
+log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class Scope:
+    owner: bool
+    asker_name: str
+
+
+@dataclass(frozen=True)
+class ToolSpec:
+    name: str
+    description: str
+    parameters: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ToolResult:
+    content: str
+    is_error: bool = False
+
+
+class ToolArgumentError(Exception):
+    pass
+
+
+def _schema(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": required,
+        "additionalProperties": False,
+    }
+
+
+def _text(args: dict[str, Any], key: str, *, required: bool = False) -> str | None:
+    value = args.get(key)
+    if value is None:
+        if required:
+            raise ToolArgumentError(f"{key} is required")
+        return None
+    if not isinstance(value, str) or (required and not value.strip()):
+        raise ToolArgumentError(f"{key} must be a non-empty string")
+    return value
+
+
+def _int(args: dict[str, Any], key: str) -> int | None:
+    value = args.get(key)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ToolArgumentError(f"{key} must be a whole number")
+    return value
+
+
+def _bool(args: dict[str, Any], key: str) -> bool:
+    value = args.get(key, False)
+    if not isinstance(value, bool):
+        raise ToolArgumentError(f"{key} must be true or false")
+    return value
+
+
+class ToolBox:
+    def __init__(self, config: AgentConfig, memory: MemoryStore | None, *, owner_name: str) -> None:
+        self.config = config
+        self.memory = memory
+        self.owner_name = owner_name
+        self._handlers: dict[str, Callable[[dict[str, Any], Scope], str]] = {
+            "list_files": self._list_files,
+            "read_file": self._read_file,
+            "search": self._search,
+            "git_status": self._git_status,
+            "git_log": self._git_log,
+            "git_show": self._git_show,
+            "git_diff": self._git_diff,
+            "recall": self._recall,
+            "remember": self._remember,
+            "forget": self._forget,
+        }
+
+    # -- what the model is offered -------------------------------------------------
+
+    def _visible(self, scope: Scope) -> list[Source]:
+        return self.config.visible_sources(owner=scope.owner)
+
+    def sources_summary(self, scope: Scope) -> str:
+        sources = self._visible(scope)
+        if not sources:
+            return "You have no folders or repositories you can read for this person."
+        listed = ", ".join(s.label for s in sources)
+        return f"Folders and repositories you can read for this person: {listed}."
+
+    def specs(self, scope: Scope) -> list[ToolSpec]:
+        out: list[ToolSpec] = []
+        labels = [s.label for s in self._visible(scope)]
+        if labels:
+            source = {"type": "string", "enum": labels, "description": "Which folder or repository"}
+            path = {"type": "string", "description": "Path relative to the source, e.g. src/app.py"}
+            out += [
+                ToolSpec(
+                    "list_files",
+                    "List a folder in a source, or find files by glob pattern (e.g. **/*.py).",
+                    _schema(
+                        {"source": source, "path": path, "pattern": {"type": "string"}}, ["source"]
+                    ),
+                ),
+                ToolSpec(
+                    "read_file",
+                    "Read a text file from a source (numbered lines; long files in parts).",
+                    _schema(
+                        {
+                            "source": source,
+                            "path": path,
+                            "start_line": {"type": "integer"},
+                            "end_line": {"type": "integer"},
+                        },
+                        ["source", "path"],
+                    ),
+                ),
+                ToolSpec(
+                    "search",
+                    "Search file contents (case-insensitive). Omit source to search all of them.",
+                    _schema(
+                        {
+                            "query": {"type": "string"},
+                            "source": source,
+                            "path": path,
+                            "regex": {"type": "boolean"},
+                        },
+                        ["query"],
+                    ),
+                ),
+                ToolSpec(
+                    "git_status",
+                    "Current branch and uncommitted changes.",
+                    _schema({"source": source}, ["source"]),
+                ),
+                ToolSpec(
+                    "git_log",
+                    "Recent commits, optionally for one path.",
+                    _schema({"source": source, "path": path, "n": {"type": "integer"}}, ["source"]),
+                ),
+                ToolSpec(
+                    "git_show",
+                    "Show one commit (message and changes).",
+                    _schema({"source": source, "ref": {"type": "string"}}, ["source"]),
+                ),
+                ToolSpec(
+                    "git_diff",
+                    "Uncommitted changes, or the difference between two refs.",
+                    _schema(
+                        {
+                            "source": source,
+                            "ref_a": {"type": "string"},
+                            "ref_b": {"type": "string"},
+                        },
+                        ["source"],
+                    ),
+                ),
+            ]
+        if self.memory is not None:
+            out.append(
+                ToolSpec(
+                    "recall",
+                    "Search your long-term memory of things you were told to remember.",
+                    _schema({"query": {"type": "string"}}, ["query"]),
+                )
+            )
+            if scope.owner:
+                out += [
+                    ToolSpec(
+                        "remember",
+                        "Save a note to long-term memory when your owner asks you to remember "
+                        "something. Private unless they say anyone may know it.",
+                        _schema(
+                            {"note": {"type": "string"}, "public": {"type": "boolean"}}, ["note"]
+                        ),
+                    ),
+                    ToolSpec(
+                        "forget",
+                        "Delete a memory note by its id when your owner asks.",
+                        _schema({"id": {"type": "string"}}, ["id"]),
+                    ),
+                ]
+        return out
+
+    # -- running a call ------------------------------------------------------------
+
+    def dispatch(self, name: str, args: dict[str, Any], scope: Scope) -> ToolResult:
+        handler = self._handlers.get(name)
+        if handler is None:
+            return ToolResult(f"Unknown tool {name!r}", is_error=True)
+        if not isinstance(args, dict):
+            return ToolResult("Tool arguments must be an object", is_error=True)
+        try:
+            return ToolResult(handler(args, scope))
+        except (ToolArgumentError, FileAccessError, ValueError) as err:
+            return ToolResult(str(err), is_error=True)
+        except Exception:
+            log.exception("tool %s failed", name)
+            return ToolResult(f"{name} failed unexpectedly", is_error=True)
+
+    def _source(self, args: dict[str, Any], scope: Scope) -> Source:
+        label = _text(args, "source", required=True)
+        for source in self._visible(scope):
+            if source.label == label:
+                return source
+        # Private sources and missing ones are indistinguishable to non-owners.
+        raise FileAccessError(f"No source called {label!r}")
+
+    def _list_files(self, args: dict[str, Any], scope: Scope) -> str:
+        source = self._source(args, scope)
+        return files.list_files(source.path, _text(args, "path") or ".", _text(args, "pattern"))
+
+    def _read_file(self, args: dict[str, Any], scope: Scope) -> str:
+        source = self._source(args, scope)
+        path = _text(args, "path", required=True)
+        assert path is not None
+        return files.read_file(
+            source.path, path, _int(args, "start_line") or 1, _int(args, "end_line")
+        )
+
+    def _search(self, args: dict[str, Any], scope: Scope) -> str:
+        query = _text(args, "query", required=True)
+        assert query is not None
+        regex = _bool(args, "regex")
+        path = _text(args, "path") or "."
+        targets = (
+            [self._source(args, scope)] if args.get("source") is not None else self._visible(scope)
+        )
+        if not targets:
+            raise FileAccessError("There are no folders to search")
+        results = []
+        for source in targets:
+            out = files.search(source.path, query, path=path, regex=regex)
+            if not out.startswith("No matches"):
+                results.append("\n".join(f"[{source.label}] {line}" for line in out.splitlines()))
+        return "\n".join(results) if results else f"No matches for {query!r}"
+
+    def _git_status(self, args: dict[str, Any], scope: Scope) -> str:
+        return git.git_status(self._source(args, scope).path)
+
+    def _git_log(self, args: dict[str, Any], scope: Scope) -> str:
+        source = self._source(args, scope)
+        return git.git_log(source.path, _text(args, "path"), _int(args, "n") or 10)
+
+    def _git_show(self, args: dict[str, Any], scope: Scope) -> str:
+        source = self._source(args, scope)
+        return git.git_show(source.path, _text(args, "ref") or "HEAD")
+
+    def _git_diff(self, args: dict[str, Any], scope: Scope) -> str:
+        source = self._source(args, scope)
+        return git.git_diff(source.path, _text(args, "ref_a"), _text(args, "ref_b"))
+
+    def _memory(self) -> MemoryStore:
+        if self.memory is None:
+            raise ToolArgumentError("Memory is not enabled for this agent")
+        return self.memory
+
+    def _recall(self, args: dict[str, Any], scope: Scope) -> str:
+        query = _text(args, "query", required=True)
+        assert query is not None
+        notes = self._memory().recall(query, owner=scope.owner)
+        if not notes:
+            return "Nothing in memory about that."
+        return "\n".join(f"[{n.id}] {n.text}" for n in notes)
+
+    def _require_owner(self, scope: Scope) -> None:
+        if not scope.owner:
+            raise ToolArgumentError(f"Only {self.owner_name} can change my memory")
+
+    def _remember(self, args: dict[str, Any], scope: Scope) -> str:
+        self._require_owner(scope)
+        note = _text(args, "note", required=True)
+        assert note is not None
+        saved = self._memory().remember(note, public=_bool(args, "public"))
+        return f"Remembered {'(public) ' if saved.public else ''}{saved.id}"
+
+    def _forget(self, args: dict[str, Any], scope: Scope) -> str:
+        self._require_owner(scope)
+        note_id = _text(args, "id", required=True)
+        assert note_id is not None
+        if not self._memory().forget(note_id):
+            raise ToolArgumentError(f"No memory note {note_id}")
+        return f"Forgot {note_id}"
