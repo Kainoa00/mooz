@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import os
+from typing import TYPE_CHECKING
 
 import aiohttp
 
-from ..brain import Model
 from ..config import AgentConfig
 from ..room import Speaker
 from .base import Brain, SpeechToText, TextToSpeech
+
+if TYPE_CHECKING:
+    from ..brain import Model
 
 
 class ProviderConfigError(Exception):
