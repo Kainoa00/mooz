@@ -23,7 +23,7 @@ export function ChatPanel() {
   }
 
   return (
-    <section aria-label="Chat" className="flex min-h-0 flex-col border-t border-zinc-800 md:h-full md:border-l md:border-t-0">
+    <section aria-label="Chat" className="flex min-h-0 flex-1 flex-col">
       <ol ref={listRef} data-testid="chat-messages" className="flex flex-1 flex-col gap-3 overflow-y-auto p-3">
         {chatMessages.map((m) => {
           const who = { name: m.from?.name, attributes: m.from?.attributes ?? {} };

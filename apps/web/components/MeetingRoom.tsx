@@ -20,6 +20,7 @@ import { MeetingContext } from "./MeetingContext";
 import { MoozTile } from "./MoozTile";
 import { NotesBanner } from "./NotesBanner";
 import { NotesPolicyToggle } from "./NotesPolicyToggle";
+import { TaskPanel } from "./TaskPanel";
 
 function Stage() {
   const tracks = useTracks(
@@ -81,7 +82,10 @@ export function MeetingRoom({ slug }: { slug: string }) {
             <div className="flex min-h-0 flex-col">
               <Stage />
             </div>
-            <ChatPanel />
+            <div className="flex min-h-0 flex-col border-t border-zinc-800 md:border-l md:border-t-0">
+              <TaskPanel />
+              <ChatPanel />
+            </div>
           </div>
           <ControlBar controls={{ chat: false }} />
           <RoomAudioRenderer />
