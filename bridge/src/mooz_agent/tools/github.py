@@ -28,6 +28,22 @@ _REPO = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]{1,100}$")
 _REF = re.compile(r"^(?!-)(?!.*\.\.)[A-Za-z0-9._/-]{1,200}$")
 
 
+_OPERATORS = frozenset({"AND", "OR", "NOT"})
+
+
+def _plain_words(query: str) -> str:
+    """Only plain words: search qualifiers (repo:, org:, in:…) and operators could widen a
+    search beyond the one repository it's for."""
+    words = []
+    for token in query.split():
+        if ":" in token:
+            continue
+        word = re.sub(r"[^\w.#+-]", "", token).lstrip("-")
+        if word and word.upper() not in _OPERATORS:
+            words.append(word)
+    return " ".join(words[:12])
+
+
 class GitHubError(FileAccessError):
     """A plain reason the agent couldn't read something on GitHub (never shows the token)."""
 
@@ -102,12 +118,16 @@ class GitHub:
 
     def issues(self, repo: str, state: str = "open", query: str | None = None) -> str:
         repo, state = valid_repo(repo), _state(state)
+        query = _plain_words(query or "")
         if query:
             q = f"repo:{repo} is:issue"
             if state != "all":
                 q += f" state:{state}"
             data = self._get("/search/issues", {"q": f"{q} {query}", "per_page": MAX_ITEMS})
-            items = data.get("items", [])
+            here = f"{API}/repos/{repo}".lower()
+            items = [
+                i for i in data.get("items", []) if str(i.get("repository_url", "")).lower() == here
+            ]
         else:
             data = self._get(f"/repos/{repo}/issues", {"state": state, "per_page": MAX_ITEMS})
             items = [i for i in data if "pull_request" not in i]  # this API lists PRs too

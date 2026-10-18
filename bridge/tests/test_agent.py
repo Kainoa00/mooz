@@ -38,12 +38,16 @@ class FakeRoom:
         self.on_notes_policy_changed = None
         self.on_signal = None
         self.replayed = False
+        self.speaking = False
         self.people: list[Speaker] = []
         self.replies: list[str | None] = []
         self.sources: list[frozenset[str]] = []
 
     def participants(self) -> list[Speaker]:
         return list(self.people)
+
+    def humans_speaking(self) -> bool:
+        return self.speaking
 
     async def send_chat(
         self,

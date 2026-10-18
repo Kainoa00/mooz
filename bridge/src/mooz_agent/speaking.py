@@ -32,9 +32,16 @@ class Mouth:
         chat: bool = True,
         reply_to: str | None = None,
         sources: frozenset[str] = frozenset(),
-    ) -> None:
-        """Post the answer to chat (unless `chat` is False), then speak its spoken part."""
+        only_if: Callable[[], bool] | None = None,
+    ) -> bool:
+        """Post the answer to chat (unless `chat` is False), then speak its spoken part.
+
+        `only_if` is checked once it's our turn to talk (we may have waited for our own
+        earlier answer); if it says no, nothing is sent and this returns False.
+        """
         async with self._floor:
+            if only_if is not None and not only_if():
+                return False
             first = True
 
             async def emit(frame: rtc.AudioFrame) -> None:
@@ -62,3 +69,4 @@ class Mouth:
             if resampler:
                 for out in resampler.flush():
                     await emit(out)
+        return True

@@ -61,5 +61,5 @@ async def test_github_and_web_search_come_from_the_agents_settings(
         _, _, a = build_providers(http=http, me=ME, config=plain)
         _, _, b = build_providers(http=http, me=ME, config=with_github)
     assert isinstance(a, ToolLoopBrain) and isinstance(b, ToolLoopBrain)
-    assert a.toolbox is not None and a.toolbox.github is None and a.web_search is True
+    assert a.toolbox is not None and a.toolbox.github is None and a.web_search is True  # Claude
     assert b.toolbox is not None and b.toolbox.github is not None and b.web_search is False

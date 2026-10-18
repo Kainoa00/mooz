@@ -59,10 +59,11 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         help="a folder (or github:owner/repo) anyone in the meeting may ask about",
     )
     init.add_argument(
-        "--no-web-search",
-        dest="web_search",
-        action="store_false",
-        help="don't let research tasks search the web",
+        "--web-search",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="let research tasks search the web (default: on for Claude; off for Grok, "
+        "whose search also opens web pages)",
     )
     init.add_argument("--force", action="store_true", help="replace an existing agent's settings")
 
@@ -139,7 +140,8 @@ def _print_sources(cfg: AgentConfig) -> None:
         print(f"  {s.label:<20} {'public ' if s.public else 'private'}  {s.path}")
     for g in cfg.github:
         print(f"  {g.label:<20} {'public ' if g.public else 'private'}  github:{g.repo}")
-    print(f"  Web search for research tasks: {'on' if cfg.web_search else 'off'}")
+    default = " (the default for this brain)" if cfg.web_search is None else ""
+    print(f"  Web search for research tasks: {'on' if cfg.searches_web else 'off'}{default}")
 
 
 def cmd_sources(args: argparse.Namespace) -> int:

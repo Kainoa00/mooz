@@ -27,6 +27,7 @@ def issue(number: int, title: str, **extra: object) -> dict[str, object]:
         "updated_at": "2026-10-17T10:00:00Z",
         "labels": [{"name": "bug"}],
         "html_url": f"https://github.com/{REPO}/issues/{number}",
+        "repository_url": f"{API}/repos/{REPO}",
         "body": "Steps to reproduce…",
         **extra,
     }
@@ -45,6 +46,18 @@ def test_lists_open_issues_without_pull_requests(gh: GitHub) -> None:
     request = route.calls.last.request
     assert request.headers["authorization"] == f"Bearer {TOKEN}"
     assert request.url.params["state"] == "open"
+
+
+@respx.mock
+def test_a_search_never_reaches_beyond_its_repository(gh: GitHub) -> None:
+    # Search qualifiers in the text would widen it to repos the asker can't see.
+    other = issue(9, "Layoff plan", repository_url=f"{API}/repos/acme/secret-plans")
+    route = respx.get(f"{API}/search/issues").respond(json={"items": [issue(7, "Login"), other]})
+
+    out = gh.issues(REPO, query='OR repo:acme/secret-plans "login" -label:bug org:acme AND')
+
+    assert route.calls.last.request.url.params["q"] == f"repo:{REPO} is:issue state:open login"
+    assert "#7" in out and "Layoff" not in out
 
 
 @respx.mock

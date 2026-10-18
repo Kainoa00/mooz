@@ -27,7 +27,16 @@ from .room import (
     TrackHandler,
 )
 from .speaking import Mouth
-from .tasks import Task, TaskCommand, TaskRefused, TaskRunner, describe_tasks, task_command
+from .tasks import (
+    Task,
+    TaskCommand,
+    TaskRefused,
+    TaskRunner,
+    describe_tasks,
+    is_private,
+    task_command,
+    without_private,
+)
 from .transcript import TranscriptBuffer, Utterance, render_line
 
 log = logging.getLogger(__name__)
@@ -44,6 +53,8 @@ NOTES_ON: dict[str, object] = {"type": "notes", "state": "on"}
 NOTES_OFF: dict[str, object] = {"type": "notes", "state": "off"}
 # Give someone who just joined a moment to start listening before telling them about notes.
 LATE_JOINER_DELAY = 1.0
+# However often someone asks (or rejoins), they get the full task list at most this often.
+TASK_LIST_INTERVAL = 2.0
 # A finished task is reported by voice once nobody has spoken for this long, waiting at most
 # REPORT_WAIT_SECONDS (the chat already has the result, so after that the voice is skipped).
 QUIET_SECONDS = 2.5
@@ -71,6 +82,7 @@ class AgentRoom(Protocol):
     on_signal: SignalHandler | None
 
     def participants(self) -> list[Speaker]: ...
+    def humans_speaking(self) -> bool: ...
     def send_chat(
         self,
         text: str,
@@ -144,6 +156,10 @@ class Agent:
         self.quiet_seconds = QUIET_SECONDS
         self.report_wait_seconds = REPORT_WAIT_SECONDS
         self._last_voice = float("-inf")
+        self.task_list_interval = TASK_LIST_INTERVAL
+        self._task_list_due: dict[str, float] = {}  # identity -> when they may get it again
+        self._task_list_pending: set[str] = set()
+        self._closing = False
 
     def wire(self) -> None:
         self.room.on_human_track = lambda speaker, track: self.listener.attach(
@@ -165,6 +181,8 @@ class Agent:
         )
 
     def on_utterance(self, u: Utterance) -> None:
+        if self._closing:
+            return
         heard_at = self._clock()
         if u.speaker.kind == "human" and u.via == "voice":
             self._last_voice = heard_at
@@ -223,16 +241,24 @@ class Agent:
         if command is not None:
             await self._say(await self._notes_command(asker, command), heard_at, asker)
             return
+        # "…privately", "just for me", "DM me": the owner's answer goes only to them.
+        private = self._is_owner(asker) and is_private(question)
         task = task_command(question)
+        sources: frozenset[str] = frozenset()
         if task is not None:
-            await self._say(self._task_command(asker, task), heard_at, asker)
-            return
-        transcript, sources = self._snapshot()
-        try:
-            answer = await self.brain.answer(question=question, asker=asker, transcript=transcript)
-        except BrainError:
-            answer = APOLOGY
-        await self._say(answer, heard_at, asker, sources)
+            reply = self._task_command(asker, task, private=private)
+        else:
+            transcript, sources = self._snapshot()
+            try:
+                reply = await self.brain.answer(
+                    question=question, asker=asker, transcript=transcript
+                )
+            except BrainError:
+                reply = APOLOGY
+        if private:
+            await self._say_privately(reply, asker)
+        else:
+            await self._say(reply, heard_at, asker, sources)
 
     async def _filler(self) -> None:
         try:
@@ -291,6 +317,14 @@ class Agent:
             )
             self.transcript.add(said)
             self._note(said)
+
+    async def _say_privately(self, answer: Answer, asker: Speaker) -> None:
+        """A direct chat message to the asker: never spoken, never in the transcript or notes."""
+        text = answer.spoken if not answer.details else f"{answer.spoken}\n\n{answer.details}"
+        try:
+            await self.room.send_chat(f"🔒 {text}", reply_to=asker.identity, to=[asker.identity])
+        except Exception:
+            log.exception("could not send a private answer")
 
     # -- meeting notes -------------------------------------------------------------
 
@@ -398,15 +432,27 @@ class Agent:
             return
         if self._notes_on():
             self._spawn(self._tell_late_joiner(speaker.identity))
-        if self.tasks is not None and self.tasks.tasks:
-            # Their own tasks? query may have come before we saw them join, and been dropped.
-            self._spawn(self._tell_late_joiner_tasks(speaker.identity))
+        # Their own tasks? query may have come before we saw them join, and been dropped.
+        self._offer_task_list(speaker.identity, delay=self.late_joiner_delay)
 
-    async def _tell_late_joiner_tasks(self, identity: str) -> None:
-        await asyncio.sleep(self.late_joiner_delay)
+    def _offer_task_list(self, identity: str, delay: float = 0.0) -> None:
+        """Send someone every task: at most once per interval however often they ask."""
+        if self.tasks is None or not self.tasks.tasks or identity in self._task_list_pending:
+            return
+        self._task_list_pending.add(identity)
+        self._spawn(self._send_task_list(identity, delay))
+
+    async def _send_task_list(self, identity: str, delay: float) -> None:
         assert self.tasks is not None
-        for task in self.tasks.tasks:
-            await self._send_task_event(task, identity)
+        try:
+            wait = max(delay, self._task_list_due.get(identity, float("-inf")) - self._clock())
+            if wait > 0:
+                await asyncio.sleep(wait)
+            for task in list(self.tasks.tasks):
+                await self._send_task_event(task, identity)
+        finally:
+            self._task_list_pending.discard(identity)
+            self._task_list_due[identity] = self._clock() + self.task_list_interval
 
     async def _tell_late_joiner(self, identity: str) -> None:
         await asyncio.sleep(self.late_joiner_delay)
@@ -419,16 +465,15 @@ class Agent:
             self._told.add(identity)
 
     def _on_signal(self, speaker: Speaker, message: dict[str, object]) -> None:
-        if speaker.kind != "human":
+        if speaker.kind != "human" or self._closing:
             return
         kind = message.get("type")
         # A browser that (re)connected asks every agent whether it is keeping notes,
         # and what it is working on.
         if kind == "notes?":
             self._spawn(self._answer_notes_query(speaker.identity))
-        elif kind == "tasks?" and self.tasks is not None:
-            for task in self.tasks.tasks:
-                self._spawn(self._send_task_event(task, speaker.identity))
+        elif kind == "tasks?":
+            self._offer_task_list(speaker.identity)
         elif kind == "task.cancel" and self.tasks is not None and self._is_owner(speaker):
             task_id = message.get("id")
             if isinstance(task_id, str):
@@ -458,14 +503,19 @@ class Agent:
     def _is_owner(self, speaker: Speaker) -> bool:
         return self.me.owner_identity is not None and speaker.identity == self.me.owner_identity
 
-    def _task_command(self, asker: Speaker, command: TaskCommand) -> Answer:
+    def _task_command(self, asker: Speaker, command: TaskCommand, *, private: bool) -> Answer:
+        """`private`: the reply goes only to the owner, so it may name their private tasks."""
         owner = self.me.owner_name or "my owner"
         if self.tasks is None:
             return Answer("I can't do background research with this setup.")
         if command.kind == "status":
-            text = describe_tasks(
-                self.tasks.tasks, now=time.time(), for_owner=self._is_owner(asker)
-            )
+            text = describe_tasks(self.tasks.tasks, now=time.time(), show_private=private)
+            if (
+                not private
+                and self._is_owner(asker)
+                and any(t.private and t.active for t in self.tasks.tasks)
+            ):
+                text += " Ask me privately to hear about your private tasks."
             return Answer(text)
         if command.kind == "cancel":
             if not self._is_owner(asker):
@@ -500,12 +550,13 @@ class Agent:
         """The owner's question ran out of the spoken budget: keep going in the background."""
         if self.tasks is None:
             return "That needs more time than I have right now."
-        title = question.strip()
+        title = without_private(question).rstrip(",;: ").strip() or question.strip()
         transcript, sources = self._snapshot()
         try:
             self.tasks.start(
                 title=(title[:1].upper() + title[1:])[:120],
                 owner=asker.identity,
+                private=is_private(question),  # only the owner's questions overflow
                 context=found,
                 transcript=transcript,
                 sources=sources,
@@ -517,28 +568,41 @@ class Agent:
     async def _do_task(self, task: Task, progress: Callable[[str], None]) -> Answer:
         assert isinstance(self.brain, ToolLoopBrain)
         return await self.brain.research(
-            title=task.title, context=task.context, transcript=task.transcript, progress=progress
+            title=task.title,
+            context=task.context,
+            transcript=task.transcript,
+            progress=progress,
+            private=task.private,
         )
 
     def _task_event(self, task: Task) -> None:
-        self._spawn(self._send_task_event(task))
+        # Built now: by the time it's sent the task may have moved on.
+        events = (task.event(for_owner=True), task.event(for_owner=False))
+        self._spawn(self._send_task_event(task, events=events))
 
-    async def _send_task_event(self, task: Task, to: str | None = None) -> None:
+    async def _send_task_event(
+        self,
+        task: Task,
+        to: str | None = None,
+        *,
+        events: tuple[dict[str, object], dict[str, object]] | None = None,
+    ) -> None:
         """Everyone sees what agents are working on; a private task's details only its owner."""
+        full, redacted = events or (task.event(for_owner=True), task.event(for_owner=False))
         try:
             if to is not None:
-                await self.room.send_task_event(task.event(for_owner=to == task.owner), [to])
+                await self.room.send_task_event(full if to == task.owner else redacted, [to])
             elif not task.private:
-                await self.room.send_task_event(task.event(for_owner=True))
+                await self.room.send_task_event(full)
             else:
-                await self.room.send_task_event(task.event(for_owner=True), [task.owner])
+                await self.room.send_task_event(full, [task.owner])
                 others = [
                     p.identity
                     for p in self.room.participants()
                     if p.kind == "human" and p.identity != task.owner
                 ]
                 if others:
-                    await self.room.send_task_event(task.event(for_owner=False), others)
+                    await self.room.send_task_event(redacted, others)
         except Exception:
             log.exception("could not send a task update")
 
@@ -584,23 +648,30 @@ class Agent:
         )
         self.transcript.add(line)
         self._note(line)
-        if await self._wait_for_quiet():
+        deadline = self._clock() + self.report_wait_seconds
+        while await self._wait_for_quiet(deadline):
             try:
-                await self.mouth.say(Answer(spoken), chat=False)
+                # Quiet again by the time it's our turn (we may have been answering someone)?
+                if await self.mouth.say(Answer(spoken), chat=False, only_if=self._quiet):
+                    return
             except asyncio.CancelledError:
                 raise
             except Exception:
                 log.exception("could not say the task result")
+                return
 
-    async def _wait_for_quiet(self) -> bool:
+    def _quiet(self) -> bool:
+        """Nobody is talking: no one mid-sentence, and no one has finished one just now."""
+        recently = self._clock() - self._last_voice < self.quiet_seconds
+        return not recently and not self.room.humans_speaking()
+
+    async def _wait_for_quiet(self, deadline: float) -> bool:
         step = max(0.01, min(0.25, self.quiet_seconds / 2))
-        waited = 0.0
-        while waited < self.report_wait_seconds:
-            if self._clock() - self._last_voice >= self.quiet_seconds:
-                return True
+        while not self._quiet():
+            if self._clock() >= deadline:
+                return False
             await asyncio.sleep(step)
-            waited += step
-        return False
+        return True
 
     def _spawn(self, coro: Awaitable[None]) -> None:
         task: asyncio.Task[None] = asyncio.ensure_future(coro)
@@ -619,29 +690,41 @@ class Agent:
             # Awaiting finished tasks doesn't yield, so let their done callbacks run.
             await asyncio.sleep(0)
 
-    async def aclose(self) -> None:
-        if self.tasks is not None:
-            working = [t for t in self.tasks.tasks if t.state == "working"]
-            if working:
-                log.warning(
-                    "finishing %d research task(s) before leaving (Ctrl-C to stop now)",
-                    len(working),
-                )
-            # Working tasks finish within their own budget and are saved to memory.
-            await self.tasks.finish_up()
-        for task in list(self._tasks):
-            task.cancel()
-        await asyncio.gather(*list(self._tasks), return_exceptions=True)
+    async def aclose(self, *, finish_tasks: bool = False) -> None:
+        """Leave: stop listening and answering, save the notes, then end the tasks.
+
+        `finish_tasks`: the meeting ended, so working tasks finish (within their own budget)
+        and are saved to memory first. Otherwise (Ctrl-C) they stop at once.
+        """
+        self._closing = True
+        await self.listener.aclose()
+        await self._cancel_spawned()
         if self._notes_timer:
             self._notes_timer.cancel()
         if self.notes is not None and (self.notes.active or self.notes.unsaved):
-            # The meeting ended for us: save what's left, including a stop that was cut
-            # short (the room may already be gone).
+            # Save what's left, including a stop that was cut short (the room may be gone).
             try:
                 await self.notes.stop()
             except Exception:
                 log.exception("could not save meeting notes at the end of the meeting")
-        await self.listener.aclose()
+        if self.tasks is None:
+            return
+        try:
+            working = [t for t in self.tasks.tasks if t.state == "working"]
+            if finish_tasks and working:
+                log.warning(
+                    "finishing %d research task(s) before leaving (Ctrl-C to stop now)",
+                    len(working),
+                )
+                await self.tasks.finish_up()
+        finally:
+            await self.tasks.aclose()  # anything left (or a second Ctrl-C): stop now
+            await self._cancel_spawned()  # reports of what just finished: it's in memory
+
+    async def _cancel_spawned(self) -> None:
+        for task in list(self._tasks):
+            task.cancel()
+        await asyncio.gather(*list(self._tasks), return_exceptions=True)
 
 
 async def run(grant: AgentGrant, config: AgentConfig) -> None:
@@ -653,6 +736,7 @@ async def run(grant: AgentGrant, config: AgentConfig) -> None:
 
     room = MeetingRoom()
     agent: Agent | None = None
+    ended = False
     async with aiohttp.ClientSession() as http:
         try:
             try:
@@ -666,7 +750,9 @@ async def run(grant: AgentGrant, config: AgentConfig) -> None:
             agent.wire()
             await room.wait_closed()
             log.info("left the meeting")
+            ended = True
         finally:
             if agent:
-                await agent.aclose()
+                # The meeting ending lets research finish; Ctrl-C (cancelled) stops it now.
+                await agent.aclose(finish_tasks=ended)
             await room.disconnect()

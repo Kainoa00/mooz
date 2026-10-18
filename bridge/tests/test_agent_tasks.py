@@ -48,6 +48,9 @@ class TasksRoom(NotesRoom):
     def events_for(self, identity: str) -> list[dict[str, object]]:
         return [m for m, to in self.task_events if to is None or identity in to]
 
+    def events_for_only(self, identity: str) -> list[dict[str, object]]:
+        return [m for m, to in self.task_events if to == [identity]]
+
 
 @pytest.fixture
 def setup(
@@ -71,6 +74,7 @@ def setup(
     room, tts = TasksRoom(), FakeTTS()
     agent = Agent(room=room, stt=FakeSTT({}), tts=tts, brain=brain)  # type: ignore[arg-type]
     agent.late_joiner_delay = 0
+    agent.task_list_interval = 0
     agent.quiet_seconds = 0.05
     agent.wire()
     return room, agent, tts, memory
@@ -128,19 +132,31 @@ async def test_it_keeps_answering_while_a_task_runs(setup) -> None:  # type: ign
     await agent.aclose()
 
 
-async def test_the_spoken_report_waits_for_a_pause(setup) -> None:  # type: ignore[no-untyped-def]
+async def test_the_spoken_report_waits_while_someone_is_talking(setup) -> None:  # type: ignore[no-untyped-def]
     room, agent, tts, _ = setup
-    agent.quiet_seconds = 0.2
+    room.speaking = True  # someone is mid-sentence (no transcript line yet)
     hear(agent, KAI, "Atlas, look into the launch")
     await agent.idle()
     assert agent.tasks is not None
     await agent.tasks.idle()
-    for _ in range(4):  # people keep talking for a while
-        hear(agent, ZACH, "so anyway, about the budget")
-        await asyncio.sleep(0.05)
-    assert not any(s.startswith("Kainoa, about") for s in tts.spoken)
+    await asyncio.sleep(0.3)
     assert any(m.startswith("📋") for m in room.sent)  # chat already has it
-    await asyncio.sleep(0.4)
+    assert not any(s.startswith("Kainoa, about") for s in tts.spoken)
+    room.speaking = False
+    await agent.idle()
+    assert any(s.startswith("Kainoa, about") for s in tts.spoken)
+
+
+async def test_the_spoken_report_waits_for_a_pause_after_someone_spoke(setup) -> None:  # type: ignore[no-untyped-def]
+    _, agent, tts, _ = setup
+    agent.quiet_seconds = 60.0  # Kainoa just spoke, and that counts for a minute
+    hear(agent, KAI, "Atlas, look into the launch")
+    await agent.idle()
+    assert agent.tasks is not None
+    await agent.tasks.idle()
+    await asyncio.sleep(0.2)
+    assert not any(s.startswith("Kainoa, about") for s in tts.spoken)
+    agent.quiet_seconds = 0.01
     await agent.idle()
     assert any(s.startswith("Kainoa, about") for s in tts.spoken)
 
@@ -191,9 +207,15 @@ async def test_status_questions_and_late_joiners(setup) -> None:  # type: ignore
     await agent.idle()
     assert "Look into the launch slowly" in room.sent[-1] and "budget" not in room.sent[-1]
     assert "private task" in room.sent[-1]
+    # Said to the room, even the owner's status keeps private tasks private...
     hear(agent, KAI, "Atlas, what are you working on?")
     await agent.idle()
-    assert "Investigate the budget slowly" in room.sent[-1]
+    assert "budget" not in room.sent[-1] and "Ask me privately" in room.sent[-1]
+    # ...and asked privately, the details go only to them.
+    hear(agent, KAI, "Atlas, what are you working on, privately?")
+    await agent.idle()
+    assert "Investigate the budget slowly" in room.sent[-1] and room.sent[-1].startswith("🔒")
+    assert room.chat_to[-1] == [KAI.identity]
 
     room.task_events.clear()
     assert room.on_signal is not None
@@ -238,8 +260,72 @@ async def test_the_meeting_ending_finishes_and_saves_the_work(setup) -> None:  #
     _, agent, _, memory = setup
     hear(agent, KAI, "Atlas, look into the launch slowly")
     await agent.idle()
-    await agent.aclose()
+    await agent.aclose(finish_tasks=True)
     assert any(TASK_RESULT_TAG in n.tags and "March 30th" in n.text for n in memory.all(owner=True))
+
+
+async def test_ctrl_c_stops_at_once_and_still_saves_the_notes(  # type: ignore[no-untyped-def]
+    setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    room, agent, _, memory = setup
+    monkeypatch.setattr(fakes, "SLOW_SECONDS", 30.0)
+    hear(agent, KAI, "Atlas, keep notes")
+    await agent.idle()
+    hear(agent, ZACH, "the launch moves to April")
+    hear(agent, KAI, "Atlas, look into the launch slowly")
+    await agent.idle()
+    assert agent.tasks is not None and agent.tasks.latest_active() is not None
+
+    await asyncio.wait_for(agent.aclose(), 2)  # doesn't wait out the 30-second task
+
+    assert agent.tasks.latest_active() is None
+    assert any(NOTES_TAG in n.tags and "April" in n.text for n in memory.all(owner=True))
+    sent = len(room.sent)
+    hear(agent, KAI, "Atlas, what is 2+2?")  # leaving: no more answers
+    await agent.idle()
+    assert len(room.sent) == sent
+
+
+async def test_a_private_question_is_answered_only_to_the_owner(setup) -> None:  # type: ignore[no-untyped-def]
+    room, agent, tts, _ = setup
+    hear(agent, KAI, "Atlas, privately, what is 2+2?")
+    await agent.idle()
+    assert room.sent[-1].startswith("🔒") and room.chat_to[-1] == [KAI.identity]
+    assert tts.spoken == []  # never out loud
+    rendered = agent.transcript.render()
+    assert "You asked" not in rendered  # nor in the transcript later answers and notes use
+
+    hear(agent, ZACH, "Atlas, privately, what is 2+2?")  # guests only ever get public answers
+    await agent.idle()
+    assert room.chat_to[-1] is None
+
+
+async def test_an_overflowing_private_question_stays_private(setup) -> None:  # type: ignore[no-untyped-def]
+    _, agent, _, _ = setup
+    brain = agent.brain
+    assert isinstance(brain, ToolLoopBrain) and brain.on_overflow is not None
+    brain.on_overflow("when is the launch? just for me", KAI, "")
+    await finish(agent)
+    assert agent.tasks is not None
+    [task] = agent.tasks.tasks
+    assert task.private and task.title == "When is the launch?"
+
+
+async def test_task_lists_go_out_at_most_once_per_interval(setup) -> None:  # type: ignore[no-untyped-def]
+    room, agent, _, _ = setup
+    agent.task_list_interval = 0.3
+    hear(agent, KAI, "Atlas, look into the launch slowly")
+    await agent.idle()
+    room.task_events.clear()
+    assert room.on_signal is not None
+    for _ in range(20):
+        room.on_signal(LEE, {"type": "tasks?"})
+    await agent.idle()
+    assert len(room.events_for_only(LEE.identity)) == 1
+    room.on_signal(LEE, {"type": "tasks?"})  # too soon: it waits, but still comes
+    await agent.idle()
+    assert len(room.events_for_only(LEE.identity)) == 2
+    await agent.aclose()
 
 
 async def test_notes_opt_outs_cover_task_reports(setup) -> None:  # type: ignore[no-untyped-def]

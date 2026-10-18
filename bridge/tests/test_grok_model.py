@@ -266,6 +266,7 @@ async def test_if_xai_rejects_web_search_with_functions_it_carries_on_without() 
     await conv.send("again")
 
     assert turn.answer is not None and turn.answer.details == "Found it."
+    assert turn.notices and "carrying on without it" in turn.notices[0]  # said in progress
     assert {"type": "web_search"} in client.calls[0]["tools"]
     assert {"type": "web_search"} not in client.calls[1]["tools"]
     assert {"type": "web_search"} not in client.calls[2]["tools"]

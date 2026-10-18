@@ -13,6 +13,7 @@ import secrets
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Literal
 
 from .providers.base import Answer, BrainError
@@ -40,19 +41,42 @@ class TaskCommand:
     private: bool = False
 
 
-_POLITE = re.compile(r"^(?:(?:please|can you|could you|would you|will you)\s+)+", re.I)
+_POLITE = re.compile(
+    r"^(?:(?:please|can you|could you|would you|will you|i need you to|i want you to|"
+    r"i'd like you to|go ahead and|privately)[\s,]+)+",
+    re.I,
+)
 _START = re.compile(r"^(look into|research|dig into|investigate|find out|figure out)\s+\S", re.I)
+# However the owner asks for the answer to stay with them, anywhere in what they say.
 _PRIVATE = re.compile(
-    r"[,\s]*\b(?:and tell me privately|privately|in private|just for me|only for me)\b", re.I
+    r"[,:\s]*\b(?:"
+    r"(?:and\s+)?(?:tell|send|give)\s+(?:it\s+|that\s+|this\s+)?(?:to\s+)?me\s+privately"
+    r"|(?:and\s+)?(?:tell|send|give)\s+(?:it|that|this)\s+(?:just|only)\s+to\s+me"
+    r"|(?:just|only)\s+(?:tell|for|to)\s+me"
+    r"|privately|in\s+private|keep\s+(?:it|this|that)\s+private"
+    r"|dm\s+me|direct\s+message\s+me|message\s+me\s+privately"
+    r")\b[,:]?",
+    re.I,
 )
 _STATUS = re.compile(
     r"^(?:how(?:'s| is) (?:it|that|the research|the task) going|what are you working on|"
     r"status|any progress|are you done(?: yet)?)$"
 )
+# Not "never mind": people say it to a "Yes?", and it shouldn't stop a long task.
 _CANCEL = re.compile(
-    r"^(?:stop that|cancel that|cancel it|never ?mind|forget it|"
-    r"(?:stop|cancel) (?:the )?(?:task|research|researching))$"
+    r"^(?:stop that|cancel that|cancel it|"
+    r"(?:stop|cancel) (?:the |that |your )?(?:task|research|researching))$"
 )
+
+
+def is_private(text: str) -> bool:
+    """Whether the owner asked for the answer to reach only them."""
+    return bool(_PRIVATE.search(text))
+
+
+def without_private(text: str) -> str:
+    """The request without its "privately", "just for me" and the like."""
+    return _PRIVATE.sub("", text).strip()
 
 
 def _normalized(text: str) -> str:
@@ -61,7 +85,7 @@ def _normalized(text: str) -> str:
 
 def task_command(text: str) -> TaskCommand | None:
     """Start, status or cancel, from what the owner said to the agent (or None)."""
-    phrase = _normalized(text)
+    phrase = _normalized(without_private(text))
     if _STATUS.match(phrase):
         return TaskCommand("status")
     if _CANCEL.match(phrase):
@@ -69,10 +93,9 @@ def task_command(text: str) -> TaskCommand | None:
     request = _POLITE.sub("", text.strip())
     if not _START.match(request):
         return None
-    private = bool(_PRIVATE.search(request))
     topic = _PRIVATE.sub("", request).strip().rstrip("?.!,;: ").strip()
     topic = topic[:1].upper() + topic[1:]
-    return TaskCommand("start", topic[:MAX_TITLE_CHARS].rstrip(), private)
+    return TaskCommand("start", topic[:MAX_TITLE_CHARS].rstrip(), is_private(text))
 
 
 # -- tasks -----------------------------------------------------------------------------
@@ -217,11 +240,20 @@ class TaskRunner:
     def _pump(self) -> None:
         while self._queue and len(self._running) < self.max_running:
             task = self._queue.pop(0)
-            self._running[task.id] = asyncio.ensure_future(self._run(task))
+            task.state, task.started_at = "working", self._clock()
+            running = asyncio.ensure_future(self._run(task))
+            self._running[task.id] = running
+            # Clean up here, not in _run: cancelled before its first step, _run never starts.
+            running.add_done_callback(partial(self._done, task))
+            self._emit(task)
+
+    def _done(self, task: Task, _running: asyncio.Task[None]) -> None:
+        self._running.pop(task.id, None)
+        if task.finished_at is None:
+            self._end(task, "cancelled")
+        self._pump()
 
     async def _run(self, task: Task) -> None:
-        task.state, task.started_at = "working", self._clock()
-        self._emit(task)
         try:
             async with asyncio.timeout(self.time_budget):
                 task.result = await self._work(task, lambda line: self.progress(task, line))
@@ -237,9 +269,6 @@ class TaskRunner:
         except Exception:
             log.exception("task %s failed", task.id)
             self._end(task, "failed", "I couldn't finish that one because something went wrong.")
-        finally:
-            self._running.pop(task.id, None)
-            self._pump()
 
     def _end(self, task: Task, state: TaskState, error: str | None = None) -> None:
         task.state, task.error, task.finished_at = state, error, self._clock()
@@ -290,21 +319,25 @@ def _minutes(seconds: float) -> str:
     return f"{minutes} minute{'s' if minutes != 1 else ''}"
 
 
-def describe_tasks(tasks: list[Task], *, now: float, for_owner: bool = True) -> str:
-    """A spoken status report from task state (no model call). Others hear "a private task"."""
+def describe_tasks(tasks: list[Task], *, now: float, show_private: bool = False) -> str:
+    """A status report from task state (no model call).
+
+    Private tasks are only "a private task" unless `show_private`: the answer reaches only
+    the owner.
+    """
     working = [t for t in tasks if t.state == "working"]
     queued = [t for t in tasks if t.state == "queued"]
     if not working and not queued:
         return "I'm not working on anything right now."
 
     def name(t: Task) -> str:
-        return "a private task" if t.private and not for_owner else f"'{t.title}'"
+        return "a private task" if t.private and not show_private else f"'{t.title}'"
 
     parts = []
     for t in working:
         started = t.started_at if t.started_at is not None else now
         line = f"I'm on {name(t)}, {_minutes(now - started)} in"
-        if t.progress and (for_owner or not t.private):
+        if t.progress and (show_private or not t.private):
             line += f"; last step: {t.progress[-1]}"
         parts.append(line + ".")
     if queued:

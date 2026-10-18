@@ -84,6 +84,24 @@ def _bool(args: dict[str, Any], key: str) -> bool:
     return value
 
 
+# What everyone sees of a step on a private source (or on memory).
+_PRIVATE_STEPS = {
+    "list_files": "Looking through private files",
+    "read_file": "Reading a private file",
+    "search": "Searching private files",
+    "git_status": "Checking a private repository",
+    "git_log": "Reading a private repository's history",
+    "git_show": "Reading a private repository's history",
+    "git_diff": "Comparing changes in a private repository",
+    "github_issues": "Checking a private GitHub repository",
+    "github_issue": "Checking a private GitHub repository",
+    "github_pulls": "Checking a private GitHub repository",
+    "github_pull": "Checking a private GitHub repository",
+    "github_ci": "Checking CI in a private GitHub repository",
+    "recall": "Checking my memory",
+}
+
+
 class ToolBox:
     def __init__(
         self,
@@ -269,7 +287,11 @@ class ToolBox:
 
     # -- describing a call (task progress, built from the arguments, never model prose) -
 
-    def describe(self, name: str, args: dict[str, Any]) -> str:
+    def describe(self, name: str, args: dict[str, Any], *, public: bool = False) -> str:
+        """`public`: everyone in the meeting sees it, so private sources go unnamed."""
+        if public and not self._names_public_source(name, args):
+            return _PRIVATE_STEPS.get(name, "Working")
+
         def arg(key: str, default: str = "") -> str:
             value = args.get(key)
             text = value if isinstance(value, str) and value.strip() else default
@@ -299,6 +321,15 @@ class ToolBox:
         }
         describe = descriptions.get(name)
         return describe() if describe else "Working"
+
+    def _names_public_source(self, name: str, args: dict[str, Any]) -> bool:
+        if name in ("recall", "remember", "forget"):
+            return False  # memory may be private
+        source = args.get("source")
+        public = {s.label for s in self.config.sources if s.public} | {
+            g.label for g in self.config.github if g.public
+        }
+        return isinstance(source, str) and source in public
 
     # -- running a call ------------------------------------------------------------
 

@@ -36,9 +36,20 @@ class Block:
 
 
 @dataclass
+class ServerToolUsage:
+    web_search_requests: int = 0
+
+
+@dataclass
+class Usage:
+    server_tool_use: ServerToolUsage | None = None
+
+
+@dataclass
 class Response:
     content: list[Block]
     stop_reason: str = "end_turn"
+    usage: Usage | None = None
 
 
 class FakeClient:
@@ -260,6 +271,61 @@ async def test_a_search_still_waiting_to_run_keeps_its_tool() -> None:
 
     assert [t["max_uses"] for t in web_tools(client.calls[1])] == [1]
     assert web_tools(client.calls[2]) == []
+
+
+async def test_a_pause_that_spends_the_budget_keeps_the_tool_to_finish_its_turn() -> None:
+    # The API rejects a continuation without the tools of the request it continues.
+    paused = searched("s1", "s2", "s3", "s4", "s5")
+    paused.stop_reason = "pause_turn"
+    client = FakeClient(paused, Response([Block("text", text="done")]), searched())
+    conv = ClaudeModel(client=client).conversation(
+        system="S", tools=[READ], mode="research", web_search=True
+    )
+    await conv.send("x")
+    await conv.send("more")
+
+    assert [t["max_uses"] for t in web_tools(client.calls[1])] == [1]
+    assert web_tools(client.calls[2]) == []
+
+
+async def test_a_dynamic_filtering_step_still_running_keeps_the_tool() -> None:
+    # web_search_20260209 searches from code execution; an unfinished one is still in flight.
+    running = Block("server_tool_use", id="x1", name="code_execution", input={"code": "..."})
+    used_up = searched("s1", "s2", "s3", "s4", "s5")
+    used_up.content.insert(0, running)
+    client = FakeClient(used_up, searched())
+    conv = ClaudeModel(client=client).conversation(
+        system="S", tools=[READ], mode="research", web_search=True
+    )
+    turn = await conv.send("x")
+    await conv.send_results([(turn.calls[0], ToolResult("ok"))])
+    assert [t["max_uses"] for t in web_tools(client.calls[1])] == [1]
+
+
+async def test_searches_are_counted_as_billed() -> None:
+    billed = searched("s1")
+    billed.usage = Usage(ServerToolUsage(web_search_requests=4))  # e.g. inside code execution
+    client = FakeClient(billed, searched())
+    conv = ClaudeModel(client=client).conversation(
+        system="S", tools=[READ], mode="research", web_search=True
+    )
+    turn = await conv.send("x")
+    await conv.send_results([(turn.calls[0], ToolResult("ok"))])
+    assert [t["max_uses"] for t in web_tools(client.calls[1])] == [1]
+
+
+async def test_it_resumes_up_to_five_pauses() -> None:
+    paused = Response(
+        [
+            Block("server_tool_use", id="s", name="web_search", input={"query": "q"}),
+            Block("web_search_tool_result", tool_use_id="s"),
+        ],
+        stop_reason="pause_turn",
+    )
+    client = FakeClient(*[paused] * 5, Response([Block("text", text="done")]))
+    conv = ClaudeModel(client=client).conversation(system="S", tools=[READ], mode="research")
+    turn = await conv.send("x")
+    assert turn.answer is not None and len(client.calls) == 6
 
 
 async def test_endless_pausing_is_an_error() -> None:

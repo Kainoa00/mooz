@@ -65,7 +65,7 @@ def build_brain(model: Model, me: Speaker, config: AgentConfig) -> ToolLoopBrain
         owner_identity=me.owner_identity,
         toolbox=ToolBox(config, memory, owner_name=owner_name, github=github),
         memory=memory,
-        web_search=config.web_search,
+        web_search=config.searches_web,
     )
 
 

@@ -91,6 +91,7 @@ class MeetingRoom:
         self.on_notes_policy_changed: Callable[[], None] | None = None
         self.on_signal: SignalHandler | None = None
         self._opted_out: set[str] = set()
+        self._speaking: set[str] = set()  # people talking right now (LiveKit's active speakers)
         self._closed = asyncio.Event()
         self._audio_sid: dict[str, str] = {}
         self._alone_timer: asyncio.TimerHandle | None = None
@@ -112,6 +113,7 @@ class MeetingRoom:
         self._room.on("participant_attributes_changed", self._handle_attributes_changed)
         self._room.on("room_metadata_changed", self._handle_metadata_changed)
         self._room.on("data_received", self._handle_data)
+        self._room.on("active_speakers_changed", self._handle_active_speakers)
         self._room.register_text_stream_handler(CHAT_TOPIC, self._handle_chat_stream)
         await self._room.connect(url, token, rtc.RoomOptions(auto_subscribe=True))
         for participant in self._room.remote_participants.values():
@@ -128,6 +130,15 @@ class MeetingRoom:
                 track = publication.track
                 if publication.subscribed and track is not None:
                     self._handle_track_subscribed(track, publication, participant)
+
+    def humans_speaking(self) -> bool:
+        """Whether a person is talking right now, mid-sentence included."""
+        return bool(self._speaking)
+
+    def _handle_active_speakers(self, speakers: list[rtc.Participant]) -> None:
+        self._speaking = {
+            p.identity for p in speakers if speaker_from_participant(p).kind == "human"
+        }
 
     # -- meeting notes consent (set only by the mooz server) ----------------------
 

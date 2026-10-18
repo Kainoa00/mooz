@@ -10,6 +10,7 @@ from mooz_agent.tasks import (
     TaskRefused,
     TaskRunner,
     describe_tasks,
+    is_private,
     task_command,
 )
 
@@ -34,13 +35,40 @@ pytestmark = pytest.mark.unit
             TaskCommand("start", "Find out who owns billing", private=True),
         ),
         ("figure out the deploy steps", TaskCommand("start", "Figure out the deploy steps")),
+        # However the owner asks for privacy, the task stays private.
+        (
+            "Can you privately research the layoffs list?",
+            TaskCommand("start", "Research the layoffs list", private=True),
+        ),
+        (
+            "privately look into the layoffs list",
+            TaskCommand("start", "Look into the layoffs list", private=True),
+        ),
+        (
+            "Please, research the layoffs list privately",
+            TaskCommand("start", "Research the layoffs list", private=True),
+        ),
+        (
+            "I need you to research the layoffs list, only tell me",
+            TaskCommand("start", "Research the layoffs list", private=True),
+        ),
+        (
+            "go ahead and dig into the offer letters, DM me",
+            TaskCommand("start", "Dig into the offer letters", private=True),
+        ),
+        (
+            "look into the salaries and send it just to me",
+            TaskCommand("start", "Look into the salaries", private=True),
+        ),
         ("research", None),
         ("how's it going?", TaskCommand("status")),
         ("what are you working on", TaskCommand("status")),
         ("Any progress?", TaskCommand("status")),
         ("stop that", TaskCommand("cancel")),
         ("cancel the research", TaskCommand("cancel")),
-        ("never mind", TaskCommand("cancel")),
+        ("never mind", None),
+        ("forget it", None),
+        ("stop your research", TaskCommand("cancel")),
         ("what is 2+2", None),
         ("keep notes", None),
         ("forget m_1234abcd", None),
@@ -48,6 +76,23 @@ pytestmark = pytest.mark.unit
 )
 def test_recognizes_task_commands(text: str, command: TaskCommand | None) -> None:
     assert task_command(text) == command
+
+
+@pytest.mark.parametrize(
+    ("text", "private"),
+    [
+        ("privately, what's in plan.md?", True),
+        ("what's in plan.md? only tell me", True),
+        ("read me the offer letter, just for me", True),
+        ("DM me the budget", True),
+        ("keep this private: what did legal say?", True),
+        ("what's in plan.md?", False),
+        ("tell me about the private beta", False),
+        ("who is the dm on this project", False),
+    ],
+)
+def test_private_requests_are_recognized_anywhere(text: str, private: bool) -> None:
+    assert is_private(text) is private
 
 
 def test_titles_are_short() -> None:
@@ -208,6 +253,32 @@ async def test_aclose_cancels_everything() -> None:
     assert task.state == "cancelled"
 
 
+async def test_a_task_cancelled_before_its_first_step_frees_its_slot() -> None:
+    # A gets the only slot; when it finishes, B gets it, and B is cancelled in that same
+    # moment (before it ever starts). C must still run.
+    work = Work()
+    runner: TaskRunner
+    seen: list[tuple[str, str]] = []
+
+    def on_event(task: Task) -> None:
+        seen.append((task.title, task.state))
+        if task.title == "B" and task.state == "working" and ("B", "cancelled") not in seen:
+            runner.cancel(task.id)
+
+    runner = TaskRunner(work, on_event=on_event, on_finished=lambda _: None, max_running=1)
+    a, b, c = (runner.start(title=t, owner="p_k") for t in "ABC")
+    work.finish("A")
+    await asyncio.wait_for(_until(lambda: c.state == "working"), 2)
+    work.finish("C")
+    await asyncio.wait_for(runner.idle(), 2)
+    assert (a.state, b.state, c.state) == ("done", "cancelled", "done")
+
+
+async def _until(condition) -> None:  # type: ignore[no-untyped-def]
+    while not condition():
+        await asyncio.sleep(0.01)
+
+
 def test_events_hide_private_tasks_from_everyone_but_the_owner() -> None:
     task = Task(id="t_1", title="Investigate the leak", owner="p_k", private=True, created_at=1.0)
     task.state = "done"
@@ -244,3 +315,12 @@ def test_describe_tasks_for_a_status_question() -> None:
     text = describe_tasks([working, queued], now=150.0)
     assert "Look into CI" in text and "2 minutes" in text and "Checking CI on main" in text
     assert "Research pricing" in text and "next" in text
+
+
+def test_a_status_said_to_the_room_keeps_private_tasks_private() -> None:
+    secret = Task(id="t_1", title="Look into layoffs", owner="p_k", private=True, created_at=0.0)
+    secret.state, secret.started_at, secret.progress = "working", 0.0, ["Reading hr/cuts.csv"]
+
+    text = describe_tasks([secret], now=60.0, show_private=False)
+    assert "a private task" in text and "layoffs" not in text and "cuts" not in text
+    assert "Look into layoffs" in describe_tasks([secret], now=60.0, show_private=True)

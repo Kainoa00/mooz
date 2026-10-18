@@ -64,6 +64,7 @@ class ClaudeConversation:
         self._web_search = mode == "research" and web_search
         # max_uses caps one request; a task makes many, so the budget is kept here.
         self._searches_left = MAX_WEB_SEARCHES
+        self._offered_search = False  # whether the last request had the web search tool
         self._messages: list[dict[str, Any]] = []
 
     async def send(self, user: str) -> ModelTurn:
@@ -87,7 +88,7 @@ class ClaudeConversation:
         )
         return await self._call()
 
-    async def _request(self) -> Any:
+    async def _request(self, *, resuming: bool = False) -> Any:
         research = self._mode == "research"
         output_config: dict[str, Any] = {"effort": self._effort}
         if not research:
@@ -103,7 +104,9 @@ class ClaudeConversation:
             "betas": [FALLBACK_BETA],
             "fallbacks": "default",
         }
-        tools = [*self._tools, *self._web_search_tool()]
+        web = self._web_search_tool(resuming=resuming)
+        self._offered_search = bool(web)
+        tools = [*self._tools, *web]
         if tools:
             kwargs["tools"] = tools
         if research:
@@ -118,31 +121,31 @@ class ClaudeConversation:
             raise BrainError("could not reach Claude") from err
         # Pass the whole content back unchanged (thinking blocks included) on the next turn.
         self._messages.append({"role": "assistant", "content": response.content})
-        ran = sum(1 for b in response.content if b.type == "web_search_tool_result")
-        self._searches_left -= ran
+        self._searches_left -= _searches_run(response)
         return response
 
-    def _web_search_tool(self) -> list[dict[str, Any]]:
+    def _web_search_tool(self, *, resuming: bool) -> list[dict[str, Any]]:
         if not self._web_search:
             return []
         if self._searches_left > 0:
             return [{**WEB_SEARCH_TOOL, "max_uses": self._searches_left}]
-        if _pending_search(self._messages):
-            # The API rejects a request without the tool of a search it hasn't run yet.
+        # Spent, but the API rejects a request without the tools of a turn it resumes, or
+        # of a server tool still in flight: keep it, with room for just the one under way.
+        if (resuming and self._offered_search) or _server_tool_pending(self._messages):
             return [{**WEB_SEARCH_TOOL, "max_uses": 1}]
         return []
 
     async def _call(self) -> ModelTurn:
-        searches: list[str] = []
         response = await self._request()
-        for _ in range(MAX_PAUSES):
+        searches = _searches(response.content)
+        pauses = 0
+        while response.stop_reason == "pause_turn":
+            if pauses >= MAX_PAUSES:
+                raise BrainError("Claude kept pausing its web search")
+            pauses += 1
+            # A long server-side step paused: resend as is and it carries on.
+            response = await self._request(resuming=True)
             searches += _searches(response.content)
-            if response.stop_reason != "pause_turn":
-                break
-            # A long server-side search paused: resend as is and it carries on.
-            response = await self._request()
-        else:
-            raise BrainError("Claude kept pausing its web search")
         if response.stop_reason == "refusal":
             return ModelTurn(refused=True)
         if response.stop_reason == "max_tokens":
@@ -159,14 +162,22 @@ class ClaudeConversation:
         return ModelTurn(answer=_parse_answer(response.content))
 
 
-def _pending_search(messages: Sequence[dict[str, Any]]) -> bool:
-    """Whether Claude's last turn asked for a web search that hasn't run yet."""
-    content = next((m["content"] for m in reversed(messages) if m["role"] == "assistant"), [])
-    done = {b.tool_use_id for b in content if b.type == "web_search_tool_result"}
-    return any(
-        b.type == "server_tool_use" and b.name == "web_search" and b.id not in done
-        for b in content
+def _server_tool_pending(messages: Sequence[dict[str, Any]]) -> bool:
+    """Whether Claude's last turn started a server tool (a web search, or the code execution
+    that dynamic filtering searches from) that hasn't finished yet."""
+    content: list[Any] = next(
+        (m["content"] for m in reversed(messages) if m["role"] == "assistant"), []
     )
+    done = {getattr(b, "tool_use_id", None) for b in content if b.type.endswith("_tool_result")}
+    return any(b.type == "server_tool_use" and b.id not in done for b in content)
+
+
+def _searches_run(response: Any) -> int:
+    """Web searches a response ran: as billed, or by their results if usage doesn't say."""
+    usage = getattr(getattr(response, "usage", None), "server_tool_use", None)
+    billed = getattr(usage, "web_search_requests", None)
+    results = sum(1 for b in response.content if b.type == "web_search_tool_result")
+    return max(billed if isinstance(billed, int) else 0, results)
 
 
 def _searches(content: Sequence[Any]) -> list[str]:

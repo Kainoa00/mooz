@@ -148,9 +148,14 @@ def test_github_repos_are_sources_with_the_same_rules(
     assert [g.label for g in loaded.github] == ["web-2"]
 
 
-def test_web_search_is_on_unless_turned_off(
+def test_web_search_is_on_for_claude_and_off_for_grok_unless_set(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("MOOZ_HOME", str(tmp_path / "home"))
     AgentConfig(name="Atlas").save()
-    assert AgentConfig.load("Atlas").web_search is True
+    AgentConfig(name="Nova", brain="grok").save()
+    AgentConfig(name="Echo", brain="grok", web_search=True).save()
+    assert AgentConfig.load("Atlas").searches_web is True
+    assert AgentConfig.load("Nova").searches_web is False  # its search also opens pages
+    assert AgentConfig.load("Echo").searches_web is True
+    assert "web_search" not in (AgentConfig.load("Atlas").home / "agent.toml").read_text()

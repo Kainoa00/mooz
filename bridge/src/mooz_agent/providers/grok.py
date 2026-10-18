@@ -98,6 +98,7 @@ class GrokConversation:
         # xAI has no per-request search cap: stop offering it once the task's budget is spent.
         self._searches_left = MAX_WEB_SEARCHES
         self._last_id: str | None = None
+        self._notices: list[str] = []
 
     async def send(self, user: str) -> ModelTurn:
         return await self._call([{"role": "user", "content": user}])
@@ -152,6 +153,7 @@ class GrokConversation:
                 # the combination, carry on without web search for the rest of the task.
                 log.warning("Grok refused web search with our tools (%s); continuing without", err)
                 self._web_search = False
+                self._notices.append("Web search isn't available, so I'm carrying on without it")
                 response = await self._client.responses.create(**self._kwargs(items))
         except openai.APIStatusError as err:
             log.error("Grok returned %s: %s", err.status_code, err.message)
@@ -167,19 +169,20 @@ class GrokConversation:
         if response.status == "incomplete":
             raise BrainError("Grok's answer was cut off")
         searches = tuple(_searches(response.output))
+        notices, self._notices = tuple(self._notices), []
         calls = tuple(
             ToolCall(id=item.call_id, name=item.name, args=_args(item.arguments))
             for item in response.output
             if item.type == "function_call"
         )
         if calls:
-            return ModelTurn(calls=calls, searches=searches)
+            return ModelTurn(calls=calls, searches=searches, notices=notices)
         parts = [c for item in response.output if item.type == "message" for c in item.content]
         if any(c.type == "refusal" for c in parts):
             return ModelTurn(refused=True)
         text = "".join(c.text for c in parts if c.type == "output_text").strip()
         if self._mode == "research":
-            return ModelTurn(answer=plain_answer(text), searches=searches)
+            return ModelTurn(answer=plain_answer(text), searches=searches, notices=notices)
         try:
             data = json.loads(text)
             answer = Answer(str(data["spoken"]).strip(), str(data.get("details", "")).strip())

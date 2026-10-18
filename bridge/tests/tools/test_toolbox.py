@@ -274,3 +274,28 @@ def test_progress_descriptions_are_built_from_arguments(gh_box: tuple[ToolBox, F
         == "Searching your sources for '[redacted]'"
     )
     assert box.describe("mystery", {}) == "Working"
+
+
+def test_progress_everyone_sees_never_names_private_sources(
+    gh_box: tuple[ToolBox, FakeGitHub],
+) -> None:
+    box, _ = gh_box
+    shown = {
+        box.describe("read_file", {"source": "secret-project", "path": "cuts.csv"}, public=True),
+        box.describe("search", {"source": "secret-project", "query": "layoffs"}, public=True),
+        box.describe("search", {"query": "layoffs"}, public=True),  # every source
+        box.describe("github_issue", {"source": "secret-app", "number": 3}, public=True),
+        box.describe("git_log", {"source": "secret-project"}, public=True),
+        box.describe("recall", {"query": "layoffs"}, public=True),
+    }
+    assert not any("secret" in line or "cuts" in line or "layoffs" in line for line in shown)
+    assert "Reading a private file" in shown
+    # Public sources are named as before.
+    assert (
+        box.describe("read_file", {"source": "team-docs", "path": "notes.md"}, public=True)
+        == "Reading notes.md in team-docs"
+    )
+    assert (
+        box.describe("github_issue", {"source": "website", "number": 12}, public=True)
+        == "Reading issue #12 in website"
+    )

@@ -209,6 +209,8 @@ def test_github_sources_and_web_search_from_the_cli(capsys: pytest.CaptureFixtur
         ("kainoa00/site", True),
     ]
     assert cfg.web_search is False
+    assert cli.main(["init", "Nova", "--brain", "grok", "--web-search"]) == 0
+    assert AgentConfig.load("Nova").searches_web is True
     assert cli.main(["sources", "list", "--agent", "Atlas"]) == 0
     assert "github:kainoa00/mooz" in capsys.readouterr().out
     assert cli.main(["sources", "add", "github:not a repo", "--agent", "Atlas"]) == 2

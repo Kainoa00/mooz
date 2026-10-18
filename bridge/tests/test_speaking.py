@@ -36,6 +36,16 @@ async def test_posts_the_full_answer_to_chat_before_speaking_the_short_part() ->
     assert tts.spoken == ["The migration."]
 
 
+async def test_it_can_give_up_its_turn_once_it_has_the_floor() -> None:
+    rec = Recorder()
+    tts = FakeTTS()
+    mouth = Mouth(send_chat=rec.send_chat, capture_frame=rec.capture_frame, tts=tts)
+
+    assert await mouth.say(Answer("Not now."), only_if=lambda: False) is False
+    assert rec.events == [] and tts.spoken == []
+    assert await mouth.say(Answer("Now."), only_if=lambda: True) is True
+
+
 async def test_without_details_chat_gets_just_the_spoken_answer() -> None:
     rec = Recorder()
     mouth = Mouth(send_chat=rec.send_chat, capture_frame=rec.capture_frame, tts=FakeTTS())

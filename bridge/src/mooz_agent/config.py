@@ -62,8 +62,15 @@ class AgentConfig:
     language: str = "en"
     sources: list[Source] = field(default_factory=list)
     github: list[GitHubRepo] = field(default_factory=list)
-    # Owner research tasks may search the web (the owner's own provider usage).
-    web_search: bool = True
+    # Owner research tasks may search the web (the owner's own provider usage). None: the
+    # brain's default, see `searches_web`.
+    web_search: bool | None = None
+
+    @property
+    def searches_web(self) -> bool:
+        """On for Claude. Off for Grok unless turned on: xAI's search also opens web pages,
+        which text a task reads could use to send what it found to a page of its choosing."""
+        return self.web_search if self.web_search is not None else self.brain != "grok"
 
     @property
     def home(self) -> Path:
@@ -153,7 +160,8 @@ class AgentConfig:
             data["model"] = self.model
         if self.voice_id:
             data["voice_id"] = self.voice_id
-        data["web_search"] = self.web_search
+        if self.web_search is not None:
+            data["web_search"] = self.web_search
         data["sources"] = [
             {"label": s.label, "path": str(s.path), "public": s.public} for s in self.sources
         ]
@@ -192,7 +200,7 @@ class AgentConfig:
                 GitHubRepo(label=str(g["label"]), repo=str(g["repo"]), public=bool(g.get("public")))
                 for g in data.get("github", [])
             ],
-            web_search=bool(data.get("web_search", True)),
+            web_search=None if data.get("web_search") is None else bool(data["web_search"]),
         )
         cfg.validate()
         return cfg
