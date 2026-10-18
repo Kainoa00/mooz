@@ -231,6 +231,7 @@ def test_events_hide_private_tasks_from_everyone_but_the_owner() -> None:
         "error": "",
         "created_at": 1.0,
         "updated_at": theirs["updated_at"],
+        "seq": 0,
     }
 
 

@@ -27,6 +27,8 @@ log = logging.getLogger(__name__)
 MAX_NOTE_CHARS = 20_000
 # Notes an agent saved from meetings (as opposed to facts its owner told it).
 MEETING_NOTES_TAG = "meeting-notes"
+# Results of background research tasks the owner asked for.
+TASK_RESULT_TAG = "task-result"
 _WORD = re.compile(r"[A-Za-z0-9']+")
 _STOP = frozenset(
     "the and for are was were what when where who why how does did can could would should "

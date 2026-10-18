@@ -85,3 +85,32 @@ async def test_offline_summaries_keep_every_line_they_were_given() -> None:
         "<transcript>\nKai: ship Friday\nLee: ok\n</transcript>\n\nWrite."
     )
     assert turn.answer is not None and turn.answer.details == "Kai: ship Friday\nLee: ok"
+
+
+async def test_offline_research_searches_and_reports(monkeypatch: pytest.MonkeyPatch) -> None:
+    from mooz_agent.brain import REPORT_TOOL, research_prompt
+    from mooz_agent.providers import fakes
+
+    search = ToolSpec(
+        "search",
+        "",
+        {"type": "object", "properties": {"source": {"type": "string", "enum": ["plans"]}}},
+    )
+    conversation = OfflineModel().conversation(
+        system=research_prompt("Atlas", "Kai"), tools=[search, REPORT_TOOL], mode="research"
+    )
+    first = await conversation.send("Task from Kai: Look into the launch date")
+    [call] = first.calls
+    assert (call.name, call.args) == ("search", {"query": "launch"})
+
+    done = await conversation.send_results([(call, ToolResult("[plans] launch.md:1: March 30th"))])
+    [report] = done.calls
+    assert report.name == "report_findings" and "March 30th" in str(report.args["details"])
+
+    monkeypatch.setattr(fakes, "SLOW_SECONDS", 0.01)
+    slow = OfflineModel().conversation(
+        system=research_prompt("Atlas", "Kai"), tools=[REPORT_TOOL], mode="research"
+    )
+    nothing = await slow.send("Task from Kai: Look into the launch slowly")
+    assert nothing.calls[0].name == "report_findings"
+    assert "couldn't find" in str(nothing.calls[0].args["spoken"])

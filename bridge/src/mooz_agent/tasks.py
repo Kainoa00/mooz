@@ -86,6 +86,9 @@ class Task:
     private: bool
     created_at: float
     context: str = ""  # what a quick answer had already found, when it overflowed into a task
+    transcript: str = ""  # the meeting when it was asked
+    sources: frozenset[str] = frozenset()  # whose words that transcript holds (notes opt-outs)
+    seq: int = 0  # increases with every update, so the panel can ignore stale ones
     state: TaskState = "queued"
     progress: list[str] = field(default_factory=list)
     result: Answer | None = None
@@ -115,6 +118,7 @@ class Task:
             "error": "" if hidden else (self.error or ""),
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "seq": self.seq,
         }
 
 
@@ -151,7 +155,16 @@ class TaskRunner:
 
     # -- starting and stopping -------------------------------------------------------
 
-    def start(self, *, title: str, owner: str, private: bool = False, context: str = "") -> Task:
+    def start(
+        self,
+        *,
+        title: str,
+        owner: str,
+        private: bool = False,
+        context: str = "",
+        transcript: str = "",
+        sources: frozenset[str] = frozenset(),
+    ) -> Task:
         if len(self.tasks) >= self.max_per_meeting:
             raise TaskRefused(
                 f"I've already taken on {self.max_per_meeting} tasks in this meeting, "
@@ -165,6 +178,8 @@ class TaskRunner:
             private=private,
             created_at=now,
             context=context,
+            transcript=transcript,
+            sources=sources,
             updated_at=now,
         )
         self.tasks.append(task)
@@ -236,6 +251,7 @@ class TaskRunner:
 
     def _emit(self, task: Task) -> None:
         task.updated_at = self._clock()
+        task.seq += 1
         try:
             self._on_event(task)
         except Exception:
@@ -274,20 +290,24 @@ def _minutes(seconds: float) -> str:
     return f"{minutes} minute{'s' if minutes != 1 else ''}"
 
 
-def describe_tasks(tasks: list[Task], *, now: float) -> str:
-    """A spoken status report from task state (no model call)."""
+def describe_tasks(tasks: list[Task], *, now: float, for_owner: bool = True) -> str:
+    """A spoken status report from task state (no model call). Others hear "a private task"."""
     working = [t for t in tasks if t.state == "working"]
     queued = [t for t in tasks if t.state == "queued"]
     if not working and not queued:
         return "I'm not working on anything right now."
+
+    def name(t: Task) -> str:
+        return "a private task" if t.private and not for_owner else f"'{t.title}'"
+
     parts = []
     for t in working:
         started = t.started_at if t.started_at is not None else now
-        line = f"I'm on '{t.title}', {_minutes(now - started)} in"
-        if t.progress:
+        line = f"I'm on {name(t)}, {_minutes(now - started)} in"
+        if t.progress and (for_owner or not t.private):
             line += f"; last step: {t.progress[-1]}"
         parts.append(line + ".")
     if queued:
-        names = ", ".join(f"'{t.title}'" for t in queued)
+        names = ", ".join(name(t) for t in queued)
         parts.append(f"{names} {'is' if len(queued) == 1 else 'are'} next.")
     return " ".join(parts)

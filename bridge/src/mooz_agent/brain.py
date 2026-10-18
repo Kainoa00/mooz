@@ -11,7 +11,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
-from .memory import MEETING_NOTES_TAG, MemoryStore
+from .memory import MEETING_NOTES_TAG, TASK_RESULT_TAG, MemoryStore
 from .providers.base import Answer, BrainError
 from .room import Speaker
 from .tools.redact import redact
@@ -255,15 +255,19 @@ class ToolLoopBrain:
         if self.toolbox is not None:
             parts.append(self.toolbox.sources_summary(scope))
         if self.memory is not None:
-            # Past meeting notes are long and quote other people: reach them through recall.
+            # Past meeting notes and research results are long and quote other people and
+            # pages: reach them through recall.
             block = self.memory.context_block(
                 owner=scope.owner,
                 budget_chars=MEMORY_BUDGET_CHARS,
-                exclude_tags=(MEETING_NOTES_TAG,),
+                exclude_tags=(MEETING_NOTES_TAG, TASK_RESULT_TAG),
             )
             if block:
                 parts.append(MEMORY_HEADING + block)
-            parts.append("Notes from past meetings aren't listed here; search them with recall.")
+            parts.append(
+                "Notes from past meetings and past research results aren't listed here; "
+                "search them with recall."
+            )
         return "\n\n".join(parts)
 
     def _user(self, question: str, asker: Speaker, scope: Scope, transcript: str) -> str:

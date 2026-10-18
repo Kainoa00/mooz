@@ -17,6 +17,8 @@ log = logging.getLogger(__name__)
 CHAT_TOPIC = "lk.chat"
 # mooz's own messages between agents and browsers (see apps/web/lib/notes-protocol.ts).
 MOOZ_TOPIC = "mooz.v0"
+# Task updates and results (text streams: results can be long). See docs/protocol.md.
+TASKS_TOPIC = "mooz.tasks"
 NOTES_OPT_OUT_ATTRIBUTE = "notes_opt_out"
 REPLY_TO_ATTRIBUTE = "reply_to"
 SOURCES_ATTRIBUTE = "sources"
@@ -202,16 +204,28 @@ class MeetingRoom:
         await self._closed.wait()
 
     async def send_chat(
-        self, text: str, reply_to: str | None = None, sources: frozenset[str] = frozenset()
+        self,
+        text: str,
+        reply_to: str | None = None,
+        sources: frozenset[str] = frozenset(),
+        to: list[str] | None = None,
     ) -> None:
-        """Post to chat, saying whom it answers and whose words it drew on (docs/protocol.md)."""
+        """Post to chat (or only to `to`), saying whom it answers and whose words it drew on."""
         attributes: dict[str, str] = {}
         if reply_to:
             attributes[REPLY_TO_ATTRIBUTE] = reply_to
         if sources:
             attributes[SOURCES_ATTRIBUTE] = ",".join(sorted(sources))
         await self._room.local_participant.send_text(
-            text, topic=CHAT_TOPIC, attributes=attributes or None
+            text, topic=CHAT_TOPIC, attributes=attributes or None, destination_identities=to
+        )
+
+    async def send_task_event(
+        self, message: dict[str, object], to: list[str] | None = None
+    ) -> None:
+        """A task update on mooz.tasks, to everyone or only to `to`."""
+        await self._room.local_participant.send_text(
+            json.dumps(message), topic=TASKS_TOPIC, destination_identities=to
         )
 
     async def disconnect(self) -> None:

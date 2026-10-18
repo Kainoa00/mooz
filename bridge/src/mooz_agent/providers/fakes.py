@@ -81,6 +81,13 @@ class FakeBrain:
 # -- the offline model ---------------------------------------------------------------
 
 ASKED = " just asked you: "
+TASK_FROM = re.compile(r"^Task from [^:]*: (.+)$", re.M)
+# "look into X slowly" waits this long before reporting (demos and cancel tests).
+SLOW_SECONDS = 30.0
+_LEADING_VERB = re.compile(
+    r"^(?:look into|research|dig into|investigate|find out|figure out)\s+", re.I
+)
+_FILLER_WORDS = frozenset("the and for with about into what when where which slowly".split())
 SUMMARY_MARKER = "keeping meeting notes"
 _TRANSCRIPT = re.compile(r"<transcript>\n(.*)\n</transcript>", re.S)
 SOURCES_LINE = re.compile(
@@ -119,12 +126,15 @@ class OfflineModel:
         mode: Mode = "answer",
         web_search: bool = False,
     ) -> OfflineConversation:
-        return OfflineConversation(system, tools)
+        return OfflineConversation(system, tools, mode)
 
 
 class OfflineConversation:
-    def __init__(self, system: str, tools: Sequence[ToolSpec]) -> None:
+    def __init__(self, system: str, tools: Sequence[ToolSpec], mode: Mode = "answer") -> None:
         self._system = system
+        self._mode = mode
+        self._tool_names = {t.name for t in tools}
+        self._keyword = ""
         self._sources: list[str] = []
         for tool in tools:
             enum = tool.parameters.get("properties", {}).get("source", {}).get("enum")
@@ -136,6 +146,8 @@ class OfflineConversation:
     async def send(self, user: str) -> ModelTurn:
         from ..brain import ModelTurn
 
+        if self._mode == "research":
+            return await self._research(user)
         if SUMMARY_MARKER in self._system:
             # "Summarize" by keeping every line, so tests can see exactly what reached it.
             match = _TRANSCRIPT.search(user)
@@ -176,8 +188,40 @@ class OfflineConversation:
         self._calls += 1
         return ModelTurn(calls=(ToolCall(f"call_{self._calls}", name, args),))
 
+    # -- research: search the sources for the task's key word, then report -----------
+
+    async def _research(self, user: str) -> ModelTurn:
+        match = TASK_FROM.search(user)
+        title = match.group(1).strip() if match else user.strip()
+        if "slowly" in title.lower():
+            await asyncio.sleep(SLOW_SECONDS)
+        words = [
+            w
+            for w in re.findall(r"[A-Za-z0-9']+", _LEADING_VERB.sub("", title))
+            if len(w) > 2 and w.lower() not in _FILLER_WORDS
+        ]
+        self._keyword = max(words, key=len) if words else title
+        if "search" not in self._tool_names:
+            return self._report(f"I couldn't find anything about {self._keyword}.", "")
+        return self._call("search", {"query": self._keyword})
+
+    def _report(self, spoken: str, details: str) -> ModelTurn:
+        from ..brain import REPORT_TOOL, ModelTurn, ToolCall
+
+        self._calls += 1
+        args: dict[str, object] = {"spoken": spoken, "details": details, "sources": []}
+        return ModelTurn(calls=(ToolCall(f"call_{self._calls}", REPORT_TOOL.name, args),))
+
     async def send_results(self, results: Sequence[tuple[ToolCall, ToolResult]]) -> ModelTurn:
         from ..brain import ModelTurn
+
+        if self._mode == "research":
+            found = [
+                r.content for _c, r in results if not r.is_error and "No matches" not in r.content
+            ]
+            if not found:
+                return self._report(f"I couldn't find anything about {self._keyword}.", "")
+            return self._report(f"Here's what I found about {self._keyword}.", "\n".join(found))
 
         for _call, result in results:
             if result.is_error:

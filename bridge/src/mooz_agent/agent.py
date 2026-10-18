@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
@@ -13,6 +14,7 @@ from .brain import ToolLoopBrain
 from .claim import AgentGrant, ClaimError
 from .config import AgentConfig
 from .listening import Listener, track_frames
+from .memory import MAX_NOTE_CHARS, TASK_RESULT_TAG
 from .notes import NOTES_INTERVAL_SECONDS, NotesKeeper, notes_command
 from .providers.base import Answer, Brain, BrainError, SpeechToText, TextToSpeech
 from .room import (
@@ -25,6 +27,7 @@ from .room import (
     TrackHandler,
 )
 from .speaking import Mouth
+from .tasks import Task, TaskCommand, TaskRefused, TaskRunner, describe_tasks, task_command
 from .transcript import TranscriptBuffer, Utterance, render_line
 
 log = logging.getLogger(__name__)
@@ -41,6 +44,14 @@ NOTES_ON: dict[str, object] = {"type": "notes", "state": "on"}
 NOTES_OFF: dict[str, object] = {"type": "notes", "state": "off"}
 # Give someone who just joined a moment to start listening before telling them about notes.
 LATE_JOINER_DELAY = 1.0
+# A finished task is reported by voice once nobody has spoken for this long, waiting at most
+# REPORT_WAIT_SECONDS (the chat already has the result, so after that the voice is skipped).
+QUIET_SECONDS = 2.5
+REPORT_WAIT_SECONDS = 90.0
+OVERFLOWED = "This needs more digging. I'll keep at it and report back."
+_TASK_VERB = re.compile(
+    r"^(?:look into|research|dig into|investigate|find out|figure out)\s+", re.I
+)
 
 
 class AgentRoom(Protocol):
@@ -61,7 +72,14 @@ class AgentRoom(Protocol):
 
     def participants(self) -> list[Speaker]: ...
     def send_chat(
-        self, text: str, reply_to: str | None = None, sources: frozenset[str] = frozenset()
+        self,
+        text: str,
+        reply_to: str | None = None,
+        sources: frozenset[str] = frozenset(),
+        to: list[str] | None = None,
+    ) -> Awaitable[None]: ...
+    def send_task_event(
+        self, message: dict[str, object], to: list[str] | None = None
     ) -> Awaitable[None]: ...
     def replay_tracks(self) -> None: ...
     def notes_allowed(self) -> bool: ...
@@ -116,6 +134,16 @@ class Agent:
         self._notes_timer: asyncio.Task[None] | None = None
         owner = self.me.owner_name
         self._display_name = f"{owner}'s {self.me.name}" if owner else self.me.name
+        # Background research: owner-only tasks, run by the brain's research loop.
+        self.tasks: TaskRunner | None = None
+        if isinstance(brain, ToolLoopBrain):
+            self.tasks = TaskRunner(
+                self._do_task, on_event=self._task_event, on_finished=self._task_finished
+            )
+            brain.on_overflow = self._overflow_to_task
+        self.quiet_seconds = QUIET_SECONDS
+        self.report_wait_seconds = REPORT_WAIT_SECONDS
+        self._last_voice = float("-inf")
 
     def wire(self) -> None:
         self.room.on_human_track = lambda speaker, track: self.listener.attach(
@@ -138,6 +166,8 @@ class Agent:
 
     def on_utterance(self, u: Utterance) -> None:
         heard_at = self._clock()
+        if u.speaker.kind == "human" and u.via == "voice":
+            self._last_voice = heard_at
         self.transcript.add(u)
         self._note(u)
         if u.speaker.kind == "human":
@@ -193,17 +223,11 @@ class Agent:
         if command is not None:
             await self._say(await self._notes_command(asker, command), heard_at, asker)
             return
-        # While notes are on, answers don't draw on people who opted out, so a reply to
-        # someone else can't carry their words into the notes.
-        notes_on = self.notes is not None and self.notes.active
-        included: list[Utterance] = []
-        transcript = self.transcript.render(
-            roles=self._role,
-            exclude=self.notes.excluded if notes_on and self.notes else None,
-            included=included,
-        )
-        # Whoever the answer could quote: if one of them opts out later, it leaves the notes too.
-        sources = frozenset(p for u in included for p in NotesKeeper.people(u))
+        task = task_command(question)
+        if task is not None:
+            await self._say(self._task_command(asker, task), heard_at, asker)
+            return
+        transcript, sources = self._snapshot()
         try:
             answer = await self.brain.answer(question=question, asker=asker, transcript=transcript)
         except BrainError:
@@ -217,6 +241,22 @@ class Agent:
             raise
         except Exception:
             log.exception("could not say the filler")
+
+    def _snapshot(self) -> tuple[str, frozenset[str]]:
+        """The transcript the brain sees, and whose words are in it.
+
+        While notes are on, it leaves out people who opted out, so a reply to someone else
+        can't carry their words into the notes; and whoever is in it is recorded on the reply,
+        so if one of them opts out later, the reply leaves the notes too.
+        """
+        notes_on = self.notes is not None and self.notes.active
+        included: list[Utterance] = []
+        transcript = self.transcript.render(
+            roles=self._role,
+            exclude=self.notes.excluded if notes_on and self.notes else None,
+            included=included,
+        )
+        return transcript, frozenset(p for u in included for p in NotesKeeper.people(u))
 
     @staticmethod
     def _person(speaker: Speaker | None) -> str | None:
@@ -368,9 +408,20 @@ class Agent:
             self._told.add(identity)
 
     def _on_signal(self, speaker: Speaker, message: dict[str, object]) -> None:
-        # A browser that (re)connected asks every agent whether it is keeping notes.
-        if message.get("type") == "notes?" and speaker.kind == "human":
+        if speaker.kind != "human":
+            return
+        kind = message.get("type")
+        # A browser that (re)connected asks every agent whether it is keeping notes,
+        # and what it is working on.
+        if kind == "notes?":
             self._spawn(self._answer_notes_query(speaker.identity))
+        elif kind == "tasks?" and self.tasks is not None:
+            for task in self.tasks.tasks:
+                self._spawn(self._send_task_event(task, speaker.identity))
+        elif kind == "task.cancel" and self.tasks is not None and self._is_owner(speaker):
+            task_id = message.get("id")
+            if isinstance(task_id, str):
+                self.tasks.cancel(task_id)
 
     async def _answer_notes_query(self, identity: str) -> None:
         on = self._notes_on()
@@ -391,6 +442,155 @@ class Agent:
                 )
             )
 
+    # -- background research ------------------------------------------------------------
+
+    def _is_owner(self, speaker: Speaker) -> bool:
+        return self.me.owner_identity is not None and speaker.identity == self.me.owner_identity
+
+    def _task_command(self, asker: Speaker, command: TaskCommand) -> Answer:
+        owner = self.me.owner_name or "my owner"
+        if self.tasks is None:
+            return Answer("I can't do background research with this setup.")
+        if command.kind == "status":
+            text = describe_tasks(
+                self.tasks.tasks, now=time.time(), for_owner=self._is_owner(asker)
+            )
+            return Answer(text)
+        if command.kind == "cancel":
+            if not self._is_owner(asker):
+                return Answer(f"Only {owner} can stop my tasks.")
+            task = self.tasks.latest_active()
+            if task is None:
+                return Answer("I'm not working on anything right now.")
+            self.tasks.cancel(task.id)
+            return Answer(
+                "Okay, I've stopped that."
+                if task.private
+                else f"Okay, I've stopped '{task.title}'."
+            )
+        if not self._is_owner(asker):
+            return Answer(f"Only {owner} can ask me to research things in the background.")
+        transcript, sources = self._snapshot()
+        try:
+            self.tasks.start(
+                title=command.topic,
+                owner=asker.identity,
+                private=command.private,
+                transcript=transcript,
+                sources=sources,
+            )
+        except TaskRefused as err:
+            return Answer(str(err))
+        if command.private:
+            return Answer("On it. I'll tell you privately when I'm done.")
+        return Answer("On it. I'll report back.")
+
+    def _overflow_to_task(self, question: str, asker: Speaker, found: str) -> str:
+        """The owner's question ran out of the spoken budget: keep going in the background."""
+        if self.tasks is None:
+            return "That needs more time than I have right now."
+        title = question.strip()
+        transcript, sources = self._snapshot()
+        try:
+            self.tasks.start(
+                title=(title[:1].upper() + title[1:])[:120],
+                owner=asker.identity,
+                context=found,
+                transcript=transcript,
+                sources=sources,
+            )
+        except TaskRefused as err:
+            return str(err)
+        return OVERFLOWED
+
+    async def _do_task(self, task: Task, progress: Callable[[str], None]) -> Answer:
+        assert isinstance(self.brain, ToolLoopBrain)
+        return await self.brain.research(
+            title=task.title, context=task.context, transcript=task.transcript, progress=progress
+        )
+
+    def _task_event(self, task: Task) -> None:
+        self._spawn(self._send_task_event(task))
+
+    async def _send_task_event(self, task: Task, to: str | None = None) -> None:
+        """Everyone sees what agents are working on; a private task's details only its owner."""
+        try:
+            if to is not None:
+                await self.room.send_task_event(task.event(for_owner=to == task.owner), [to])
+            elif not task.private:
+                await self.room.send_task_event(task.event(for_owner=True))
+            else:
+                await self.room.send_task_event(task.event(for_owner=True), [task.owner])
+                others = [
+                    p.identity
+                    for p in self.room.participants()
+                    if p.kind == "human" and p.identity != task.owner
+                ]
+                if others:
+                    await self.room.send_task_event(task.event(for_owner=False), others)
+        except Exception:
+            log.exception("could not send a task update")
+
+    def _task_finished(self, task: Task) -> None:
+        if task.state == "done" and task.result is not None:
+            self._save_task(task)
+            self._spawn(self._report(task))
+        elif task.state == "failed":
+            self._spawn(self._report(task))
+
+    def _save_task(self, task: Task) -> None:
+        assert task.result is not None
+        memory = self.brain.memory if isinstance(self.brain, ToolLoopBrain) else None
+        if memory is None:
+            return
+        text = f"Research: {task.title}\n{task.result.spoken}\n\n{task.result.details}".strip()
+        try:
+            memory.remember(text[:MAX_NOTE_CHARS], public=False, tags=[TASK_RESULT_TAG])
+        except Exception:
+            log.exception("could not save task %s to memory", task.id)
+
+    async def _report(self, task: Task) -> None:
+        """Chat right away; the voice waits for a pause. Private results go only to the owner."""
+        owner_name = self.me.owner_name or "Hey"
+        about = _TASK_VERB.sub("", task.title).rstrip("?.!") or task.title
+        if task.state == "done" and task.result is not None:
+            details = f"\n\n{task.result.details}" if task.result.details else ""
+            chat = f"📋 {task.title}\n\n{task.result.spoken}{details}"
+            spoken = f"{owner_name}, about {about}: {task.result.spoken}"
+        else:
+            chat = f"⚠️ {task.title}\n\n{task.error or 'I could not finish it.'}"
+            spoken = f"{owner_name}, I couldn't finish {about}. Details are in the chat."
+        try:
+            if task.private:
+                await self.room.send_chat(chat, reply_to=task.owner, to=[task.owner])
+                return
+            await self.room.send_chat(chat, reply_to=task.owner, sources=task.sources)
+        except Exception:
+            log.exception("could not post task %s to chat", task.id)
+            return
+        line = Utterance(
+            self.me, spoken, time.time(), "chat", about=task.owner, sources=task.sources
+        )
+        self.transcript.add(line)
+        self._note(line)
+        if await self._wait_for_quiet():
+            try:
+                await self.mouth.say(Answer(spoken), chat=False)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("could not say the task result")
+
+    async def _wait_for_quiet(self) -> bool:
+        step = max(0.01, min(0.25, self.quiet_seconds / 2))
+        waited = 0.0
+        while waited < self.report_wait_seconds:
+            if self._clock() - self._last_voice >= self.quiet_seconds:
+                return True
+            await asyncio.sleep(step)
+            waited += step
+        return False
+
     def _spawn(self, coro: Awaitable[None]) -> None:
         task: asyncio.Task[None] = asyncio.ensure_future(coro)
         self._tasks.add(task)
@@ -405,8 +605,19 @@ class Agent:
         """Wait until every answer in flight has been said (used by tests)."""
         while self._tasks:
             await asyncio.gather(*list(self._tasks), return_exceptions=True)
+            # Awaiting finished tasks doesn't yield, so let their done callbacks run.
+            await asyncio.sleep(0)
 
     async def aclose(self) -> None:
+        if self.tasks is not None:
+            working = [t for t in self.tasks.tasks if t.state == "working"]
+            if working:
+                log.warning(
+                    "finishing %d research task(s) before leaving (Ctrl-C to stop now)",
+                    len(working),
+                )
+            # Working tasks finish within their own budget and are saved to memory.
+            await self.tasks.finish_up()
         for task in list(self._tasks):
             task.cancel()
         await asyncio.gather(*list(self._tasks), return_exceptions=True)

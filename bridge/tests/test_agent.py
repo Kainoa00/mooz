@@ -46,11 +46,20 @@ class FakeRoom:
         return list(self.people)
 
     async def send_chat(
-        self, text: str, reply_to: str | None = None, sources: frozenset[str] = frozenset()
+        self,
+        text: str,
+        reply_to: str | None = None,
+        sources: frozenset[str] = frozenset(),
+        to: list[str] | None = None,
     ) -> None:
         self.sent.append(text)
         self.replies.append(reply_to)
         self.sources.append(sources)
+
+    async def send_task_event(
+        self, message: dict[str, object], to: list[str] | None = None
+    ) -> None:
+        pass
 
     def notes_allowed(self) -> bool:
         return False
