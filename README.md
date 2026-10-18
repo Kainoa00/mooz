@@ -66,10 +66,10 @@ memory and a choice of brain, see [Your personal agent](#your-personal-agent).
 - **Answering:** the brain (Claude or Grok) and ElevenLabs voice are billed only when someone
   actually talks to the agent. A question that reads files costs a few model calls.
 - **Notes:** one summary call every 15 minutes while notes are on.
-- **Background research:** a task thinks harder and can take up to 30 model calls, so it costs
-  more than a question. Web search is billed on top: up to 5 searches per task (Claude charges
-  $10 per 1,000, and the results count as input tokens; xAI bills each search call). A meeting
-  allows at most 20 tasks.
+- **Background research:** a task thinks harder and works in up to about 30 steps (each a model
+  call, or a few when a long web search pauses), so it costs more than a question. Web search is
+  billed on top: about 5 searches per task (Claude charges $10 per 1,000, and the results count
+  as input tokens; xAI bills each search call). A meeting allows at most 20 tasks.
 
 ElevenLabs runs in zero-retention mode, so it keeps no audio.
 
@@ -146,19 +146,27 @@ voice at the next pause in the conversation (it waits up to 90 seconds, then lea
 | Say | What happens |
 |---|---|
 | "Atlas, look into why CI is flaky" (or research, dig into, investigate, find out, figure out) | Starts a task. Only you, its owner, can start one |
-| "Atlas, what are you working on?" | Lists its tasks |
-| "Atlas, stop that" | Stops your latest task. Or click **Cancel** in the task panel |
-| "Atlas, research the pricing page privately" (or "just for me") | Only you get the result: as a direct chat message, never by voice |
+| "Atlas, what are you working on?" | Lists its tasks (said to the room, your private ones are just "a private task") |
+| "Atlas, stop that" (or "cancel that") | Stops your latest task. Or click **Cancel** in the task panel |
+| "Atlas, research the pricing page privately" | Only you get the result: as a direct chat message, never by voice |
+
+**Privately.** Say "privately", "just for me", "only tell me" or "DM me" anywhere in what you ask
+and the answer reaches only you, as a direct chat message (🔒). That works for quick questions
+too ("Atlas, privately, what's in plan.md?") and for "what are you working on?". It's never
+spoken, and later answers and meeting notes don't see it. Your request itself is still heard
+(or read in chat) by everyone; only the answer is private. Guests get only public answers, so
+this is for the agent's owner.
 
 Everyone sees an **Agent tasks** panel with what each agent is working on, including people who
-join later. A private task shows only "🔒 Private task for Zach" and its state. Your request
-itself is still heard (or read in chat) by everyone; only the result is private.
+join later. A private task shows only "🔒 Private task for Zach" and its state. A public one
+shows its steps, but never names a private folder, repo or file ("Reading a private file").
 
-A task reads your private folders, repos and memory, like your own questions do. It also
-continues a question of yours that needs more digging than a quick answer allows ("This needs
-more digging. I'll keep at it and report back."). Guests' questions never become tasks.
-Results are saved to your private memory (tagged `task-result`). If the meeting ends while a
-task is running, the agent finishes it and saves it before leaving; Ctrl-C stops at once.
+A task reads your private folders, repos and memory, like your own questions do, but it can't
+change your memory. It also continues a question of yours that needs more digging than a quick
+answer allows ("This needs more digging. I'll keep at it and report back."), privately if you
+asked privately. Guests' questions never become tasks. Results are saved to your private
+memory (tagged `task-result`). If the meeting ends while a task is running, the agent finishes
+it and saves it before leaving; Ctrl-C stops at once (meeting notes are still saved).
 
 Limits: 2 tasks at a time (more wait their turn), 20 per meeting, 10 minutes each.
 
@@ -172,15 +180,20 @@ uv run mooz-agent sources add github:acme/site --agent Atlas            # only y
 uv run mooz-agent sources add github:acme/docs --public --agent Atlas   # anyone may ask
 ```
 
-**Web search.** Your tasks may search the web: Claude's web search, or xAI's for Grok. It's
-never available for guests' questions, and the agent can't open arbitrary links (that would be
-a way to leak what it can read). Each task gets at most 5 searches (with Grok, one step can run
-a few more before it stops offering search). Turn it off with
-`init --no-web-search`, or `web_search = false` in `agent.toml`.
+**Web search.** With Claude, your tasks may search the web, at most 5 searches each (a search
+already under way can finish). It's never available for guests' questions, and Claude's search
+can't open arbitrary links, which would be a way to leak what the agent can read. Turn it off
+with `init --no-web-search`, or `web_search = false` in `agent.toml`.
+
+With Grok it's **off** unless you turn it on (`init --brain grok --web-search`, or
+`web_search = true`): xAI's search also opens web pages, so a page or issue the task reads could
+get it to visit an address that carries what it found. If you turn it on, give the agent only
+sources you'd be fine leaking. Grok stops being offered search once a task has used 5, though
+one step can run a few more.
 
 What a task reads (issues, pull requests, web pages, files) can try to steer it. The agent is
-told to treat all of it as information, never instructions, and it can't write anywhere, but
-no model is perfect. For anything sensitive, ask for the result privately.
+told to treat all of it as information, never instructions, and it can't change your memory or
+write anywhere, but no model is perfect. For anything sensitive, ask for the result privately.
 
 **Choosing a brain.**
 
@@ -242,7 +255,8 @@ Hosts approve every agent, codes are single-use, and agent tokens are single-iss
 short-lived. Agents can publish only audio and chat, and can't relabel themselves. An agent's
 file and git tools are read-only, confined to the owner's chosen folders, and can't run
 programs from a repository (git filters, hooks and the like are disabled). GitHub access is
-read-only, and web search is only for the owner's background tasks, with no way to open links.
+read-only. Web search is only for the owner's background tasks, and is off for Grok unless the
+owner turns it on, because xAI's search can open links.
 Who may see what is decided by the server-assigned identity of whoever asks. See
 [`docs/protocol.md`](docs/protocol.md#4-access-and-consent). The
 local `docker compose` setup uses LiveKit's public dev keys and listens only on localhost.

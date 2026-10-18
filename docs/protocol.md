@@ -224,11 +224,23 @@ sent whenever a task changes:
 - On (re)connecting, browsers send `{"type": "tasks?"}` on the `mooz.v0` data topic. Answer
   it, and also send every task to anyone who joins, addressed to them, because their query
   can arrive before you've seen them join.
+- Answer `tasks?` (and the join push) at most once every couple of seconds per person, so asking
+  over and over can't make the agent flood the meeting.
 - `{"type": "task.cancel", "id": "t_0a1b2c3d"}` on `mooz.v0`, addressed to the agent, cancels
   a task. Honor it only from the owner.
+- A public task's `progress` goes to everyone, so it must not name private sources or files
+  (the reference bridge says "Reading a private file"). A status answer said to the room calls a
+  private task "a private task", even when the owner asks.
+- Research only reads: it doesn't get tools that change memory, so what it reads can't plant or
+  delete notes.
 - When a task is done, post the result to chat (a private one only to the owner, with
   `destination_identities`) and save it to the owner's private memory. Speak a public result
-  only at a pause in the conversation, never a private one.
+  only at a pause in the conversation (no one is speaking, and no one has just finished), never
+  a private one.
+- When the owner asks for privacy ("privately", "just for me", "DM me"), answer only to them,
+  as a chat message with `destination_identities`, never spoken and kept out of the transcript
+  and notes. This covers quick answers, status answers and tasks, including a question that
+  overflows into a task.
 
 ## Changelog
 
