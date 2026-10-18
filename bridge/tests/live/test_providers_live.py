@@ -46,3 +46,20 @@ async def test_elevenlabs_speaks_48k_frames() -> None:
 
     assert frames
     assert {f.sample_rate for f in frames} == {48_000}
+
+
+@pytest.mark.skipif(not os.environ.get("XAI_API_KEY"), reason="needs XAI_API_KEY")
+async def test_grok_answers_briefly_from_the_transcript() -> None:
+    from mooz_agent.providers.grok import GrokModel
+
+    brain = ToolLoopBrain(
+        model=GrokModel(), agent_name="Atlas", owner_name="Kainoa", owner_identity="p_k"
+    )
+
+    answer = await brain.answer(
+        question="what did Zach say is blocking the deploy?",
+        asker=Speaker("p_k", "Kainoa", "human"),
+        transcript="Zach: the deploy is blocked on the database migration",
+    )
+
+    assert "migration" in answer.spoken.lower()

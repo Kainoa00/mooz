@@ -6,6 +6,7 @@ import os
 
 import aiohttp
 
+from ..brain import Model
 from ..config import AgentConfig
 from ..room import Speaker
 from .base import Brain, SpeechToText, TextToSpeech
@@ -31,6 +32,18 @@ def check_environment(brain: str = "claude") -> None:
         )
 
 
+def _model(config: AgentConfig) -> Model:
+    if config.brain == "grok":
+        from .grok import DEFAULT_GROK_MODEL, GrokModel
+
+        return GrokModel(
+            model=config.model or os.environ.get("MOOZ_GROK_MODEL") or DEFAULT_GROK_MODEL
+        )
+    from .claude import DEFAULT_MODEL, ClaudeModel
+
+    return ClaudeModel(model=config.model or os.environ.get("MOOZ_CLAUDE_MODEL") or DEFAULT_MODEL)
+
+
 def build_providers(
     *, http: aiohttp.ClientSession, me: Speaker, config: AgentConfig
 ) -> tuple[SpeechToText, TextToSpeech, Brain]:
@@ -40,7 +53,6 @@ def build_providers(
         return FakeSTT({}), FakeTTS(), EchoBrain()
 
     from ..brain import ToolLoopBrain
-    from .claude import DEFAULT_MODEL, ClaudeModel
     from .elevenlabs import ElevenLabsSTT, ElevenLabsTTS
 
     check_environment(config.brain)
@@ -49,9 +61,7 @@ def build_providers(
     voice = config.voice_id or os.environ.get("MOOZ_VOICE_ID")
     tts = ElevenLabsTTS(api_key=eleven_key, voice_id=voice, http=http)
     brain = ToolLoopBrain(
-        model=ClaudeModel(
-            model=config.model or os.environ.get("MOOZ_CLAUDE_MODEL") or DEFAULT_MODEL
-        ),
+        model=_model(config),
         agent_name=me.name,
         owner_name=me.owner_name or "your owner",
         owner_identity=me.owner_identity,
