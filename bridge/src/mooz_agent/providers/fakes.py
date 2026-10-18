@@ -13,7 +13,7 @@ from ..room import Speaker
 from .base import Answer
 
 if TYPE_CHECKING:
-    from ..brain import ModelTurn, ToolCall
+    from ..brain import Mode, ModelTurn, ToolCall
     from ..tools.toolbox import ToolResult, ToolSpec
 
 
@@ -111,7 +111,14 @@ class OfflineModel:
     tests exercise the real ToolBox, memory and scope rules. Anything else is echoed back.
     """
 
-    def conversation(self, *, system: str, tools: Sequence[ToolSpec]) -> OfflineConversation:
+    def conversation(
+        self,
+        *,
+        system: str,
+        tools: Sequence[ToolSpec],
+        mode: Mode = "answer",
+        web_search: bool = False,
+    ) -> OfflineConversation:
         return OfflineConversation(system, tools)
 
 

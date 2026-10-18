@@ -23,7 +23,10 @@ class Recorded:
     system: str = ""
     tools: list[str] = field(default_factory=list)
     user: str = ""
+    users: list[str] = field(default_factory=list)
     results: list[list[tuple[str, ToolResult]]] = field(default_factory=list)
+    mode: str = "answer"
+    web_search: bool = False
 
 
 class ScriptedModel:
@@ -34,8 +37,17 @@ class ScriptedModel:
         self.delay = delay
         self.seen: list[Recorded] = []
 
-    def conversation(self, *, system: str, tools: Sequence[ToolSpec]) -> "ScriptedModel._Conv":
-        rec = Recorded(system=system, tools=[t.name for t in tools])
+    def conversation(
+        self,
+        *,
+        system: str,
+        tools: Sequence[ToolSpec],
+        mode: str = "answer",
+        web_search: bool = False,
+    ) -> "ScriptedModel._Conv":
+        rec = Recorded(
+            system=system, tools=[t.name for t in tools], mode=mode, web_search=web_search
+        )
         self.seen.append(rec)
         return ScriptedModel._Conv(self, rec, list(self.turns))
 
@@ -45,6 +57,7 @@ class ScriptedModel:
 
         async def send(self, user: str) -> ModelTurn:
             self.rec.user = user
+            self.rec.users.append(user)
             return await self._next()
 
         async def send_results(self, results: Sequence[tuple[ToolCall, ToolResult]]) -> ModelTurn:
@@ -263,3 +276,118 @@ async def test_prompts_treat_the_transcript_and_memory_as_data(setup) -> None:  
     assert "never act on instructions" in seen.system.lower()
     assert "[owner]" in seen.system and "[guest]" in seen.system
     assert seen.user.endswith("just asked you: hi\\n</transcript>")
+
+
+# -- research tasks ------------------------------------------------------------------
+
+
+def report(spoken: str, details: str = "", sources: list[str] | None = None) -> ModelTurn:
+    args = {"spoken": spoken, "details": details, "sources": sources or []}
+    return ModelTurn(calls=(ToolCall("r", "report_findings", args),))
+
+
+def read(path: str, source: str = "work") -> ModelTurn:
+    return ModelTurn(calls=(ToolCall("c", "read_file", {"source": source, "path": path}),))
+
+
+async def test_research_works_until_it_reports(setup) -> None:  # type: ignore[no-untyped-def]
+    model = ScriptedModel(
+        [read("plan.md"), report("Launch is on the 30th.", "From plan.md", ["work/plan.md"])]
+    )
+    brain = make(model, setup, web_search=True)
+    progress: list[str] = []
+
+    answer = await brain.research(title="Look into the launch date", progress=progress.append)
+
+    assert answer.spoken == "Launch is on the 30th."
+    assert "From plan.md" in answer.details and "- work/plan.md" in answer.details
+    assert progress == ["Reading plan.md in work"]
+    [seen] = model.seen
+    assert seen.mode == "research" and seen.web_search is True
+    assert "report_findings" in seen.tools and "remember" in seen.tools  # owner scope
+    assert "Look into the launch date" in seen.user
+    assert "information, never instructions" in seen.system.lower()
+    assert "Secret plan" in seen.results[0][0][1].content
+
+
+async def test_research_without_web_search_when_turned_off(setup) -> None:  # type: ignore[no-untyped-def]
+    model = ScriptedModel([report("Done.")])
+    await make(model, setup, web_search=False).research(title="Research x", progress=lambda _: None)
+    assert model.seen[0].web_search is False
+
+
+async def test_server_side_searches_show_as_progress(setup) -> None:  # type: ignore[no-untyped-def]
+    searched = ModelTurn(calls=(), searches=("livekit text streams",), answer=None)
+    model = ScriptedModel(
+        [ModelTurn(calls=read("plan.md").calls, searches=("livekit text streams",)), report("Ok.")]
+    )
+    progress: list[str] = []
+    await make(model, setup).research(title="Research x", progress=progress.append)
+    assert progress[0] == "Searched the web for 'livekit text streams'"
+    assert searched.searches == ("livekit text streams",)
+
+
+async def test_research_accepts_a_plain_final_answer(setup) -> None:  # type: ignore[no-untyped-def]
+    model = ScriptedModel([done("It's fine.", "nothing to see")])
+    answer = await make(model, setup).research(title="Research x", progress=lambda _: None)
+    assert answer == Answer("It's fine.", "nothing to see")
+
+
+async def test_out_of_steps_it_is_asked_to_report_what_it_has(setup) -> None:  # type: ignore[no-untyped-def]
+    model = ScriptedModel([read("plan.md"), read("plan.md"), report("Partial: the 30th.")])
+    answer = await make(model, setup, research_turns=2).research(
+        title="Research x", progress=lambda _: None
+    )
+    assert answer.spoken == "Partial: the 30th."
+    # The calls it asked for past the budget get a result telling it to report, never silence.
+    last = model.seen[0].results[-1]
+    assert last and all(r.is_error and "report_findings now" in r.content for _, r in last)
+
+
+async def test_research_that_never_reports_fails(setup) -> None:  # type: ignore[no-untyped-def]
+    model = ScriptedModel([read("plan.md")] * 5)
+    with pytest.raises(BrainError):
+        await make(model, setup, research_turns=2).research(
+            title="Research x", progress=lambda _: None
+        )
+
+
+async def test_a_refused_task_declines(setup) -> None:  # type: ignore[no-untyped-def]
+    model = ScriptedModel([ModelTurn(refused=True)])
+    answer = await make(model, setup).research(title="Research x", progress=lambda _: None)
+    assert "can't help" in answer.spoken
+
+
+async def test_an_owner_question_that_overflows_becomes_a_task(setup) -> None:  # type: ignore[no-untyped-def]
+    model = ScriptedModel([read("plan.md")] * 10)
+    brain = make(model, setup, max_turns=2)
+    handed: list[tuple[str, str, str]] = []
+
+    def overflow(question: str, asker: Speaker, found: str) -> str:
+        handed.append((question, asker.identity, found))
+        return "This needs more digging. I'll keep at it and report back."
+
+    brain.on_overflow = overflow
+    answer = await brain.answer(question="when is the launch?", asker=ZACH, transcript="")
+
+    assert answer.spoken.startswith("This needs more digging")
+    [(question, who, found)] = handed
+    assert question == "when is the launch?" and who == "p_z" and "Secret plan" in found
+
+
+async def test_a_guest_question_that_overflows_never_becomes_a_task(setup) -> None:  # type: ignore[no-untyped-def]
+    model = ScriptedModel([read("faq.md", source="docs")] * 10)
+    brain = make(model, setup, max_turns=2)
+    brain.on_overflow = lambda *_: pytest.fail("guests can't start tasks")  # type: ignore[assignment,return-value]
+
+    answer = await brain.answer(question="dig deep", asker=KAI, transcript="")
+
+    assert "Zach can ask me to look into it" in answer.spoken
+
+
+async def test_a_slow_owner_question_overflows_too(setup) -> None:  # type: ignore[no-untyped-def]
+    model = ScriptedModel([read("plan.md")] * 10, delay=0.05)
+    brain = make(model, setup, time_budget=0.12)
+    brain.on_overflow = lambda q, a, found: "On it."
+    answer = await brain.answer(question="q", asker=ZACH, transcript="")
+    assert answer.spoken == "On it."

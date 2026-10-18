@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 import anthropic
 
-from ..brain import ANSWER_SCHEMA, ModelTurn, ToolCall
+from ..brain import ANSWER_SCHEMA, Mode, ModelTurn, ToolCall
 from ..tools.toolbox import ToolResult, ToolSpec
 from .base import Answer, BrainError
 
@@ -136,7 +136,14 @@ class ClaudeModel:
         self._model = model
         self._effort = effort
 
-    def conversation(self, *, system: str, tools: Sequence[ToolSpec]) -> ClaudeConversation:
+    def conversation(
+        self,
+        *,
+        system: str,
+        tools: Sequence[ToolSpec],
+        mode: Mode = "answer",
+        web_search: bool = False,
+    ) -> ClaudeConversation:
         return ClaudeConversation(
             self._client, model=self._model, effort=self._effort, system=system, tools=tools
         )

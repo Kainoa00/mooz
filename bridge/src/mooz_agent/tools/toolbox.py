@@ -14,8 +14,10 @@ from typing import Any
 
 from ..config import AgentConfig, Source
 from ..memory import MemoryStore
+from ..transcript import flatten
 from . import files, git
 from .files import FileAccessError
+from .redact import redact
 
 log = logging.getLogger(__name__)
 
@@ -204,6 +206,30 @@ class ToolBox:
                     ),
                 ]
         return out
+
+    # -- describing a call (task progress, built from the arguments, never model prose) -
+
+    def describe(self, name: str, args: dict[str, Any]) -> str:
+        def arg(key: str, default: str = "") -> str:
+            value = args.get(key)
+            text = value if isinstance(value, str) and value.strip() else default
+            return redact(flatten(text))[:60]
+
+        source = arg("source", "your sources")
+        descriptions: dict[str, Callable[[], str]] = {
+            "list_files": lambda: f"Listing {arg('path', 'files')} in {source}",
+            "read_file": lambda: f"Reading {arg('path')} in {source}",
+            "search": lambda: f"Searching {source} for '{arg('query')}'",
+            "git_status": lambda: f"Checking git status of {source}",
+            "git_log": lambda: f"Reading the history of {source}",
+            "git_show": lambda: f"Looking at commit {arg('ref', 'HEAD')} in {source}",
+            "git_diff": lambda: f"Comparing changes in {source}",
+            "recall": lambda: f"Checking my memory for '{arg('query')}'",
+            "remember": lambda: "Updating my memory",
+            "forget": lambda: "Updating my memory",
+        }
+        describe = descriptions.get(name)
+        return describe() if describe else "Working"
 
     # -- running a call ------------------------------------------------------------
 

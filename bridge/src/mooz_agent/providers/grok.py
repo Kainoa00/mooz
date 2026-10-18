@@ -15,7 +15,7 @@ from typing import Any
 
 import openai
 
-from ..brain import ANSWER_SCHEMA, ModelTurn, ToolCall
+from ..brain import ANSWER_SCHEMA, Mode, ModelTurn, ToolCall
 from ..tools.toolbox import ToolResult, ToolSpec
 from .base import Answer, BrainError
 
@@ -146,5 +146,12 @@ class GrokModel:
         )
         self._model = model
 
-    def conversation(self, *, system: str, tools: Sequence[ToolSpec]) -> GrokConversation:
+    def conversation(
+        self,
+        *,
+        system: str,
+        tools: Sequence[ToolSpec],
+        mode: Mode = "answer",
+        web_search: bool = False,
+    ) -> GrokConversation:
         return GrokConversation(self._client, model=self._model, system=system, tools=tools)
