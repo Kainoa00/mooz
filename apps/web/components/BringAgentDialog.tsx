@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { errorMessage, readBody } from "@/lib/fetch-json";
+import type { BroughtConnector } from "./ConnectorAgent";
+import { ConnectorDoor } from "./ConnectorDoor";
 
 interface AgentCode {
   code: string;
@@ -9,9 +11,19 @@ interface AgentCode {
   expiresAt: number;
 }
 
-/** Shows the one-time command that connects the user's own agent to this meeting. */
-export function BringAgentDialog({ slug }: { slug: string }) {
+/**
+ * Two doors for the user's own agent: the assistant app they already use (a connector),
+ * or the one-time command that connects mooz-agent on their machine.
+ */
+export function BringAgentDialog({
+  slug,
+  onBringConnector,
+}: {
+  slug: string;
+  onBringConnector?: (connector: BroughtConnector) => void;
+}) {
   const [open, setOpen] = useState(false);
+  const [door, setDoor] = useState<"connector" | "bridge">("bridge");
   const [code, setCode] = useState<AgentCode | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -45,6 +57,37 @@ export function BringAgentDialog({ slug }: { slug: string }) {
         <div role="dialog" aria-label="Bring my agent" className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
           <div className="flex w-full max-w-lg flex-col gap-4 rounded-xl bg-background p-5 text-foreground shadow-xl">
             <h2 className="text-lg font-semibold">Bring your agent into this meeting</h2>
+            <div role="tablist" className="flex gap-2 text-sm">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={door === "connector"}
+                onClick={() => setDoor("connector")}
+                className={`rounded-lg px-3 py-1 ${door === "connector" ? "bg-agent text-white" : "border border-zinc-400"}`}
+              >
+                Grok, Claude or ChatGPT
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={door === "bridge"}
+                onClick={() => setDoor("bridge")}
+                className={`rounded-lg px-3 py-1 ${door === "bridge" ? "bg-agent text-white" : "border border-zinc-400"}`}
+              >
+                mooz-agent on my machine
+              </button>
+            </div>
+            {door === "connector" && onBringConnector && (
+              <ConnectorDoor
+                slug={slug}
+                onBring={(c) => {
+                  onBringConnector(c);
+                  setOpen(false);
+                }}
+              />
+            )}
+            {door === "bridge" && (
+            <>
             <p className="text-sm text-muted">
               Run this on the machine where your agent lives. Your API keys stay on that machine. The
               host approves your agent before it can hear anything. The code works once and expires in
@@ -61,6 +104,8 @@ export function BringAgentDialog({ slug }: { slug: string }) {
                   {copied ? "Copied" : "Copy command"}
                 </button>
               </div>
+            )}
+            </>
             )}
             <button type="button" onClick={() => setOpen(false)} className="self-end rounded-lg bg-accent px-4 py-2 text-sm text-white">
               Done

@@ -3,6 +3,7 @@
 import { useIsSpeaking, useParticipantAttributes } from "@livekit/components-react";
 import type { Participant } from "livekit-client";
 import { useState } from "react";
+import { APP_LABEL, type AssistantApp } from "@/lib/connector-protocol";
 import { participantLabel } from "@/lib/labels";
 import { AgentBadge } from "./AgentBadge";
 import { useMeeting } from "./MeetingContext";
@@ -50,6 +51,9 @@ export function AgentCard({ participant }: { participant: Participant }) {
         <span className="flex items-center gap-2 text-xs text-zinc-400">
           <AgentBadge />
           {speaking ? "speaking" : "listening"}
+          {attributes?.door === "connector" && (
+            <span data-testid="agent-door">via {APP_LABEL[(attributes.connector_app ?? "other") as AssistantApp] ?? "connector"}</span>
+          )}
         </span>
         {error && (
           <span role="alert" className="text-xs text-red-400">

@@ -9,12 +9,13 @@ import {
   useTracks,
 } from "@livekit/components-react";
 import { Track } from "livekit-client";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { isAgent } from "@/lib/labels";
 import { AgentCard } from "./AgentCard";
 import { AgentRequestsTray } from "./AgentRequestsTray";
 import { BringAgentDialog } from "./BringAgentDialog";
 import { ChatPanel } from "./ChatPanel";
+import { ConnectorAgent, type BroughtConnector } from "./ConnectorAgent";
 import { JoinForm, type JoinResult } from "./JoinForm";
 import { MeetingContext } from "./MeetingContext";
 import { MoozTile } from "./MoozTile";
@@ -48,8 +49,39 @@ function Stage() {
   );
 }
 
+const broughtKey = (slug: string) => `mooz.connector.${slug}`;
+
+function readBrought(slug: string): BroughtConnector | null {
+  try {
+    const saved = window.sessionStorage.getItem(broughtKey(slug));
+    return saved ? (JSON.parse(saved) as BroughtConnector) : null;
+  } catch {
+    return null; // on the server, nothing saved, or storage is off
+  }
+}
+
+/** The connector this tab brought here, kept across reloads (this tab only). */
+function useBroughtConnector(slug: string): [BroughtConnector | null, (c: BroughtConnector | null) => void] {
+  // Read once on mount: it's only rendered after joining, so the server's null never shows.
+  const [connector, setConnector] = useState<BroughtConnector | null>(() => readBrought(slug));
+  const update = useCallback(
+    (c: BroughtConnector | null) => {
+      setConnector(c);
+      try {
+        if (c) window.sessionStorage.setItem(broughtKey(slug), JSON.stringify(c));
+        else window.sessionStorage.removeItem(broughtKey(slug));
+      } catch {
+        // it still works until this tab reloads
+      }
+    },
+    [slug],
+  );
+  return [connector, update];
+}
+
 export function MeetingRoom({ slug }: { slug: string }) {
   const [session, setSession] = useState<JoinResult | null>(null);
+  const [connector, setConnector] = useBroughtConnector(slug);
 
   if (!session) return <JoinForm slug={slug} onJoined={setSession} />;
 
@@ -73,7 +105,7 @@ export function MeetingRoom({ slug }: { slug: string }) {
             <span className="flex items-center gap-3">
               <span>{session.isHost ? "You are the host" : session.name}</span>
               {session.isHost && <NotesPolicyToggle slug={slug} />}
-              <BringAgentDialog slug={slug} />
+              <BringAgentDialog slug={slug} onBringConnector={setConnector} />
             </span>
           </header>
           <NotesBanner slug={slug} />
@@ -87,6 +119,9 @@ export function MeetingRoom({ slug }: { slug: string }) {
               <ChatPanel />
             </div>
           </div>
+          {connector && (
+            <ConnectorAgent key={connector.requestId} slug={slug} connector={connector} onEnded={() => setConnector(null)} />
+          )}
           <ControlBar controls={{ chat: false }} />
           <RoomAudioRenderer />
         </LiveKitRoom>

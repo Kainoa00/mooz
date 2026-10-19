@@ -1,4 +1,5 @@
 import type { ConnectorAgent } from "./connector-agents";
+import type { AnswerPacket } from "./connector-protocol";
 import type { Db } from "./db";
 import { HttpError } from "./http";
 import { newId } from "./ids";
@@ -51,16 +52,7 @@ export interface Question {
 }
 
 /** What the owner's tab gets (as a LiveKit data packet) to post and speak as the agent. */
-export interface AnswerPacket {
-  type: "answer";
-  id: string;
-  spoken: string;
-  details: string;
-  /** Whom it answers (a question from an agent is answered to its owner). */
-  reply_to: string;
-  /** Whose words were in what the assistant read, for notes opt-outs. */
-  sources: string[];
-}
+export type { AnswerPacket };
 
 interface Entry {
   question: Question;

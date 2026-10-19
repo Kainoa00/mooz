@@ -7,3 +7,96 @@
  */
 
 export const CONNECTOR_TOPIC = "mooz.connector";
+
+export type AssistantApp = "grok" | "claude" | "chatgpt" | "other";
+
+export const APP_LABEL: Record<AssistantApp, string> = {
+  grok: "Grok",
+  claude: "Claude",
+  chatgpt: "ChatGPT",
+  other: "your assistant",
+};
+
+export interface AnswerPacket {
+  type: "answer";
+  id: string;
+  spoken: string;
+  details: string;
+  reply_to: string;
+  sources: string[];
+}
+
+const MAX_SPOKEN = 400;
+const MAX_DETAILS = 4000;
+const MAX_SOURCES = 50;
+
+/** An answer packet from the server, validated and capped (null if it isn't one). */
+export function parseAnswerPacket(payload: Uint8Array): AnswerPacket | null {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(new TextDecoder().decode(payload));
+  } catch {
+    return null;
+  }
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
+  const m = raw as Record<string, unknown>;
+  if (m.type !== "answer" || typeof m.id !== "string" || m.id.length > 40) return null;
+  if (typeof m.spoken !== "string" || !m.spoken.trim() || typeof m.reply_to !== "string") return null;
+  if (m.details !== undefined && typeof m.details !== "string") return null;
+  if (!Array.isArray(m.sources) || !m.sources.every((s) => typeof s === "string")) return null;
+  return {
+    type: "answer",
+    id: m.id,
+    spoken: m.spoken.slice(0, MAX_SPOKEN),
+    details: (m.details ?? "").slice(0, MAX_DETAILS),
+    reply_to: m.reply_to.slice(0, 100),
+    sources: (m.sources as string[]).slice(0, MAX_SOURCES),
+  };
+}
+
+/** What the owner sends their assistant: short, and none of the meeting's words. */
+export function assistantPrompt(questionId: string): string {
+  return (
+    `Answer question ${questionId} from my mooz meeting: use the mooz connector's get_question tool, ` +
+    "then post_answer with your answer."
+  );
+}
+
+const PREFILL: Partial<Record<AssistantApp, string>> = {
+  grok: "https://grok.com/?q=",
+  claude: "https://claude.ai/new?q=",
+  chatgpt: "https://chatgpt.com/?q=",
+};
+
+/** A link that opens the app with the prompt filled in (undocumented; Copy always works too). */
+export function assistantLink(app: AssistantApp, prompt: string): string | null {
+  const base = PREFILL[app];
+  return base ? `${base}${encodeURIComponent(prompt)}` : null;
+}
+
+/** How to add the connector link in each app. */
+export function setupSteps(app: AssistantApp): string[] {
+  switch (app) {
+    case "grok":
+      return [
+        "Open grok.com/connectors and choose New Connector, then Custom.",
+        "Paste the link below as the server URL and save.",
+      ];
+    case "claude":
+      return [
+        "In Claude, open Settings, then Connectors, and choose Add custom connector.",
+        "Name it mooz, paste the link below as the URL, and add it.",
+      ];
+    case "chatgpt":
+      return [
+        "In ChatGPT, open Settings, then Apps & Connectors, then Advanced, and turn on Developer mode.",
+        "Create a connector, paste the link below as its URL, and choose no authentication.",
+        "If your plan can't use write actions, paste the answer back here instead.",
+      ];
+    default:
+      return [
+        "Add a custom MCP connector (Streamable HTTP) in your assistant app.",
+        "Paste the link below as its URL, with no authentication.",
+      ];
+  }
+}
