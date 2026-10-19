@@ -53,6 +53,24 @@ describe("AgentSpeaker", () => {
     expect(waits[0]).toBeCloseTo((LEAD_SECONDS + 2402 / TTS_RATE) * 1000, 6);
   });
 
+  it("never leaves a gap when the next chunk arrives just before the last one ends", async () => {
+    const { out, started } = fakeOut();
+    const chunk = second(2400); // 0.1 s at 24 kHz
+    let n = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (n === 1) out.currentTime = 10 + LEAD_SECONDS + 0.09; // the first chunk is nearly done
+        if (n === 2) controller.close();
+        else controller.enqueue(new Uint8Array(chunk));
+        n += 1;
+      },
+    });
+    const speaker = new AgentSpeaker({ out, destination: {}, synthesize: async () => stream, onError: () => undefined, wait: async () => undefined });
+    speaker.speak("two chunks");
+    await vi.waitFor(() => expect(started).toHaveLength(2));
+    expect(started[1].at).toBeCloseTo(started[0].at + 0.1, 9);
+  });
+
   it("speaks one answer at a time, and drops extras past a few", async () => {
     const { out } = fakeOut();
     let release!: () => void;

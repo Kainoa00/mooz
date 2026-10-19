@@ -14,7 +14,7 @@ export function readCookie(req: Request, name: string): string | undefined {
   return undefined;
 }
 
-function isHttps(req: Request): boolean {
+export function isHttps(req: Request): boolean {
   const forwarded = req.headers.get("x-forwarded-proto");
   if (forwarded) return forwarded.split(",")[0].trim() === "https";
   return new URL(req.url).protocol === "https:";

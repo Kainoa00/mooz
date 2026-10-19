@@ -22,7 +22,12 @@ export const MAX_QUESTION_CHARS = 1000;
 export const MAX_CONTEXT_CHARS = 12_000;
 export const MAX_SPOKEN_CHARS = 400;
 export const MAX_DETAILS_CHARS = 4000;
+/** Waiting and answered questions kept per agent. */
+export const MAX_ENTRIES = 20;
+/** People a line may name in `reply_to` and `sources`. */
+export const MAX_LINE_PEOPLE = 50;
 const MAX_AGENTS = 500;
+const SWEEP_EVERY_MS = 60_000;
 
 export type Role = "owner" | "guest" | "agent" | "you";
 
@@ -46,9 +51,12 @@ export interface Asker {
 export interface Question {
   id: string;
   asker: Asker;
+  /** One line, as said (escape it before putting it in front of a model). */
   text: string;
   askedAt: number;
   status: "waiting" | "answered";
+  /** The owner tapped to send it to their assistant; only then can the assistant read it. */
+  released: boolean;
 }
 
 /** What the owner's tab gets (as a LiveKit data packet) to post and speak as the agent. */
@@ -82,8 +90,18 @@ function store(): Map<string, AgentState> {
   return (g[STORE] ??= new Map());
 }
 
+let lastSweep = 0;
+
+/** Agents untouched for longer than a question lives hold nothing worth keeping. */
+function sweep(all: Map<string, AgentState>, now: number): void {
+  if (now - lastSweep < SWEEP_EVERY_MS) return;
+  lastSweep = now;
+  for (const [identity, state] of all) if (now - state.touched > QUESTION_TTL_MS) all.delete(identity);
+}
+
 function stateFor(agentIdentity: string, now: number, create: boolean): AgentState | undefined {
   const all = store();
+  sweep(all, now);
   let state = all.get(agentIdentity);
   if (!state && create) {
     if (all.size >= MAX_AGENTS) {
@@ -95,6 +113,7 @@ function stateFor(agentIdentity: string, now: number, create: boolean): AgentSta
   }
   if (state) {
     state.entries = state.entries.filter((e) => now - e.question.askedAt <= QUESTION_TTL_MS);
+    state.lines = state.lines.filter((l) => now - l.at <= CONTEXT_WINDOW_MS);
     state.touched = now;
   }
   return state;
@@ -133,8 +152,12 @@ function roleOf(agent: ConnectorAgent, identity: string, person: Person): Role {
 /** The person behind a speaker (an agent stands for its owner). */
 const personOf = (identity: string, person: Person) => (person.kind === "agent" && person.owner ? person.owner : identity);
 
-const strings = (value: unknown): string[] =>
-  Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : typeof value === "string" ? [value] : [];
+/** The people a line names, as long as they're in this meeting (nobody else matters to opt-outs). */
+function namedPeople(value: unknown, people: Map<string, Person>): string[] {
+  const raw = Array.isArray(value) ? value : [value];
+  const named = raw.filter((v): v is string => typeof v === "string" && people.has(v));
+  return [...new Set(named)].slice(0, MAX_LINE_PEOPLE);
+}
 
 function parseLines(
   value: unknown,
@@ -156,7 +179,12 @@ function parseLines(
     const at = typeof item.at === "number" && Number.isFinite(item.at) ? Math.min(item.at, now) : now;
     if (now - at > CONTEXT_WINDOW_MS) continue;
     // Left out if anyone it belongs to opted out (as the bridge's notes do).
-    const belongs = [item.identity, ...(person.owner ? [person.owner] : []), ...strings(item.reply_to), ...strings(item.sources)];
+    const belongs = [
+      item.identity,
+      ...(person.owner ? [person.owner] : []),
+      ...namedPeople(item.reply_to, people),
+      ...namedPeople(item.sources, people),
+    ];
     if (belongs.some(optedOut)) continue;
     const text = flatten(item.text).slice(0, MAX_LINE_CHARS);
     if (!text.trim()) continue;
@@ -195,7 +223,7 @@ export function enqueueQuestion(
   if (typeof input.asker !== "string" || !askerPerson || input.asker === agent.identity) {
     throw new HttpError(400, "invalid_asker", "Whoever asked isn't in this meeting");
   }
-  const text = typeof input.text === "string" ? flatten(input.text).trim() : "";
+  const text = typeof input.text === "string" ? flatten(input.text, { markup: false }).trim() : "";
   if (!text || text.length > MAX_QUESTION_CHARS) {
     throw new HttpError(400, "invalid_question", `A question is 1–${MAX_QUESTION_CHARS} characters`);
   }
@@ -207,6 +235,7 @@ export function enqueueQuestion(
     text,
     askedAt: now,
     status: "waiting",
+    released: false,
   };
   const replyTo = personOf(input.asker, askerPerson);
   const people_ = [...new Set([replyTo, ...lines.map((l) => personOf(l.speaker, people.get(l.speaker)!))])];
@@ -218,6 +247,7 @@ export function enqueueQuestion(
   for (const extra of waiting.slice(0, Math.max(0, waiting.length - MAX_WAITING))) {
     state.entries.splice(state.entries.indexOf(extra), 1);
   }
+  if (state.entries.length > MAX_ENTRIES) state.entries.splice(0, state.entries.length - MAX_ENTRIES);
   return question;
 }
 
@@ -236,14 +266,39 @@ function shareable(db: Db, agent: ConnectorAgent, lines: StoredLine[]): MeetingL
     .map(({ speaker, role, name, kind, via, text, at }) => ({ speaker, role, name, kind, via, text, at }));
 }
 
-/** A waiting question (the oldest, unless one is named) and what the meeting said around it. */
+function entryFor(agentIdentity: string, id: unknown, now: number): Entry {
+  const entry = (stateFor(agentIdentity, now, false)?.entries ?? []).find((e) => e.question.id === id);
+  if (!entry) throw new HttpError(404, "question_not_found", "No such question (it may have expired)");
+  return entry;
+}
+
+/** The owner tapped to send this question to their assistant. */
+export function releaseQuestion(agentIdentity: string, id: unknown, now = Date.now()): Question {
+  const entry = entryFor(agentIdentity, id, now);
+  entry.question.released = true;
+  return entry.question;
+}
+
+/** The owner dismissed it: it's gone, for the assistant too. */
+export function dismissQuestion(agentIdentity: string, id: unknown, now = Date.now()): void {
+  const state = stateFor(agentIdentity, now, false);
+  const entry = entryFor(agentIdentity, id, now);
+  state!.entries.splice(state!.entries.indexOf(entry), 1);
+}
+
+/**
+ * A waiting question the owner sent to the assistant (the oldest, unless one is named) and
+ * what the meeting said around it. Questions the owner hasn't tapped don't exist here.
+ */
 export function getQuestion(
   db: Db,
   agent: ConnectorAgent,
   id: string | undefined,
   now = Date.now(),
 ): { question: Question; lines: MeetingLine[] } | undefined {
-  const waiting = (stateFor(agent.identity, now, false)?.entries ?? []).filter((e) => e.question.status === "waiting");
+  const waiting = (stateFor(agent.identity, now, false)?.entries ?? []).filter(
+    (e) => e.question.status === "waiting" && e.question.released,
+  );
   const entry = id === undefined ? waiting[0] : waiting.find((e) => e.question.id === id);
   return entry ? { question: entry.question, lines: shareable(db, agent, entry.lines) } : undefined;
 }
@@ -261,15 +316,20 @@ function cap(text: string, max: number): string {
   return `${(space > max / 2 ? cut.slice(0, space) : cut).trimEnd()}…`;
 }
 
-/** The assistant's answer (or the one its owner pasted), ready to post and speak. */
+/**
+ * The assistant's answer, or the one its owner pasted (`by: "owner"`), ready to post and
+ * speak. The assistant can answer only a question its owner sent it.
+ */
 export function answerQuestion(
   agentIdentity: string,
   id: unknown,
   input: { spoken: unknown; details?: unknown },
-  now = Date.now(),
+  { by = "assistant", now = Date.now() }: { by?: "assistant" | "owner"; now?: number } = {},
 ): AnswerPacket {
-  const entry = (stateFor(agentIdentity, now, false)?.entries ?? []).find((e) => e.question.id === id);
-  if (!entry) throw new HttpError(404, "question_not_found", "No such question (it may have expired)");
+  const entry = entryFor(agentIdentity, id, now);
+  if (by === "assistant" && !entry.question.released) {
+    throw new HttpError(404, "question_not_found", "No such question (it may have expired)");
+  }
   if (entry.question.status === "answered") {
     throw new HttpError(409, "already_answered", "That question was already answered");
   }
@@ -295,4 +355,5 @@ export function forgetAgent(agentIdentity: string): void {
 
 export function resetQueueForTests(): void {
   store().clear();
+  lastSweep = 0;
 }

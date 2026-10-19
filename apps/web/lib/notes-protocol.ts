@@ -49,7 +49,10 @@ export function notesBannerText(keepers: string[], connectors: string[] = []): s
   if (keepers.length) parts.push(`${list(keepers)} ${keepers.length === 1 ? "is" : "are"} keeping notes`);
   if (connectors.length) {
     const one = connectors.length === 1;
-    parts.push(`${list(connectors)} can share what's said with ${one ? "its" : "their"} assistant app${one ? "" : "s"} when asked`);
+    parts.push(
+      `${list(connectors)} can pass what's said to ${one ? "its owner's" : "their owners'"} assistant app${one ? "" : "s"} when asked` +
+        ` (and with voice on, ${one ? "its owner's ElevenLabs account transcribes" : "their owners' ElevenLabs accounts transcribe"} it)`,
+    );
   }
   return `📝 ${parts.join("; ")}`;
 }

@@ -84,7 +84,7 @@ export function NotesBanner({ slug }: { slug: string }) {
       <span data-testid="notes-banner-text">{notesBannerText(keepers.map(ownedName), connectors.map(ownedName))}</span>
       {optedOut ? (
         <span className="flex items-center gap-2">
-          <span data-testid="notes-opted-out">You&apos;re left out: your words aren&apos;t kept in notes or shared with assistant apps.</span>
+          <span data-testid="notes-opted-out">You&apos;re left out: your words aren&apos;t kept in notes, passed to assistant apps, or transcribed for them.</span>
           <button type="button" className="underline" disabled={pending} onClick={() => setOptOut(false)}>
             Include me
           </button>

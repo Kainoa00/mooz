@@ -243,8 +243,10 @@ echo "MOOZ_PUBLIC_URL=https://<random>.trycloudflare.com" >> .env && docker comp
 anyone can type **`@Grok …`**. A card appears for you: **Ask Grok ↗** opens your app with a
 short prompt (Claude and Grok wait for you to press Enter; ChatGPT sends it straight away). Your
 app reads the question through the connector and answers; mooz says "One sec, checking." in the
-meantime. **Copy prompt** and **Paste the answer** work with any app. Turn on **Review answers
-before they're spoken** to approve each one first.
+meantime. **Copy prompt** and **Paste the answer** work with any app (a long pasted answer is
+spoken in part and posted in full). Turn on **Review answers before they're spoken** to approve
+each one first. **Take Grok out** removes it from the meeting; it also leaves when you close the
+tab for more than a couple of minutes, or when the meeting ends.
 
 **Voice (optional).** Without it, people reach your assistant in chat. Add your ElevenLabs API
 key in the same dialog and it also hears its name said out loud ("Hey Grok, …") and speaks its
@@ -259,9 +261,13 @@ only the question's ID, never what was said. Your app keeps the conversation in 
 what's said, and can opt out.
 
 **Your app holds your memory and maybe your mail or files.** Meeting text could try to steer it.
-That's why nothing reaches it until you tap, why it's told to only answer, and why apps like
-ChatGPT confirm actions that write. Use **Review answers** when it matters, and keep the link
-private: anyone who has it can read what your assistant is asked while it's in a meeting.
+So your app can read a question only after you tap **Ask** or **Copy** for it (**Dismiss**
+deletes it), it's told to only answer, and to leave your mail, files and other connectors alone
+when the question isn't yours; apps like ChatGPT also confirm actions that write. Use **Review
+answers** when it matters. Keep the link private, like a password: anyone who has it can read the
+questions you send your assistant while it's in a meeting. Don't add it as a workspace-wide
+connector, and know that proxy and tunnel logs may record it (it's in the URL). The dialog shows
+when each link was last used; **New link** if one looks off.
 
 **Costs:** your assistant app's own plan; with voice, ElevenLabs bills you for transcription
 (per minute of speech) and for the answers it speaks. The mooz server pays for nothing and holds

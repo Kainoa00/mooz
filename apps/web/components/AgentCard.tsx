@@ -54,7 +54,9 @@ export function AgentCard({ participant }: { participant: Participant }) {
           <AgentBadge />
           {speaking ? "speaking" : "listening"}
           {attributes?.door === "connector" && (
-            <span data-testid="agent-door">via {APP_LABEL[(attributes.connector_app ?? "other") as AssistantApp] ?? "connector"}</span>
+            <span data-testid="agent-door">
+              via {connectorLabel(attributes.connector_app)}
+            </span>
           )}
         </span>
         {error && (
@@ -74,4 +76,9 @@ export function AgentCard({ participant }: { participant: Participant }) {
       )}
     </li>
   );
+}
+
+/** The app behind a connector agent, as everyone sees it ("your assistant" is only the owner's word). */
+function connectorLabel(app: string | undefined): string {
+  return app && app !== "other" && app in APP_LABEL ? APP_LABEL[app as AssistantApp] : "a connector";
 }

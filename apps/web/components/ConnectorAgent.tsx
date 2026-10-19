@@ -9,6 +9,7 @@ import {
   assistantLink,
   assistantPrompt,
   parseAnswerPacket,
+  splitPastedAnswer,
   type AnswerPacket,
   type AssistantApp,
 } from "@/lib/connector-protocol";
@@ -100,6 +101,9 @@ export function ConnectorAgent({
   const earsRef = useRef<ConnectorEars | null>(null);
   const delivered = useRef<Set<string> | null>(null);
   const reviewRef = useRef(review);
+  // Questions this tab knows of (it asked them, or the server listed them). A pushed answer
+  // counts only for one of these; anything else waits for the server's list.
+  const known = useRef(new Set<string>());
   const voiceRef = useRef<AgentVoice | null>(null);
   const settings = useVoiceSettings();
   // A voice problem belongs to the key it happened with; a new key gets a fresh try.
@@ -116,7 +120,7 @@ export function ConnectorAgent({
     const attributes: Record<string, string> = { reply_to: replyTo };
     if (sources.length) attributes.sources = sources.join(",");
     await room.localParticipant.sendText(text, { topic: "lk.chat", attributes });
-    earsRef.current?.said(text, replyTo);
+    earsRef.current?.said(text, replyTo, sources);
   }, []);
 
   const post = useCallback(
@@ -163,7 +167,12 @@ export function ConnectorAgent({
       const body = res ? await readBody(res) : null;
       const question = body?.question as { id: string; text: string; asker: { name: string } } | undefined;
       if (res?.ok && question) {
-        setAsked((list) => [...list, { id: question.id, askerName: question.asker.name, text: question.text }]);
+        known.current.add(question.id);
+        setAsked((list) =>
+          list.some((q) => q.id === question.id)
+            ? list
+            : [...list, { id: question.id, askerName: question.asker.name, text: question.text }],
+        );
       } else {
         setError(errorMessage(body, "Could not pass a question to your assistant."));
       }
@@ -186,7 +195,11 @@ export function ConnectorAgent({
       const body = res ? await readBody(res) : null;
       if (stopped) return;
       const status = body?.status;
-      if (status === "approved") setApproved(true);
+      if (res && [401, 403, 404].includes(res.status)) {
+        // The connector was deleted, or this tab isn't its owner's anymore.
+        setError(errorMessage(body, "Your agent's request is gone."));
+        setPhase("removed");
+      } else if (status === "approved") setApproved(true);
       else if (status === "denied") setPhase("denied");
       else if (status === "revoked") setPhase("removed");
       else if (status === "expired") setPhase("expired");
@@ -239,10 +252,11 @@ export function ConnectorAgent({
       const { token, url, identity, name } = body as { token: string; url: string; identity: string; name: string };
       earsRef.current = new ConnectorEars(name, identity);
       room.registerTextStreamHandler("lk.chat", (reader, info) => void onChat(reader, info.identity));
-      room.on(RoomEvent.DataReceived, (payload, participant, _kind, topic) => {
-        if (participant || topic !== CONNECTOR_TOPIC) return; // only the server sends answers
+      room.on(RoomEvent.DataReceived, (payload, participant, _kind, topic, _encryption, sender) => {
+        // Only the server sends answers: no participant, and no sender identity at all.
+        if (participant || sender || topic !== CONNECTOR_TOPIC) return;
         const packet = parseAnswerPacket(payload);
-        if (packet) receive(packet);
+        if (packet && known.current.has(packet.id)) receive(packet);
       });
       room.on(RoomEvent.Disconnected, (reason) => {
         if (cancelled) return;
@@ -295,17 +309,47 @@ export function ConnectorAgent({
     };
   }, [phase, settings]);
 
-  // 3. In case an answer's packet never arrived (or this tab reloaded): pick it up from the server.
+  // 3. The server's list is the truth: waiting questions (also after a reload) and answers
+  //    whose packet never arrived.
   useEffect(() => {
     if (phase !== "in") return;
     const timer = setInterval(async () => {
       const res = await fetch(`${base}/questions`, { cache: "no-store" }).catch(() => null);
-      const body = res ? await readBody(res) : null;
-      const questions = (body?.questions ?? []) as { answer?: AnswerPacket }[];
+      if (!res?.ok) return;
+      const body = await readBody(res);
+      const questions = (body?.questions ?? []) as {
+        id: string;
+        text: string;
+        status: string;
+        asker: { name: string };
+        answer?: AnswerPacket;
+      }[];
+      for (const q of questions) known.current.add(q.id);
+      setAsked(
+        questions
+          .filter((q) => q.status === "waiting")
+          .map((q) => ({ id: q.id, askerName: q.asker.name, text: q.text })),
+      );
       for (const q of questions) if (q.answer) receive(q.answer);
     }, ANSWER_POLL_MS);
     return () => clearInterval(timer);
   }, [phase, base, receive]);
+
+  /** Cancel the request, or take the agent out of the meeting. */
+  async function withdraw() {
+    const res = await fetch(base, { method: "DELETE" }).catch(() => null);
+    if (!res?.ok) {
+      setError(errorMessage(res ? await readBody(res) : null, "Could not take your agent out. Try again."));
+      return;
+    }
+    setError(null);
+    setPhase("removed");
+  }
+
+  async function dismiss(id: string) {
+    setAsked((list) => list.filter((x) => x.id !== id));
+    await fetch(`${base}/questions/${id}`, { method: "DELETE" }).catch(() => null);
+  }
 
   function toggleReview(on: boolean) {
     reviewRef.current = on;
@@ -323,7 +367,7 @@ export function ConnectorAgent({
     in: `${connector.name} is in the meeting. When someone asks it something, it shows up here.`,
     denied: `The host didn't let ${connector.name} in.`,
     expired: "The request expired. Try again from Bring my agent.",
-    removed: `${connector.name} isn't in the meeting anymore.`,
+    removed: error ?? `${connector.name} isn't in the meeting anymore.`,
     failed: error ?? "Something went wrong with your agent.",
   };
   const ended = phase === "denied" || phase === "expired" || phase === "removed" || phase === "failed";
@@ -359,7 +403,7 @@ export function ConnectorAgent({
       {phase === "in" && settings && !voiceProblem && (
         <ConnectorHearing settings={settings} name={connector.name} onHeard={hearSpeech} onFatal={onVoiceFatal} />
       )}
-      {phase === "in" && error && (
+      {(phase === "in" || phase === "waiting") && error && (
         <p role="alert" className="text-xs text-red-300">
           {error}
         </p>
@@ -370,8 +414,8 @@ export function ConnectorAgent({
           question={q}
           app={connector.app}
           appLabel={label}
-          answerUrl={`${base}/questions/${q.id}/answer`}
-          onDismiss={() => setAsked((list) => list.filter((x) => x.id !== q.id))}
+          questionUrl={`${base}/questions/${q.id}`}
+          onDismiss={() => void dismiss(q.id)}
         />
       ))}
       {reviewing.map((p) => (
@@ -400,26 +444,39 @@ export function ConnectorAgent({
           </div>
         </div>
       ))}
-      {ended && (
+      {ended ? (
         <button type="button" onClick={onEnded} className="self-end rounded-lg border border-zinc-500 px-3 py-1 text-xs">
           Close
+        </button>
+      ) : (
+        <button
+          type="button"
+          data-testid="connector-withdraw"
+          onClick={() => void withdraw()}
+          className="self-end rounded-lg border border-zinc-500 px-3 py-1 text-xs"
+        >
+          {phase === "in" ? `Take ${connector.name} out` : "Cancel"}
         </button>
       )}
     </section>
   );
 }
 
+/**
+ * One question for the owner's assistant. Its assistant can read it only once the owner taps
+ * Ask or Copy here (that releases it on the server), so the tap decides what reaches the app.
+ */
 function QuestionCard({
   question,
   app,
   appLabel,
-  answerUrl,
+  questionUrl,
   onDismiss,
 }: {
   question: Asked;
   app: AssistantApp;
   appLabel: string;
-  answerUrl: string;
+  questionUrl: string;
   onDismiss: () => void;
 }) {
   const prompt = assistantPrompt(question.id);
@@ -429,17 +486,26 @@ function QuestionCard({
   const [answer, setAnswer] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  // keepalive: the Ask link opens the app in a new tab while this goes out.
+  const release = () =>
+    fetch(`${questionUrl}/release`, { method: "POST", keepalive: true })
+      .then(async (res) => {
+        if (!res.ok) setError(errorMessage(await readBody(res), "Your assistant may not see this question."));
+      })
+      .catch(() => setError("Your assistant may not see this question. Try again."));
+
   async function copy() {
+    await release();
     await navigator.clipboard?.writeText(prompt).catch(() => undefined);
     setCopied(true);
   }
 
   async function submit() {
     setError(null);
-    const res = await fetch(answerUrl, {
+    const res = await fetch(`${questionUrl}/answer`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ spoken: answer }),
+      body: JSON.stringify(splitPastedAnswer(answer)),
     }).catch(() => null);
     if (!res?.ok) setError(errorMessage(res ? await readBody(res) : null, "Could not post the answer."));
   }
@@ -455,6 +521,7 @@ function QuestionCard({
             href={link}
             target="_blank"
             rel="noopener noreferrer"
+            onClick={() => void release()}
             data-testid="ask-assistant"
             className="rounded-lg bg-agent px-3 py-1 text-white"
           >

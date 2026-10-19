@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { APP_LABEL, assistantLink, assistantPrompt, parseAnswerPacket, setupSteps } from "./connector-protocol";
+import {
+  APP_LABEL,
+  SPOKEN_LIMIT,
+  assistantLink,
+  assistantPrompt,
+  parseAnswerPacket,
+  setupSteps,
+  splitPastedAnswer,
+} from "./connector-protocol";
 
 const packet = (over: Record<string, unknown> = {}) => ({
   type: "answer",
@@ -67,5 +75,27 @@ describe("one tap to the assistant", () => {
       expect(setupSteps(app).length).toBeGreaterThan(1);
     }
     expect(setupSteps("chatgpt").join(" ")).toMatch(/developer mode/i);
+  });
+});
+
+describe("splitPastedAnswer", () => {
+  it("speaks a short answer whole", () => {
+    expect(splitPastedAnswer("  March 30th.  ")).toEqual({ spoken: "March 30th." });
+  });
+
+  it("speaks the first sentences of a long one and posts the rest, losing nothing", () => {
+    const rest = "Here is the long part. ".repeat(40).trim();
+    const out = splitPastedAnswer(`It moved to March 30th. QA needs a week. ${rest}`);
+    expect(out.spoken.startsWith("It moved to March 30th. QA needs a week.")).toBe(true);
+    expect(out.spoken.length).toBeLessThanOrEqual(SPOKEN_LIMIT);
+    expect(`${out.spoken} ${out.details}`.replace(/\s+/g, " ")).toBe(`It moved to March 30th. QA needs a week. ${rest}`);
+  });
+
+  it("says the start of one endless sentence and posts all of it", () => {
+    const long = "word ".repeat(200).trim();
+    const out = splitPastedAnswer(long);
+    expect(out.spoken.length).toBeLessThanOrEqual(SPOKEN_LIMIT);
+    expect(out.spoken.endsWith("…")).toBe(true);
+    expect(out.details).toBe(long);
   });
 });

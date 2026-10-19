@@ -1,9 +1,10 @@
 "use client";
 
-import { useTracks } from "@livekit/components-react";
+import { useParticipants, useTracks } from "@livekit/components-react";
 import { Track } from "livekit-client";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { isAgent } from "@/lib/labels";
+import { NOTES_OPT_OUT_ATTRIBUTE } from "@/lib/notes-protocol";
 import {
   parseVoiceSettings,
   readVoiceSettings,
@@ -168,7 +169,8 @@ interface Tap {
 
 /**
  * The agent's ears for speech: taps the meeting audio this tab already plays (people only,
- * never agents) and transcribes it through the owner's ElevenLabs account. Renders nothing.
+ * never agents, and never anyone who chose to be left out) and transcribes it through the
+ * owner's ElevenLabs account. Renders nothing.
  */
 export function ConnectorHearing({
   settings,
@@ -182,15 +184,19 @@ export function ConnectorHearing({
   onFatal: (message: string) => void;
 }) {
   const tracks = useTracks([Track.Source.Microphone], { onlySubscribed: true });
-  const people = useMemo(
-    () =>
-      tracks.flatMap((t) => {
-        const media = t.publication.track?.mediaStreamTrack;
-        if (!media || isAgent(t.participant)) return [];
-        return [{ key: `${t.publication.trackSid}:${media.id}`, identity: t.participant.identity, media }];
-      }),
-    [tracks],
-  );
+  // Re-renders when someone opts out (or back in): their audio stops (or starts) going out.
+  const leftOut = useParticipants()
+    .filter((p) => p.attributes[NOTES_OPT_OUT_ATTRIBUTE] === "1")
+    .map((p) => p.identity)
+    .join(",");
+  const people = useMemo(() => {
+    const skip = new Set(leftOut.split(","));
+    return tracks.flatMap((t) => {
+      const media = t.publication.track?.mediaStreamTrack;
+      if (!media || isAgent(t.participant) || skip.has(t.participant.identity)) return [];
+      return [{ key: `${t.publication.trackSid}:${media.id}`, identity: t.participant.identity, media }];
+    });
+  }, [tracks, leftOut]);
   const handlers = useRef({ onHeard, onFatal });
   useEffect(() => {
     handlers.current = { onHeard, onFatal };

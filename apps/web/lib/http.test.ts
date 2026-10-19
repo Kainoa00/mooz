@@ -22,6 +22,17 @@ describe("errorResponse", () => {
 });
 
 describe("readJson", () => {
+  it("refuses a body past the cap without reading it all", async () => {
+    const big = new Request("http://x/", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pad: "x".repeat(2000) }),
+    });
+    await expect(readJson(big, 1000)).rejects.toMatchObject({ status: 413, code: "too_large" });
+    const empty = new Request("http://x/", { method: "POST", headers: { "content-type": "application/json" } });
+    await expect(readJson(empty)).rejects.toMatchObject({ status: 400, code: "invalid_json" });
+  });
+
   it("parses a JSON object body", async () => {
     const req = new Request("http://x", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ a: 1 }) });
 

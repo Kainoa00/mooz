@@ -1,4 +1,4 @@
-import { readCookie } from "./cookies";
+import { isHttps, readCookie } from "./cookies";
 import type { Db } from "./db";
 import { HttpError } from "./http";
 import { hashSecret, newId, newSecret } from "./ids";
@@ -16,6 +16,12 @@ export type ConnectorApp = (typeof CONNECTOR_APPS)[number];
 
 /** The browser's long-lived owner key (HttpOnly): whoever holds it owns its connectors. */
 export const OWNER_COOKIE = "mooz_owner";
+/**
+ * Over HTTPS the owner cookie is `__Host-` prefixed: browsers then refuse one set by any
+ * other host (say, a sibling site under a shared tunnel domain), so nobody can plant an
+ * owner key they know and later read the connectors made under it.
+ */
+export const OWNER_COOKIE_HTTPS = "__Host-mooz_owner";
 export const OWNER_COOKIE_MAX_AGE = 365 * 24 * 60 * 60;
 export const MAX_CONNECTORS_PER_OWNER = 10;
 
@@ -53,8 +59,15 @@ function fromRow(row: Row): Connector {
 const notFound = () => new HttpError(404, "connector_not_found", "No such connector");
 
 /** The request's owner key. Without one, every connector looks missing. */
+export const ownerCookieName = (req: Request) => (isHttps(req) ? OWNER_COOKIE_HTTPS : OWNER_COOKIE);
+
+/** This browser's owner key, if it has one. */
+export function readOwnerKey(req: Request): string | undefined {
+  return readCookie(req, ownerCookieName(req));
+}
+
 export function requireOwnerKey(req: Request): string {
-  const owner = readCookie(req, OWNER_COOKIE);
+  const owner = readOwnerKey(req);
   if (!owner) throw notFound();
   return owner;
 }
@@ -129,16 +142,16 @@ export function deleteConnector(db: Db, ownerKey: string, id: string): void {
 }
 
 /** The connector a link belongs to (what the MCP endpoint resolves), if any. */
-export function findConnectorBySecret(db: Db, secret: string, opts: { touch?: boolean } = {}): Connector | undefined {
+export function findConnectorBySecret(db: Db, secret: string): Connector | undefined {
   if (!secret) return undefined;
   const row = db.prepare(`SELECT ${COLUMNS} FROM connectors WHERE secret_hash = ?`).get(hashSecret(secret)) as
     | Row
     | undefined;
-  if (!row) return undefined;
-  if (opts.touch) {
-    const now = Date.now();
-    db.prepare("UPDATE connectors SET last_used_at = ? WHERE id = ?").run(now, row.id);
-    row.last_used_at = now;
-  }
-  return fromRow(row);
+  return row ? fromRow(row) : undefined;
+}
+
+/** Note that the link was used (shown to its owner); at most one write a minute. */
+export function touchConnector(db: Db, connector: Connector, now = Date.now()): void {
+  if (connector.lastUsedAt !== null && now - connector.lastUsedAt < 60_000) return;
+  db.prepare("UPDATE connectors SET last_used_at = ? WHERE id = ?").run(now, connector.id);
 }

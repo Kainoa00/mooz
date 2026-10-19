@@ -12,7 +12,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ slug: string; 
     const { slug, id, qid } = await ctx.params;
     const agent = requireConnectorAgent(getDb(), req, slug, id);
     const body = await readJson(req);
-    const packet = answerQuestion(agent.identity, qid, { spoken: body.spoken, details: body.details });
+    const packet = answerQuestion(agent.identity, qid, { spoken: body.spoken, details: body.details }, { by: "owner" });
     return Response.json({ ok: true, delivered: await deliverAnswer(agent, packet) });
   } catch (err) {
     return errorResponse(err);

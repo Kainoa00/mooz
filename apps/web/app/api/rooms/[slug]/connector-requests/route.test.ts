@@ -121,7 +121,7 @@ describe("/api/rooms/[slug]/connector-requests", () => {
       await REQUEST(jsonRequest(base(slug), { connectorId: connector.id }, { cookie }), params({ slug }))
     ).json()) as { requestId: string };
     decideAgentRequest(db, { slug, requestId: first.requestId, approve: true });
-    const agent = connectorAgentFor(db, kai, first.requestId);
+    const agent = connectorAgentFor(db, kai, KAI_KEY, first.requestId);
 
     const { slug: other } = createRoom(db);
     const kaiThere = addParticipant(db, { slug: other, name: "Kainoa", isHost: false });
@@ -142,7 +142,7 @@ describe("/api/rooms/[slug]/connector-requests", () => {
       await REQUEST(jsonRequest(base(slug), { connectorId: connector.id }, { cookie }), params({ slug }))
     ).json()) as { requestId: string };
     decideAgentRequest(db, { slug, requestId: first.requestId, approve: true });
-    const agent = connectorAgentFor(db, kai, first.requestId);
+    const agent = connectorAgentFor(db, kai, KAI_KEY, first.requestId);
     removeFromRoom.mockRejectedValueOnce(new Error("livekit unreachable"));
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
 
@@ -159,7 +159,7 @@ describe("/api/rooms/[slug]/connector-requests", () => {
       await REQUEST(jsonRequest(base(slug), { connectorId: connector.id }, { cookie }), params({ slug }))
     ).json()) as { requestId: string };
     decideAgentRequest(db, { slug, requestId, approve: true });
-    const agent = connectorAgentFor(db, kai, requestId);
+    const agent = connectorAgentFor(db, kai, KAI_KEY, requestId);
 
     const res = await DELETE_CONNECTOR(
       new Request(`http://localhost/api/connectors/${connector.id}`, {

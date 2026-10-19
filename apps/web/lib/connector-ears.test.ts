@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ConnectorEars, FOLLOW_UP_MS, MAX_AGENT_STREAK, type HeardLine } from "./connector-ears";
+import { ASK_COOLDOWN_MS, ConnectorEars, FOLLOW_UP_MS, MAX_AGENT_STREAK, type HeardLine } from "./connector-ears";
 
 const ME = "a_grok";
 let clock = 1_000_000;
@@ -59,8 +59,10 @@ describe("ConnectorEars", () => {
     const e = ears();
     expect(e.hear(agent(ME, "p_kai", "@Grok echo"))).toBeNull();
     for (let i = 0; i < MAX_AGENT_STREAK; i++) {
+      clock += ASK_COOLDOWN_MS;
       expect(e.hear(agent("a_atlas", "p_zach", `@Grok question ${i}`))).toMatchObject({ kind: "question", replyTo: "p_zach" });
     }
+    clock += ASK_COOLDOWN_MS;
     expect(e.hear(agent("a_atlas", "p_zach", "@Grok one more"))).toBeNull();
     e.hear(human("p_zach", "ok, back to us"));
     expect(e.hear(agent("a_atlas", "p_zach", "@Grok again"))).not.toBeNull();
@@ -73,12 +75,30 @@ describe("ConnectorEars", () => {
     e.hear(human("p_zach", "we said March 30th", { via: "voice" }));
     e.hear(agent("a_atlas", "p_zach", "Noted.", { replyTo: "p_zach", sources: ["p_zach"] }));
     e.said("One sec, checking.", "p_zach");
+    e.said("Lee earns 90k.", "p_zach", ["p_zach", "p_lee"]);
 
     expect(e.snapshot()).toEqual([
       { identity: "p_zach", text: "we said March 30th", via: "voice", at: clock },
       { identity: "a_atlas", text: "Noted.", via: "chat", at: clock, reply_to: "p_zach", sources: ["p_zach"] },
       { identity: ME, text: "One sec, checking.", via: "chat", at: clock, reply_to: "p_zach" },
+      // Its own answer keeps whose words it carries, so Lee opting out later takes it out too.
+      { identity: ME, text: "Lee earns 90k.", via: "chat", at: clock, reply_to: "p_zach", sources: ["p_zach", "p_lee"] },
     ]);
+  });
+
+  it("takes one question per person every few seconds", () => {
+    const e = ears();
+    expect(e.hear(human("p_zach", "@Grok one?"))).not.toBeNull();
+    expect(e.hear(human("p_zach", "@Grok two?"))).toBeNull();
+    expect(e.hear(human("p_lee", "@Grok three?"))).not.toBeNull();
+    clock += ASK_COOLDOWN_MS;
+    expect(e.hear(human("p_zach", "@Grok four?"))).not.toBeNull();
+  });
+
+  it("sends only as much of the newest as fits", () => {
+    const e = ears();
+    for (let i = 0; i < 10; i++) e.hear(human("p_zach", `${i}`.repeat(100)));
+    expect(e.snapshot(250).map((l) => l.text[0])).toEqual(["8", "9"]);
   });
 
   it("keeps at most a few hundred lines", () => {

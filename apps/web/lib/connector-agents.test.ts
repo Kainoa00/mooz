@@ -31,16 +31,16 @@ describe("a connector joining a meeting", () => {
     const { db, slug, kai, connector } = meeting();
 
     const { requestId } = requestConnectorJoin(db, kai, KAI_KEY, connector.id);
-    expect(connectorJoinStatus(db, kai, requestId)).toBe("pending");
+    expect(connectorJoinStatus(db, kai, KAI_KEY, requestId)).toBe("pending");
     expect(listPendingRequests(db, slug)).toEqual([
       expect.objectContaining({ id: requestId, agentName: "Grok", ownerName: "Kainoa", door: "connector" }),
     ]);
-    expect(() => connectorAgentFor(db, kai, requestId)).toThrow("not approved");
+    expect(() => connectorAgentFor(db, kai, KAI_KEY, requestId)).toThrow("not approved");
 
     decideAgentRequest(db, { slug, requestId, approve: true });
 
-    expect(connectorJoinStatus(db, kai, requestId)).toBe("approved");
-    const agent = connectorAgentFor(db, kai, requestId);
+    expect(connectorJoinStatus(db, kai, KAI_KEY, requestId)).toBe("approved");
+    const agent = connectorAgentFor(db, kai, KAI_KEY, requestId);
     expect(agent).toMatchObject({
       name: "Grok",
       ownerIdentity: kai.identity,
@@ -58,7 +58,7 @@ describe("a connector joining a meeting", () => {
     const { db, slug, kai, connector } = meeting();
     const { requestId } = requestConnectorJoin(db, kai, KAI_KEY, connector.id);
     decideAgentRequest(db, { slug, requestId, approve: true });
-    expect(connectorAgentFor(db, kai, requestId).identity).toBe(connectorAgentFor(db, kai, requestId).identity);
+    expect(connectorAgentFor(db, kai, KAI_KEY, requestId).identity).toBe(connectorAgentFor(db, kai, KAI_KEY, requestId).identity);
   });
 
   it("is only the owner's to bring, and only to a meeting they're in", () => {
@@ -68,8 +68,8 @@ describe("a connector joining a meeting", () => {
 
     const { requestId } = requestConnectorJoin(db, kai, KAI_KEY, connector.id);
     decideAgentRequest(db, { slug, requestId, approve: true });
-    expect(() => connectorJoinStatus(db, zach, requestId)).toThrow(HttpError);
-    expect(() => connectorAgentFor(db, zach, requestId)).toThrow(HttpError);
+    expect(() => connectorJoinStatus(db, zach, KAI_KEY, requestId)).toThrow(HttpError);
+    expect(() => connectorAgentFor(db, zach, KAI_KEY, requestId)).toThrow(HttpError);
   });
 
   it("needs a name no one in the meeting has", () => {
@@ -85,7 +85,7 @@ describe("a connector joining a meeting", () => {
     const { db, slug, kai, connector } = meeting();
     const first = requestConnectorJoin(db, kai, KAI_KEY, connector.id);
     decideAgentRequest(db, { slug, requestId: first.requestId, approve: true });
-    const firstAgent = connectorAgentFor(db, kai, first.requestId);
+    const firstAgent = connectorAgentFor(db, kai, KAI_KEY, first.requestId);
 
     const { slug: other } = createRoom(db);
     const kaiThere = addParticipant(db, { slug: other, name: "Kainoa", isHost: false });
@@ -93,7 +93,7 @@ describe("a connector joining a meeting", () => {
 
     expect(second.superseded).toEqual([{ livekitRoom: getRoom(db, slug)!.livekitRoom, identity: firstAgent.identity }]);
     expect(isRevokedAgent(db, firstAgent.identity)).toBe(true);
-    expect(connectorJoinStatus(db, kai, first.requestId)).toBe("revoked");
+    expect(connectorJoinStatus(db, kai, KAI_KEY, first.requestId)).toBe("revoked");
     expect(attachedConnectorAgent(db, connector.id)).toBeUndefined(); // the new one awaits approval
   });
 
@@ -101,7 +101,7 @@ describe("a connector joining a meeting", () => {
     const { db, slug, kai, connector } = meeting();
     const first = requestConnectorJoin(db, kai, KAI_KEY, connector.id);
     const second = requestConnectorJoin(db, kai, KAI_KEY, connector.id);
-    expect(connectorJoinStatus(db, kai, first.requestId)).toBe("revoked");
+    expect(connectorJoinStatus(db, kai, KAI_KEY, first.requestId)).toBe("revoked");
     expect(listPendingRequests(db, slug).map((r) => r.id)).toEqual([second.requestId]);
   });
 
@@ -109,14 +109,14 @@ describe("a connector joining a meeting", () => {
     const { db, slug, kai, connector } = meeting();
     const denied = requestConnectorJoin(db, kai, KAI_KEY, connector.id);
     decideAgentRequest(db, { slug, requestId: denied.requestId, approve: false });
-    expect(connectorJoinStatus(db, kai, denied.requestId)).toBe("denied");
-    expect(() => connectorAgentFor(db, kai, denied.requestId)).toThrow("not approved");
+    expect(connectorJoinStatus(db, kai, KAI_KEY, denied.requestId)).toBe("denied");
+    expect(() => connectorAgentFor(db, kai, KAI_KEY, denied.requestId)).toThrow("not approved");
 
     const approved = requestConnectorJoin(db, kai, KAI_KEY, connector.id);
     decideAgentRequest(db, { slug, requestId: approved.requestId, approve: true });
-    const agent = connectorAgentFor(db, kai, approved.requestId);
+    const agent = connectorAgentFor(db, kai, KAI_KEY, approved.requestId);
     revokeAgent(db, { slug, agentIdentity: agent.identity });
-    expect(() => connectorAgentFor(db, kai, approved.requestId)).toThrow("not approved");
+    expect(() => connectorAgentFor(db, kai, KAI_KEY, approved.requestId)).toThrow("not approved");
     expect(attachedConnectorAgent(db, connector.id)).toBeUndefined();
   });
 
@@ -124,7 +124,7 @@ describe("a connector joining a meeting", () => {
     const { db, slug, kai, connector } = meeting();
     const { requestId } = requestConnectorJoin(db, kai, KAI_KEY, connector.id);
     decideAgentRequest(db, { slug, requestId, approve: true });
-    const agent = connectorAgentFor(db, kai, requestId);
+    const agent = connectorAgentFor(db, kai, KAI_KEY, requestId);
 
     expect(revokeConnectorAgents(db, connector.id)).toEqual([
       { livekitRoom: getRoom(db, slug)!.livekitRoom, identity: agent.identity },
@@ -136,6 +136,6 @@ describe("a connector joining a meeting", () => {
     const { db, kai, connector } = meeting();
     const { requestId } = requestConnectorJoin(db, kai, KAI_KEY, connector.id);
     db.prepare("UPDATE agent_requests SET created_at = 0 WHERE id = ?").run(requestId);
-    expect(connectorJoinStatus(db, kai, requestId)).toBe("expired");
+    expect(connectorJoinStatus(db, kai, KAI_KEY, requestId)).toBe("expired");
   });
 });

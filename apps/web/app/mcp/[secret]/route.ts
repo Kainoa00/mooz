@@ -1,6 +1,7 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import { findConnectorBySecret } from "@/lib/connectors";
+import { findConnectorBySecret, touchConnector } from "@/lib/connectors";
 import { getDb } from "@/lib/db";
+import { readCapped } from "@/lib/http";
 import { mcpServerFor } from "@/lib/mcp";
 import { allow } from "@/lib/rate-limit";
 
@@ -17,34 +18,24 @@ const REQUESTS_PER_MINUTE = 30;
 
 const notFound = () => Response.json({ error: { code: "not_found", message: "Not found" } }, { status: 404 });
 
-/** The body as text, or null once it passes `max` bytes (it stops reading there). */
-async function readCapped(req: Request, max: number): Promise<string | null> {
-  if (!req.body) return "";
-  const reader = req.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > max) {
-      await reader.cancel();
-      return null;
-    }
-    chunks.push(value);
-  }
-  return new TextDecoder().decode(Buffer.concat(chunks));
-}
-
 async function handle(req: Request, ctx: { params: Promise<{ secret: string }> }): Promise<Response> {
   const { secret } = await ctx.params;
   const db = getDb();
-  const connector = findConnectorBySecret(db, secret, { touch: true });
+  const connector = findConnectorBySecret(db, secret);
   if (!connector) return notFound();
+  // Stateless: there's no stream to open (GET) or session to end (DELETE). Saying so with a
+  // 405 stops clients from reopening a stream that closes at once, every second.
+  if (req.method !== "POST") {
+    return Response.json(
+      { jsonrpc: "2.0", error: { code: -32000, message: "Method not allowed." }, id: null },
+      { status: 405, headers: { allow: "POST" } },
+    );
+  }
   if (!allow(`mcp:${connector.id}`, REQUESTS_PER_MINUTE, 60_000)) {
     return Response.json({ error: { code: "rate_limited", message: "Too many requests" } }, { status: 429 });
   }
-  const body = req.method === "POST" ? await readCapped(req, MAX_BODY_BYTES) : undefined;
+  touchConnector(db, connector);
+  const body = await readCapped(req, MAX_BODY_BYTES);
   if (body === null) {
     return Response.json({ error: { code: "too_large", message: "Request too large" } }, { status: 413 });
   }
@@ -55,7 +46,7 @@ async function handle(req: Request, ctx: { params: Promise<{ secret: string }> }
   });
   await server.connect(transport);
   try {
-    const forwarded = new Request(req.url, { method: req.method, headers: req.headers, body: body || undefined });
+    const forwarded = new Request(req.url, { method: "POST", headers: req.headers, body: body || undefined });
     return await transport.handleRequest(forwarded);
   } finally {
     await server.close();

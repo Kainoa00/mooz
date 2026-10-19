@@ -396,6 +396,18 @@
    "via": "voice",
    "text": "Grok said no",
    "question": null
+  },
+  {
+   "name": "Grok",
+   "via": "chat",
+   "text": "caf\u00e9@Grok hi",
+   "question": null
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "what is next\n, Atlas?",
+   "question": "what is next\n"
   }
  ]
 }

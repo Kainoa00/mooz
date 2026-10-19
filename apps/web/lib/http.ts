@@ -22,17 +22,41 @@ export function errorResponse(err: unknown): Response {
   );
 }
 
-/** Parse a request body that must be a JSON object. */
-export async function readJson(req: Request): Promise<Record<string, unknown>> {
+/** Request bodies past this are refused before they're read into memory. */
+export const MAX_JSON_BYTES = 256 * 1024;
+
+/** The body as text, or null once it passes `max` bytes (it stops reading there). */
+export async function readCapped(req: Request, max: number): Promise<string | null> {
+  if (!req.body) return "";
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  return new TextDecoder().decode(Buffer.concat(chunks));
+}
+
+/** Parse a request body that must be a JSON object (at most `maxBytes`). */
+export async function readJson(req: Request, maxBytes = MAX_JSON_BYTES): Promise<Record<string, unknown>> {
   // Requiring the JSON content type means a plain HTML form (text/plain) can never
   // forge a request body, which is half of the CSRF defense (see session.ts).
   const type = req.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
   if (type !== "application/json") {
     throw new HttpError(415, "unsupported_media_type", "Send the body as application/json");
   }
+  const text = await readCapped(req, maxBytes);
+  if (text === null) throw new HttpError(413, "too_large", "Request body is too large");
   let body: unknown;
   try {
-    body = await req.json();
+    body = JSON.parse(text);
   } catch {
     throw new HttpError(400, "invalid_json", "Request body must be JSON");
   }

@@ -118,7 +118,11 @@ export class AddressDetector {
     this.forms = [nameWords];
     if (nameWords.length > 1) this.forms.push(nameWords.slice(-1)); // "Zach's Grok" answers to "Grok"
     const mentionable = [name.trim(), ...this.forms.slice(1).map((f) => f.join(" ")), ...BROADCAST_CHAT];
-    this.chatMention = new RegExp(`(?<![\\w.@])@(${mentionable.map(escapeRegex).join("|")})\\b`, "i");
+    // Python's \w and \b know every script; spelled out here, so "café@Grok" isn't a mention in either.
+    this.chatMention = new RegExp(
+      `(?<![\\p{L}\\p{N}_.@])@(${mentionable.map(escapeRegex).join("|")})(?![\\p{L}\\p{N}_])`,
+      "iu",
+    );
   }
 
   check(text: string, via: Via): Addressed | null {
@@ -167,7 +171,7 @@ export class AddressDetector {
     const isQuestion = text.trimEnd().endsWith("?") || QUESTION_OPENERS.has(toks[0].norm);
     // "..., Atlas." closing a request is a vocative even when it is not a question.
     if (closes && (isQuestion || commaBefore)) {
-      return { question: rstrip(text.slice(0, toks[first].start), EDGE_PUNCT + " ").trimEnd(), via };
+      return { question: rstrip(text.slice(0, toks[first].start), EDGE_PUNCT + " "), via };
     }
     return null;
   }

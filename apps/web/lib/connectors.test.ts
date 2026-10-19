@@ -5,6 +5,7 @@ import {
   createConnector,
   deleteConnector,
   findConnectorBySecret,
+  touchConnector,
   listConnectors,
   rotateConnector,
 } from "./connectors";
@@ -101,9 +102,15 @@ describe("connectors", () => {
   it("note when they were last used", () => {
     const db = getDb();
     const { secret } = createConnector(db, KAI, { name: "Grok", app: "grok" });
-    const found = findConnectorBySecret(db, secret, { touch: true });
-    expect(found).toBeDefined();
-    expect(listConnectors(db, KAI)[0].lastUsedAt).toBeGreaterThan(0);
+    const found = findConnectorBySecret(db, secret)!;
+    expect(found.lastUsedAt).toBeNull();
+    touchConnector(db, found, 1_000_000);
+    expect(listConnectors(db, KAI)[0].lastUsedAt).toBe(1_000_000);
+    // At most one write a minute.
+    touchConnector(db, findConnectorBySecret(db, secret)!, 1_030_000);
+    expect(listConnectors(db, KAI)[0].lastUsedAt).toBe(1_000_000);
+    touchConnector(db, findConnectorBySecret(db, secret)!, 1_061_000);
+    expect(listConnectors(db, KAI)[0].lastUsedAt).toBe(1_061_000);
   });
 
   it("have a URL under /mcp", () => {

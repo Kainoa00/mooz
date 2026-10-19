@@ -11,6 +11,10 @@ export const FOLLOW_UP_MS = 8000;
 export const MAX_AGENT_STREAK = 3;
 export const WINDOW_MS = 10 * 60 * 1000;
 export const MAX_LINES = 500;
+/** What the tab sends with a question, in characters (the server keeps the newest 12,000). */
+export const MAX_SNAPSHOT_CHARS = 48_000;
+/** One question per person this often: more is someone running up the owner's bill. */
+export const ASK_COOLDOWN_MS = 5000;
 
 export interface HeardLine {
   identity: string;
@@ -41,6 +45,7 @@ export class ConnectorEars {
   private readonly detector: AddressDetector;
   private readonly log: SnapshotLine[] = [];
   private readonly followUp = new Map<string, number>();
+  private readonly lastAsked = new Map<string, number>();
   private agentStreak = 0;
 
   constructor(
@@ -76,6 +81,10 @@ export class ConnectorEars {
     } else {
       text = addressed.question;
     }
+    if (text) {
+      const last = this.lastAsked.get(line.identity);
+      if (last !== undefined && at - last < ASK_COOLDOWN_MS) return null;
+    }
     if (line.kind === "agent") {
       if (this.agentStreak >= MAX_AGENT_STREAK) return null;
       this.agentStreak += 1;
@@ -84,18 +93,33 @@ export class ConnectorEars {
       this.followUp.set(line.identity, at + FOLLOW_UP_MS);
       return { kind: "wake", asker: line.identity, replyTo: line.person };
     }
+    this.lastAsked.set(line.identity, at);
     return { kind: "question", asker: line.identity, replyTo: line.person, text };
   }
 
-  /** Something the agent itself said (it's part of the meeting too). */
-  said(text: string, replyTo?: string): void {
-    this.remember({ identity: this.self, text, via: "chat", at: this.clock(), ...(replyTo ? { reply_to: replyTo } : {}) });
+  /**
+   * Something the agent itself said (it's part of the meeting too), with whose words it
+   * carries, so the line leaves the assistant's view if any of them opts out later.
+   */
+  said(text: string, replyTo?: string, sources?: string[]): void {
+    this.remember({
+      identity: this.self,
+      text,
+      via: "chat",
+      at: this.clock(),
+      ...(replyTo ? { reply_to: replyTo } : {}),
+      ...(sources?.length ? { sources } : {}),
+    });
   }
 
-  /** The last 10 minutes, oldest first. */
-  snapshot(): SnapshotLine[] {
+  /** The last 10 minutes, oldest first, as much of the newest as fits in `maxChars`. */
+  snapshot(maxChars = MAX_SNAPSHOT_CHARS): SnapshotLine[] {
     const cutoff = this.clock() - WINDOW_MS;
-    return this.log.filter((l) => l.at >= cutoff);
+    const recent = this.log.filter((l) => l.at >= cutoff);
+    let size = 0;
+    let from = recent.length;
+    while (from > 0 && size + recent[from - 1].text.length <= maxChars) size += recent[--from].text.length;
+    return recent.slice(from);
   }
 
   private remember(line: SnapshotLine): void {

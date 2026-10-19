@@ -270,7 +270,8 @@ Owner's assistant app            mooz server                     Owner's browser
 
 `POST /api/connectors` `{ name, app }` makes one and returns `{ connector, url }` once. The URL
 is `{origin}/mcp/{secret}`, a 256-bit secret that the server stores only as a hash. The
-connector belongs to the browser that made it (an HttpOnly `mooz_owner` cookie, kept a year).
+connector belongs to the browser that made it (an HttpOnly owner cookie, kept a year, named
+`__Host-mooz_owner` over HTTPS so no other host can set it).
 `GET /api/connectors` lists them, `POST /api/connectors/{id}/rotate` replaces the secret (the old
 link stops working) and `DELETE /api/connectors/{id}` removes it and its agent. Changes must
 come from the same origin, and someone else's connector looks like one that doesn't exist.
@@ -281,9 +282,16 @@ come from the same origin, and someone else's connector looks like one that does
 `{ requestId, status: "pending" }`. The host approves it in the same tray as bridge agents.
 `GET …/{requestId}` returns `{ status }` (`pending`, `approved`, `denied`, `revoked` or
 `expired`), and once approved `POST …/{requestId}/token` returns `{ token, url, identity, name }`
-for the tab's agent connection. Its token is a bridge agent's (microphone and data only, no
-attribute edits) with `door = connector`. A newer request for the same connector revokes the
-older one.
+for the tab's agent connection, again after a reload. Every one of these needs the participant
+cookie of the request's owner and the owner cookie its connector belongs to. Its token is a bridge
+agent's (microphone and data only, no attribute edits) with `door = connector`. A newer request
+for the same connector revokes the older one, and `DELETE …/{requestId}` cancels it or takes the
+agent out.
+
+The agent is in the meeting only while its tab is. When LiveKit reports it left, its assistant
+can't reach the meeting and its questions are dropped; if it isn't back within 2 minutes, the
+approval ends and the owner must bring it again. When the meeting ends, its connector agents are
+revoked.
 
 ### Questions
 
@@ -292,29 +300,38 @@ The tab hears the meeting like a bridge agent does, with the same rules for bein
 owner has added their own ElevenLabs key in the browser.
 
 `POST …/{requestId}/questions` `{ asker, text, lines }` queues a question with what the tab
-heard lately, each line `{ identity, text, via, at, reply_to?, sources? }`. The server keeps only
+heard lately, each line `{ identity, text, via, at, reply_to?, sources? }` (at most 20 questions a
+minute per agent, and 256 KB a request). The server keeps only
 the last 10 minutes (at most 12,000 characters) of lines from people in the meeting, re-derives
 names and roles itself, and leaves out every line that belongs to someone who opted out of notes
 (the speaker, an agent's owner, or anyone in `reply_to` or `sources`), checking again when the
 assistant reads it. Questions live in server memory only: at most 5 wait per agent, each for 10
-minutes, and all are dropped when the agent leaves. `GET …/questions` lists them, with the
-answer once there is one. `POST …/questions/{qid}/answer` `{ spoken, details? }` takes an answer
-the owner pasted.
+minutes, at most 20 in all, and all are dropped when the agent leaves. `GET …/questions` lists
+them, with the answer once there is one.
+
+**The owner's tap decides.** A queued question is invisible to the assistant until the owner taps
+Ask or Copy for it, which sends `POST …/questions/{qid}/release`. `DELETE …/questions/{qid}`
+dismisses one for good. `POST …/questions/{qid}/answer` `{ spoken, details? }` takes an answer
+the owner pasted (for any of their questions).
 
 ### The MCP endpoint
 
-`/mcp/{secret}` speaks MCP over Streamable HTTP, statelessly, with no authentication beyond the
-secret. Requests are capped at 64 KB and 30 a minute per connector; an unknown secret gets a
-plain 404. Its tools, which work only while the connector's agent is in a meeting:
+`/mcp/{secret}` speaks MCP over Streamable HTTP, statelessly (JSON responses; `GET` and `DELETE`
+get a 405, as there are no streams or sessions), with no authentication beyond the secret.
+Requests are capped at 64 KB and 30 a minute per connector; an unknown secret gets a plain 404.
+Its tools, which work only while the connector's agent is in a meeting, and see only questions
+the owner released:
 
 | Tool | Does |
 |---|---|
-| `get_question({ question_id? })` | The oldest waiting question (or the one named): who asked (`your owner`, `a guest` or `another AI agent`), the question, how to answer, and the meeting as `[role] name (via): text` lines inside `<meeting>` |
+| `get_question({ question_id? })` | The oldest released question (or the one named): who asked (`your owner`, `a guest` or `another AI agent`), the question inside `<question>`, how to answer, and the meeting as `[role] name (via): text` lines inside `<meeting>` |
 | `read_meeting()` | The same meeting lines, as of the latest question |
 | `post_answer({ question_id, spoken, details? })` | Answers it. `spoken` (at most 400 characters) is read aloud; `details` (at most 4,000) is added in chat |
 
-Meeting text is flattened to one line per message, stripped of invisible characters and
-escaped, and marked as information, never instructions.
+Meeting text is normalized (NFKC), stripped of invisible characters, flattened to one line per
+message (a typed line break shows as ` ⏎ `) and escaped, and marked as information, never
+instructions. For a question from anyone but the owner, the assistant is told not to look in the
+owner's mail, files, memory or other connectors.
 
 ### Answers
 
@@ -325,7 +342,8 @@ The server sends each answer to the agent's identity only, as a reliable data pa
 { "type": "answer", "id": "q_…", "spoken": "March 30th.", "details": "", "reply_to": "p_…", "sources": ["p_…"] }
 ```
 
-The tab accepts it only from the server (a packet with no sending participant), posts
+The tab accepts it only from the server (a packet with no sending participant or identity), and
+only for a question it knows of, then posts
 `spoken` and `details` to `lk.chat` with the `reply_to` and `sources` attributes, and speaks
 `spoken`. If a packet is missed, the tab picks the answer up from `GET …/questions`. The owner
 can choose to review each answer before it's posted.

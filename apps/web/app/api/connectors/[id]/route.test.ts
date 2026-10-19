@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { OWNER_COOKIE, createConnector, findConnectorBySecret } from "@/lib/connectors";
+import { OWNER_COOKIE_HTTPS as OWNER_COOKIE, createConnector, findConnectorBySecret } from "@/lib/connectors";
 import { getDb } from "@/lib/db";
 import { params, useTestEnv } from "@/test/helpers";
 import { POST as ROTATE } from "./rotate/route";

@@ -100,3 +100,30 @@ export function setupSteps(app: AssistantApp): string[] {
       ];
   }
 }
+
+/** How much of an answer is read aloud (the server's cap for `spoken`). */
+export const SPOKEN_LIMIT = 400;
+
+/**
+ * An answer the owner pasted from their app: its first sentences (up to three, within the
+ * spoken limit) are read aloud, and everything after them is posted in chat as details.
+ */
+export function splitPastedAnswer(text: string): { spoken: string; details?: string } {
+  const all = text.trim();
+  if (all.length <= SPOKEN_LIMIT) return { spoken: all };
+  const sentences = all.split(/(?<=[.!?])\s+|\n+/).filter((x) => x.trim());
+  let spoken = "";
+  let used = 0;
+  for (const sentence of sentences.slice(0, 3)) {
+    const next = spoken ? `${spoken} ${sentence.trim()}` : sentence.trim();
+    if (next.length > SPOKEN_LIMIT) break;
+    spoken = next;
+    used += 1;
+  }
+  if (!spoken) {
+    // One very long sentence: say its start, and post it all.
+    const cut = all.slice(0, SPOKEN_LIMIT - 1);
+    return { spoken: `${cut.slice(0, Math.max(cut.lastIndexOf(" "), SPOKEN_LIMIT / 2)).trimEnd()}…`, details: all };
+  }
+  return { spoken, details: sentences.slice(used).join("\n").trim() };
+}

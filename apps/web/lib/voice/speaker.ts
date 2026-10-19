@@ -103,7 +103,8 @@ export class AgentSpeaker implements AgentVoice {
         const source = out.createBufferSource();
         source.buffer = buffer;
         source.connect(destination);
-        at = Math.max(at, out.currentTime + LEAD_SECONDS);
+        // A head start only when nothing is queued: chunks after the first follow on directly.
+        if (at < out.currentTime) at = out.currentTime + LEAD_SECONDS;
         source.start(at);
         this.playing.push(source);
         at += samples.length / TTS_RATE;

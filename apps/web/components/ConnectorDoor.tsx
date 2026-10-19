@@ -10,6 +10,16 @@ interface ConnectorInfo {
   id: string;
   name: string;
   app: AssistantApp;
+  lastUsedAt?: number | null;
+}
+
+/** When the link was last used, so an owner can spot one that leaked. */
+function lastUsed(at: number | null | undefined): string {
+  if (!at) return "not used yet";
+  const minutes = Math.round((Date.now() - at) / 60_000);
+  if (minutes < 1) return "used just now";
+  if (minutes < 60) return `used ${minutes} min ago`;
+  return `last used ${new Date(at).toLocaleString()}`;
 }
 
 const APPS: AssistantApp[] = ["grok", "claude", "chatgpt", "other"];
@@ -136,7 +146,7 @@ export function ConnectorDoor({ slug, onBring }: { slug: string; onBring: (c: Br
           {connectors.map((c) => (
             <li key={c.id} data-testid="connector-row" className="flex flex-wrap items-center gap-2 text-sm">
               <span className="flex-1">
-                🤖 <strong>{c.name}</strong> <span className="text-muted">({APP_LABEL[c.app]})</span>
+                🤖 <strong>{c.name}</strong> <span className="text-muted">({APP_LABEL[c.app]}, {lastUsed(c.lastUsedAt)})</span>
               </span>
               <button type="button" data-testid="connector-bring" onClick={() => bring(c)} className="rounded-lg bg-agent px-3 py-1 text-white">
                 Bring to this meeting

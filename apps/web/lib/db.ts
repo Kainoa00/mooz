@@ -83,6 +83,8 @@ const MIGRATIONS = [
   `ALTER TABLE agent_requests ADD COLUMN door TEXT NOT NULL DEFAULT 'bridge';
    ALTER TABLE agent_requests ADD COLUMN connector_id TEXT REFERENCES connectors(id) ON DELETE SET NULL;
    CREATE INDEX agent_requests_by_connector ON agent_requests(connector_id, status);`,
+  // When a connector agent's tab left the meeting (cleared when it comes back).
+  `ALTER TABLE agent_requests ADD COLUMN left_at INTEGER;`,
 ];
 
 function migrate(db: Db): void {

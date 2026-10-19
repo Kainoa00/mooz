@@ -16,10 +16,14 @@ import { requireParticipant } from "./session";
 /**
  * A connector comes into a meeting as an agent run from its owner's browser tab. It
  * goes through the same host approval as a bridge agent; once approved, the owner's
- * tab (proven by their participant and owner cookies) can get its token, again after
- * a reload, until the agent is removed. A connector is in one meeting at a time:
- * bringing it to another takes it out of the first.
+ * tab (proven by their participant cookie and the owner cookie the connector belongs to)
+ * can get its token, again after a reload, until the agent is removed, its owner takes it
+ * out, the meeting ends, or it has been gone from the meeting for a couple of minutes.
+ * A connector is in one meeting at a time: bringing it to another takes it out of the first.
  */
+
+/** How long a connector agent may be away (a reload, a dropped connection) and still come back. */
+export const LEFT_GRACE_MS = 2 * 60 * 1000;
 
 export interface ConnectorAgent extends AgentIdentity {
   requestId: string;
@@ -42,6 +46,7 @@ interface Row {
   id: string;
   status: Exclude<JoinStatus, "expired">;
   created_at: number;
+  left_at: number | null;
   room_slug: string;
   livekit_room: string;
   agent_name: string;
@@ -53,7 +58,7 @@ interface Row {
 }
 
 const SELECT = `
-  SELECT r.id, r.status, r.created_at, r.room_slug, rm.livekit_room, r.agent_name, r.agent_identity,
+  SELECT r.id, r.status, r.created_at, r.left_at, r.room_slug, rm.livekit_room, r.agent_name, r.agent_identity,
          r.owner_identity, p.name AS owner_name, r.connector_id, c.app
   FROM agent_requests r
   JOIN participants p ON p.identity = r.owner_identity
@@ -129,24 +134,44 @@ export function requestConnectorJoin(
   });
 }
 
-function ownedRow(db: Db, owner: Participant, requestId: string): Row {
+/** The request, if it's this participant's and its connector belongs to this owner key. */
+function ownedRow(db: Db, owner: Participant, ownerKey: string, requestId: string): Row {
   const row = db
-    .prepare(`${SELECT} AND r.id = ? AND r.owner_identity = ? AND r.room_slug = ?`)
-    .get(requestId, owner.identity, owner.slug) as Row | undefined;
+    .prepare(`${SELECT} AND r.id = ? AND r.owner_identity = ? AND r.room_slug = ? AND c.owner_hash = ?`)
+    .get(requestId, owner.identity, owner.slug, hashSecret(ownerKey)) as Row | undefined;
   if (!row) throw notFound();
   return row;
 }
 
-/** What the owner's tab sees while it waits for the host. */
-export function connectorJoinStatus(db: Db, owner: Participant, requestId: string): JoinStatus {
-  const row = ownedRow(db, owner, requestId);
-  if (row.status === "pending" && Date.now() - row.created_at > PENDING_TTL_MS) return "expired";
+/** Away too long: it has to be brought in (and approved) again. */
+function expireIfGone(db: Db, row: Row, now: number): Row {
+  if (row.status !== "approved" || row.left_at === null || now - row.left_at <= LEFT_GRACE_MS) return row;
+  db.prepare("UPDATE agent_requests SET status = 'revoked' WHERE id = ? AND status = 'approved'").run(row.id);
+  return { ...row, status: "revoked" };
+}
+
+/** What the owner's tab sees while it waits for the host (and after). */
+export function connectorJoinStatus(
+  db: Db,
+  owner: Participant,
+  ownerKey: string,
+  requestId: string,
+  now = Date.now(),
+): JoinStatus {
+  const row = expireIfGone(db, ownedRow(db, owner, ownerKey, requestId), now);
+  if (row.status === "pending" && now - row.created_at > PENDING_TTL_MS) return "expired";
   return row.status;
 }
 
 /** The approved agent, for minting its token in the owner's tab. */
-export function connectorAgentFor(db: Db, owner: Participant, requestId: string): ConnectorAgent {
-  const row = ownedRow(db, owner, requestId);
+export function connectorAgentFor(
+  db: Db,
+  owner: Participant,
+  ownerKey: string,
+  requestId: string,
+  now = Date.now(),
+): ConnectorAgent {
+  const row = expireIfGone(db, ownedRow(db, owner, ownerKey, requestId), now);
   if (row.status !== "approved") {
     throw new HttpError(409, "not_approved", "This agent is not approved in this meeting");
   }
@@ -155,17 +180,51 @@ export function connectorAgentFor(db: Db, owner: Participant, requestId: string)
 
 /** The approved agent behind a request, for its owner's tab (participant and owner cookie). */
 export function requireConnectorAgent(db: Db, req: Request, slug: string, requestId: string): ConnectorAgent {
-  const owner = requireParticipant(db, req, slug);
-  requireOwnerKey(req);
-  return connectorAgentFor(db, owner, requestId);
+  return connectorAgentFor(db, requireParticipant(db, req, slug), requireOwnerKey(req), requestId);
 }
 
-/** Where a connector is right now: its approved agent, if it's in a meeting. */
+/** Where a connector is right now: its approved agent, if that agent is in a meeting. */
 export function attachedConnectorAgent(db: Db, connectorId: string): ConnectorAgent | undefined {
   const row = db
-    .prepare(`${SELECT} AND r.connector_id = ? AND r.status = 'approved' ORDER BY r.created_at DESC LIMIT 1`)
+    .prepare(
+      `${SELECT} AND r.connector_id = ? AND r.status = 'approved' AND r.left_at IS NULL ORDER BY r.created_at DESC LIMIT 1`,
+    )
     .get(connectorId) as Row | undefined;
   return row ? toAgent(row) : undefined;
+}
+
+/** The owner cancels a request, or takes their agent out. Returns the agent to disconnect. */
+export function withdrawConnector(db: Db, owner: Participant, ownerKey: string, requestId: string): Kick | undefined {
+  const row = ownedRow(db, owner, ownerKey, requestId);
+  db.prepare(
+    `UPDATE agent_requests SET status = 'revoked', decided_at = COALESCE(decided_at, ?)
+     WHERE id = ? AND status IN ('pending', 'approved')`,
+  ).run(Date.now(), row.id);
+  return row.status === "approved" ? { livekitRoom: row.livekit_room, identity: row.agent_identity } : undefined;
+}
+
+/** LiveKit says a connector agent's tab left or came back. True if it is one. */
+export function noteConnectorPresence(db: Db, agentIdentity: string, here: boolean, now = Date.now()): boolean {
+  const { changes } = db
+    .prepare(
+      `UPDATE agent_requests SET left_at = ? WHERE agent_identity = ? AND door = 'connector' AND status = 'approved'`,
+    )
+    .run(here ? null : now, agentIdentity);
+  return changes > 0;
+}
+
+/** The meeting ended: its connector agents are done. Returns their identities. */
+export function endRoomConnectors(db: Db, slug: string): string[] {
+  const rows = db
+    .prepare(
+      `SELECT agent_identity FROM agent_requests WHERE room_slug = ? AND door = 'connector' AND status IN ('pending', 'approved')`,
+    )
+    .all(slug) as { agent_identity: string }[];
+  db.prepare(
+    `UPDATE agent_requests SET status = 'revoked', decided_at = COALESCE(decided_at, ?)
+     WHERE room_slug = ? AND door = 'connector' AND status IN ('pending', 'approved')`,
+  ).run(Date.now(), slug);
+  return rows.map((r) => r.agent_identity);
 }
 
 /** Take a connector out of every meeting (it's being deleted). */
