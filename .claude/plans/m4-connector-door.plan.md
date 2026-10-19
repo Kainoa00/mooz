@@ -15,7 +15,7 @@ The assistant then reads the question through the connector and posts its answer
 
 The agent's ears and mouth run in the **owner's browser tab**, so the mooz server still holds no AI or voice keys.
 
-## Decisions (to confirm)
+## Decisions (confirmed 2026-10-19)
 1. **The connector link lasts.** The owner sets it up once in Grok, Claude or ChatGPT and reuses it in every meeting on this mooz server.
    - The link is a setting in SQLite.
    - Ownership is proven by a long-lived HttpOnly cookie in the owner's browser.

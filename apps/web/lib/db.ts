@@ -66,6 +66,19 @@ const MIGRATIONS = [
   // Meeting notes consent: the host's per-meeting policy and each person's opt-out.
   `ALTER TABLE rooms ADD COLUMN notes_allowed INTEGER NOT NULL DEFAULT 0;
    ALTER TABLE participants ADD COLUMN notes_opt_out INTEGER NOT NULL DEFAULT 0;`,
+  // Connectors: a private MCP link an owner pastes into Grok, Claude or ChatGPT once and
+  // brings to any meeting here. A setting, so it outlives meetings; owned by a browser key.
+  `CREATE TABLE connectors (
+     id TEXT PRIMARY KEY,
+     owner_hash TEXT NOT NULL,
+     name TEXT NOT NULL,
+     app TEXT NOT NULL CHECK (app IN ('grok', 'claude', 'chatgpt', 'other')),
+     secret_hash TEXT NOT NULL UNIQUE,
+     created_at INTEGER NOT NULL,
+     rotated_at INTEGER,
+     last_used_at INTEGER
+   );
+   CREATE UNIQUE INDEX connectors_by_owner_name ON connectors(owner_hash, lower(name));`,
 ];
 
 function migrate(db: Db): void {

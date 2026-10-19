@@ -21,13 +21,13 @@ function isHttps(req: Request): boolean {
 }
 
 /** Build an HTTP-only, SameSite=Lax session cookie, Secure whenever served over HTTPS. */
-export function sessionCookie(req: Request, name: string, value: string): string {
+export function sessionCookie(req: Request, name: string, value: string, maxAgeSeconds = 86400): string {
   const parts = [
     `${name}=${encodeURIComponent(value)}`,
     "Path=/",
     "HttpOnly",
     "SameSite=Lax",
-    "Max-Age=86400",
+    `Max-Age=${maxAgeSeconds}`,
   ];
   if (isHttps(req)) parts.push("Secure");
   return parts.join("; ");
