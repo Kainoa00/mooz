@@ -283,7 +283,7 @@ come from the same origin, and someone else's connector looks like one that does
 ### Joining
 
 `POST /api/rooms/{slug}/connector-requests` `{ connectorId }` asks to bring it in and returns
-`{ requestId, status: "pending" }`. The host approves it in the same tray as bridge agents.
+`{ requestId, status: "pending" }` (at most 10 a minute per person and 30 per meeting). The host approves it in the same tray as bridge agents.
 `GET …/{requestId}` returns `{ status }` (`pending`, `approved`, `denied`, `revoked` or
 `expired`), and once approved `POST …/{requestId}/token` returns `{ token, url, identity, name }`
 for the tab's agent connection, again after a reload. Every one of these needs the participant

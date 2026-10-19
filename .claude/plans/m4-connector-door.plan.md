@@ -197,6 +197,11 @@ The agent's ears and mouth run in the **owner's browser tab**, so the mooz serve
     - Fix every finding, then re-review.
 - **Validate**: the full validation block; a live checklist for you (needs your Grok, Claude and ChatGPT accounts and a tunnel).
 
+## Status
+Complete (2026-10-19), except the live check, which needs your accounts. The reviews took six
+security and four code rounds; what changed because of them is in the commits `fix(web): connector
+door …` and summarized under Deviations.
+
 ## Deviations (found while building)
 - **CSP is per request, in `proxy.ts`, not a static header in `next.config.ts`.** A static policy
   can only list connections; a nonce policy (`script-src 'nonce-…' 'strict-dynamic'`) is what stops
@@ -207,6 +212,20 @@ The agent's ears and mouth run in the **owner's browser tab**, so the mooz serve
   Leave me out) now also shows while a connector agent is in the meeting, because its owner's app
   keeps the conversation. Opt-outs are checked again when the assistant reads, not only when the
   question is queued.
+- **The tap is enforced on the server.** A queued question is invisible to the assistant until the
+  owner taps Ask or Copy (it's released), and Dismiss deletes it. `read_meeting` works only around
+  a released question.
+- **The agent's lifetime follows its tab.** LiveKit's webhook marks it gone; it may come back
+  within 2 minutes (a reload), after which the approval ends; the meeting ending revokes it, and
+  the owner can take it out. Owner routes check that the owner cookie owns the connector
+  (`__Host-` over HTTPS).
+- **Hidden text and opt-outs.** Meeting text and names share one rule that drops anything
+  invisible (Unicode tags, smuggling selectors) but keeps what emoji and scripts need. Opt-out
+  lists are never truncated: a line that would exceed the 100 people a question can track is left
+  out instead, and an answer names everyone its lines belong to.
+- **Abuse limits.** Bodies are capped; questions, bring requests and connector creation are rate
+  limited per person, per meeting and server-wide; links unused in a meeting expire; rate-limit
+  stores never reset under a flood. A flood of sham participants needs IP limits at the proxy.
 - **Hearing taps the owner's own meeting connection,** not the agent's: the tab already receives
   and plays everyone's audio, so the agent connection subscribes to nothing. Audio goes to Scribe
   only while someone is talking (a speech gate with pre-roll), which cuts the owner's cost and
@@ -234,12 +253,12 @@ cd bridge && uv run ruff check && uv run ruff format --check && uv run mypy && u
 | Several server processes would split the in-memory queue | Low | mooz already runs one process (SQLite); documented |
 
 ## Acceptance
-- [ ] All tasks complete, each as its own conventional commit, merged to `main`
-- [ ] Validation passes in CI, with bridge and web coverage at 80% or higher
-- [ ] Only the owner can bring their connector, and the host approves it; it is always labeled as an agent
-- [ ] A question reaches the assistant only after the owner's tap; the assistant reads only that meeting, minus opted-out people
-- [ ] A rotated or deleted connector URL, or a removed agent, stops working at once
-- [ ] The E2E connector test passes with a scripted MCP client
-- [ ] The two addressing detectors pass the same shared cases
-- [ ] `security-reviewer` and `code-reviewer` gates passed, every finding fixed and re-reviewed
+- [x] All tasks complete, each as its own conventional commit, merged to `main`
+- [x] Validation passes in CI, with bridge and web coverage at 80% or higher
+- [x] Only the owner can bring their connector, and the host approves it; it is always labeled as an agent
+- [x] A question reaches the assistant only after the owner's tap; the assistant reads only that meeting, minus opted-out people
+- [x] A rotated or deleted connector URL, or a removed agent, stops working at once
+- [x] The E2E connector test passes with a scripted MCP client
+- [x] The two addressing detectors pass the same shared cases
+- [x] `security-reviewer` and `code-reviewer` gates passed, every finding fixed and re-reviewed
 - [ ] Live check with your Grok, Claude and ChatGPT accounts (needs you)

@@ -18,11 +18,12 @@ heard in the meeting.
   and anyone can leave themselves out.
 - **Self-hosted and open source** under the MIT license.
 
-> **Status: v0.1 in progress.** Milestones 1–3 are done: people meet by link, anyone can bring
+> **Status: v0.1 in progress.** Milestones 1–4 are done: people meet by link, anyone can bring
 > a personal agent (Claude or Grok) that reads their folders, repos and GitHub, remembers what
 > they tell it, keeps meeting notes when everyone agrees, and researches in the background while
-> the meeting goes on. Connecting the Grok, Claude or ChatGPT app you already use (M4) is built
-> and in review. See the [roadmap](#roadmap).
+> the meeting goes on, or bring the Grok, Claude or ChatGPT app they already use through a
+> private connector link. Next up is many agents in one meeting (M5). See the
+> [roadmap](#roadmap).
 
 ## Quickstart (local)
 
@@ -315,7 +316,7 @@ The project's planning documents are in `.claude/prds/` (requirements) and `.cla
 | **M1 ✅ First agent in the room** | Meet by link. Host-approved agents that answer by voice and chat when addressed |
 | **M2 ✅ Personal agent with memory** | Claude or Grok brains, memory across meetings, your repos and folders, owner-only access, opt-in meeting notes |
 | **M3 ✅ Async research tasks** | "On it". It works in the background (your files, GitHub, the web) and reports back mid-meeting |
-| M4 Connector (in review) | Bring the Grok / Claude / ChatGPT app you already use, with its memory, via a private MCP link |
+| **M4 ✅ Connector** | Bring the Grok / Claude / ChatGPT app you already use, with its memory, via a private MCP link |
 | M5 Many agents | One speaker at a time, agent-to-agent conversations with a "Continue?" pause |
 | M6 Local voice and launch | VoiceStudio / any OpenAI-compatible local speech server, VPS guide, security hardening |
 

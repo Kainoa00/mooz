@@ -4,6 +4,7 @@ import { decideAgentRequest, isRevokedAgent } from "@/lib/agents";
 import { connectorAgentFor } from "@/lib/connector-agents";
 import { OWNER_COOKIE, createConnector } from "@/lib/connectors";
 import { getDb } from "@/lib/db";
+import { resetRateLimitsForTests } from "@/lib/rate-limit";
 import { addParticipant, createRoom, getRoom } from "@/lib/rooms";
 import { LK_KEY, LK_SECRET, jsonRequest, params, useTestEnv } from "@/test/helpers";
 
@@ -13,13 +14,14 @@ vi.mock("@/lib/livekit", async (importOriginal) => ({
   removeFromRoom: (room: string, identity: string) => removeFromRoom(room, identity),
 }));
 
-const { POST: REQUEST } = await import("./route");
+const { BRINGS_PER_MINUTE, POST: REQUEST } = await import("./route");
 const { GET: STATUS } = await import("./[id]/route");
 const { POST: TOKEN } = await import("./[id]/token/route");
 const { DELETE: DELETE_CONNECTOR } = await import("@/app/api/connectors/[id]/route");
 
 beforeEach(() => {
   useTestEnv();
+  resetRateLimitsForTests();
   removeFromRoom.mockClear();
 });
 
@@ -38,6 +40,16 @@ function setup() {
 const base = (slug: string) => `http://localhost/api/rooms/${slug}/connector-requests`;
 
 describe("/api/rooms/[slug]/connector-requests", () => {
+  it("takes only a few bring requests a minute (a script re-bringing links can't keep them alive)", async () => {
+    const { slug, connector, cookie } = setup();
+    const statuses: number[] = [];
+    for (let i = 0; i <= BRINGS_PER_MINUTE; i++) {
+      statuses.push((await REQUEST(jsonRequest(base(slug), { connectorId: connector.id }, { cookie }), params({ slug }))).status);
+    }
+    expect(statuses.slice(0, BRINGS_PER_MINUTE).every((s) => s === 201)).toBe(true);
+    expect(statuses.at(-1)).toBe(429);
+  });
+
   it("brings the owner's connector: pending, then approved, then a token for the owner's tab", async () => {
     const { db, slug, kai, connector, cookie } = setup();
 
