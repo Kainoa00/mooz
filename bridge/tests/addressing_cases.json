@@ -1,0 +1,401 @@
+{
+ "about": "Who is addressing an agent: shared by the bridge (pytest) and the web app (Vitest) so the two detectors never drift. question null means not addressed.",
+ "cases": [
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "Atlas, what's blocking the deploy?",
+   "question": "what's blocking the deploy?"
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "atlas what's blocking the deploy",
+   "question": "what's blocking the deploy"
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "Hey Atlas, can you check CI?",
+   "question": "can you check CI?"
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "hey atlas can you check ci",
+   "question": "can you check ci"
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "OK Atlas, summarize that.",
+   "question": "summarize that."
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "Okay, Atlas. What did we decide?",
+   "question": "What did we decide?"
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "So Atlas, any ideas?",
+   "question": "any ideas?"
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "Um, Atlas, where is the config?",
+   "question": "where is the config?"
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "Yo Atlas what's up with the tests",
+   "question": "what's up with the tests"
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "And Atlas, one more thing: the auth bug?",
+   "question": "one more thing: the auth bug?"
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "Hey Atlis, what's the status?",
+   "question": "what's the status?"
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "Hey Atlus what's the status",
+   "question": "what's the status"
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "Atles, are you there?",
+   "question": "are you there?"
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "Hey Atlass, check main",
+   "question": "check main"
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "What do you think, Atlas?",
+   "question": "What do you think"
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "Can you look into the failing build Atlas?",
+   "question": "Can you look into the failing build"
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "Is the migration done, atlas",
+   "question": "Is the migration done"
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "Hey Atlas.",
+   "question": ""
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "Atlas?",
+   "question": ""
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "Atlas",
+   "question": ""
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "I asked Atlas about it yesterday.",
+   "question": null
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "Atlas said the build was green.",
+   "question": null
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "atlas told me to restart it",
+   "question": null
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "Atlas was wrong about that.",
+   "question": null
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "Atlas's answer was useful",
+   "question": null
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "We should ask atlas later",
+   "question": null
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "The Atlas project is behind schedule",
+   "question": null
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "I think Atlas has the context on this",
+   "question": null
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "Zach, what do you think?",
+   "question": null
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "Hey Zach, can you share your screen?",
+   "question": null
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "Let's look at the atlas of the codebase",
+   "question": null
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "What's blocking the deploy?",
+   "question": null
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "",
+   "question": null
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "Hey, at last we shipped it!",
+   "question": null
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "Outlast the competition, that's the plan",
+   "question": null
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "Hey Alice, can you check?",
+   "question": null
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "Hello Atlanta team",
+   "question": null
+  },
+  {
+   "name": "Atlas",
+   "via": "chat",
+   "text": "@Atlas what's blocking the deploy?",
+   "question": "what's blocking the deploy?"
+  },
+  {
+   "name": "Atlas",
+   "via": "chat",
+   "text": "@atlas can you check ci",
+   "question": "can you check ci"
+  },
+  {
+   "name": "Atlas",
+   "via": "chat",
+   "text": "what's blocking the deploy @Atlas",
+   "question": "what's blocking the deploy"
+  },
+  {
+   "name": "Atlas",
+   "via": "chat",
+   "text": "@Atlas",
+   "question": ""
+  },
+  {
+   "name": "Atlas",
+   "via": "chat",
+   "text": "Atlas, can you check CI?",
+   "question": "can you check CI?"
+  },
+  {
+   "name": "Atlas",
+   "via": "chat",
+   "text": "thanks @Grok",
+   "question": null
+  },
+  {
+   "name": "Atlas",
+   "via": "chat",
+   "text": "I asked Atlas yesterday",
+   "question": null
+  },
+  {
+   "name": "Atlas",
+   "via": "chat",
+   "text": "email me at atlas@example.com",
+   "question": null
+  },
+  {
+   "name": "Atlas",
+   "via": "chat",
+   "text": "@everyone what are the blockers?",
+   "question": "what are the blockers?"
+  },
+  {
+   "name": "Atlas",
+   "via": "chat",
+   "text": "@agents any blockers?",
+   "question": "any blockers?"
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "Hey agents, any blockers?",
+   "question": "any blockers?"
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "everyone has the notes",
+   "question": null
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "Agents can't see my screen yet",
+   "question": null
+  },
+  {
+   "name": "Atlas",
+   "via": "chat",
+   "text": "@all I'm sharing my screen",
+   "question": null
+  },
+  {
+   "name": "Claude",
+   "via": "voice",
+   "text": "Could we move this to Friday?",
+   "question": null
+  },
+  {
+   "name": "Claude",
+   "via": "voice",
+   "text": "Okay could you share your screen",
+   "question": null
+  },
+  {
+   "name": "Claude",
+   "via": "voice",
+   "text": "Cloud costs went up",
+   "question": null
+  },
+  {
+   "name": "Max",
+   "via": "voice",
+   "text": "Makes sense?",
+   "question": null
+  },
+  {
+   "name": "Juno",
+   "via": "voice",
+   "text": "Join the other call first.",
+   "question": null
+  },
+  {
+   "name": "Claude",
+   "via": "voice",
+   "text": "Hey Claud, what's next?",
+   "question": "what's next?"
+  },
+  {
+   "name": "Grok",
+   "via": "voice",
+   "text": "Hey Grock, what's next?",
+   "question": "what's next?"
+  },
+  {
+   "name": "Grok",
+   "via": "voice",
+   "text": "groc what's next",
+   "question": "what's next"
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "Summarize the last ten minutes, Atlas.",
+   "question": "Summarize the last ten minutes"
+  },
+  {
+   "name": "Zach's Grok",
+   "via": "voice",
+   "text": "Zach's Grok, what's my schedule?",
+   "question": "what's my schedule?"
+  },
+  {
+   "name": "Zach's Grok",
+   "via": "voice",
+   "text": "Hey Grok, what's my schedule?",
+   "question": "what's my schedule?"
+  },
+  {
+   "name": "Zach's Grok",
+   "via": "chat",
+   "text": "@Grok what's my schedule",
+   "question": "what's my schedule"
+  },
+  {
+   "name": "Zach's Grok",
+   "via": "chat",
+   "text": "@Zach's Grok what's my schedule",
+   "question": "what's my schedule"
+  },
+  {
+   "name": "Zach's Grok",
+   "via": "chat",
+   "text": "@Zach\u2019s Grok what's my schedule",
+   "question": "what's my schedule"
+  },
+  {
+   "name": "Zach's Grok",
+   "via": "voice",
+   "text": "Grok said no",
+   "question": null
+  }
+ ]
+}
