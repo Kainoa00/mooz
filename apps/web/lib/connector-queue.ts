@@ -1,0 +1,293 @@
+import type { ConnectorAgent } from "./connector-agents";
+import type { Db } from "./db";
+import { HttpError } from "./http";
+import { newId } from "./ids";
+import { flatten, stripInvisible } from "./text";
+
+/**
+ * Questions for connector agents, in this server's memory only: nothing outlives the
+ * meeting (questions expire after 10 minutes). The owner's tab hears the meeting and
+ * sends each question with what was said lately. Every line is checked against the
+ * meeting here: names and roles come from the server, and anyone who opted out of
+ * notes is left out, since assistant apps keep chat history and may remember it.
+ */
+
+export const QUESTION_TTL_MS = 10 * 60 * 1000;
+export const CONTEXT_WINDOW_MS = 10 * 60 * 1000;
+export const MAX_WAITING = 5;
+export const MAX_LINES = 500;
+export const MAX_LINE_CHARS = 1000;
+export const MAX_QUESTION_CHARS = 1000;
+export const MAX_CONTEXT_CHARS = 12_000;
+export const MAX_SPOKEN_CHARS = 400;
+export const MAX_DETAILS_CHARS = 4000;
+const MAX_AGENTS = 500;
+
+export type Role = "owner" | "guest" | "agent" | "you";
+
+export interface MeetingLine {
+  speaker: string;
+  role: Role;
+  name: string;
+  kind: "human" | "agent";
+  via: "voice" | "chat";
+  text: string;
+  at: number;
+}
+
+export interface Asker {
+  identity: string;
+  name: string;
+  role: Exclude<Role, "you">;
+  kind: "human" | "agent";
+}
+
+export interface Question {
+  id: string;
+  asker: Asker;
+  text: string;
+  askedAt: number;
+  status: "waiting" | "answered";
+}
+
+/** What the owner's tab gets (as a LiveKit data packet) to post and speak as the agent. */
+export interface AnswerPacket {
+  type: "answer";
+  id: string;
+  spoken: string;
+  details: string;
+  /** Whom it answers (a question from an agent is answered to its owner). */
+  reply_to: string;
+  /** Whose words were in what the assistant read, for notes opt-outs. */
+  sources: string[];
+}
+
+interface Entry {
+  question: Question;
+  lines: MeetingLine[];
+  replyTo: string;
+  people: string[];
+  answer?: AnswerPacket;
+}
+
+/** A question as its owner's tab sees it: with the answer once there is one. */
+export type QuestionView = Question & { answer?: AnswerPacket };
+
+interface AgentState {
+  entries: Entry[];
+  lines: MeetingLine[];
+  touched: number;
+}
+
+const STORE = Symbol.for("mooz.connectorQueue");
+
+function store(): Map<string, AgentState> {
+  // On globalThis: every route bundle in this process shares one queue.
+  const g = globalThis as unknown as Record<symbol, Map<string, AgentState> | undefined>;
+  return (g[STORE] ??= new Map());
+}
+
+function stateFor(agentIdentity: string, now: number, create: boolean): AgentState | undefined {
+  const all = store();
+  let state = all.get(agentIdentity);
+  if (!state && create) {
+    if (all.size >= MAX_AGENTS) {
+      const oldest = [...all.entries()].sort((a, b) => a[1].touched - b[1].touched)[0];
+      all.delete(oldest[0]);
+    }
+    state = { entries: [], lines: [], touched: now };
+    all.set(agentIdentity, state);
+  }
+  if (state) {
+    state.entries = state.entries.filter((e) => now - e.question.askedAt <= QUESTION_TTL_MS);
+    state.touched = now;
+  }
+  return state;
+}
+
+interface Person {
+  name: string;
+  kind: "human" | "agent";
+  /** For an agent, the person behind it. */
+  owner?: string;
+  optedOut: boolean;
+}
+
+/** Everyone in the meeting, by identity, as the server knows them. */
+function peopleIn(db: Db, slug: string): Map<string, Person> {
+  const people = new Map<string, Person>();
+  const humans = db
+    .prepare("SELECT identity, name, notes_opt_out FROM participants WHERE room_slug = ?")
+    .all(slug) as { identity: string; name: string; notes_opt_out: number }[];
+  for (const h of humans) people.set(h.identity, { name: h.name, kind: "human", optedOut: h.notes_opt_out === 1 });
+  const agents = db
+    .prepare("SELECT agent_identity, agent_name, owner_identity FROM agent_requests WHERE room_slug = ? AND status = 'approved'")
+    .all(slug) as { agent_identity: string; agent_name: string; owner_identity: string }[];
+  for (const a of agents) {
+    people.set(a.agent_identity, { name: a.agent_name, kind: "agent", owner: a.owner_identity, optedOut: false });
+  }
+  return people;
+}
+
+function roleOf(agent: ConnectorAgent, identity: string, person: Person): Role {
+  if (identity === agent.identity) return "you";
+  if (identity === agent.ownerIdentity) return "owner";
+  return person.kind === "agent" ? "agent" : "guest";
+}
+
+/** The person behind a speaker (an agent stands for its owner). */
+const personOf = (identity: string, person: Person) => (person.kind === "agent" && person.owner ? person.owner : identity);
+
+const strings = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : typeof value === "string" ? [value] : [];
+
+function parseLines(
+  value: unknown,
+  agent: ConnectorAgent,
+  people: Map<string, Person>,
+  now: number,
+): MeetingLine[] {
+  if (!Array.isArray(value) || value.length > MAX_LINES) {
+    throw new HttpError(400, "invalid_lines", `Send at most ${MAX_LINES} lines of the meeting`);
+  }
+  const optedOut = (identity: string) => people.get(identity)?.optedOut === true;
+  const lines: MeetingLine[] = [];
+  for (const raw of value) {
+    if (typeof raw !== "object" || raw === null) continue;
+    const item = raw as Record<string, unknown>;
+    if (typeof item.identity !== "string" || typeof item.text !== "string") continue;
+    const person = people.get(item.identity);
+    if (!person) continue; // not in this meeting
+    const at = typeof item.at === "number" && Number.isFinite(item.at) ? Math.min(item.at, now) : now;
+    if (now - at > CONTEXT_WINDOW_MS) continue;
+    // Left out if anyone it belongs to opted out (as the bridge's notes do).
+    const belongs = [item.identity, ...(person.owner ? [person.owner] : []), ...strings(item.reply_to), ...strings(item.sources)];
+    if (belongs.some(optedOut)) continue;
+    const text = flatten(item.text).slice(0, MAX_LINE_CHARS);
+    if (!text.trim()) continue;
+    lines.push({
+      speaker: item.identity,
+      role: roleOf(agent, item.identity, person),
+      name: person.name,
+      kind: person.kind,
+      via: item.via === "voice" ? "voice" : "chat",
+      text,
+      at,
+    });
+  }
+  lines.sort((a, b) => a.at - b.at);
+  // The newest that fit.
+  const kept: MeetingLine[] = [];
+  let size = 0;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    size += lines[i].text.length;
+    if (size > MAX_CONTEXT_CHARS) break;
+    kept.unshift(lines[i]);
+  }
+  return kept;
+}
+
+/** The owner's tab heard someone address the agent. */
+export function enqueueQuestion(
+  db: Db,
+  agent: ConnectorAgent,
+  input: { asker: unknown; text: unknown; lines: unknown },
+  now = Date.now(),
+): Question {
+  const people = peopleIn(db, agent.slug);
+  const askerPerson = typeof input.asker === "string" ? people.get(input.asker) : undefined;
+  if (typeof input.asker !== "string" || !askerPerson || input.asker === agent.identity) {
+    throw new HttpError(400, "invalid_asker", "Whoever asked isn't in this meeting");
+  }
+  const text = typeof input.text === "string" ? flatten(input.text).trim() : "";
+  if (!text || text.length > MAX_QUESTION_CHARS) {
+    throw new HttpError(400, "invalid_question", `A question is 1–${MAX_QUESTION_CHARS} characters`);
+  }
+  const lines = parseLines(input.lines, agent, people, now);
+  const role = roleOf(agent, input.asker, askerPerson) as Asker["role"];
+  const question: Question = {
+    id: newId("q"),
+    asker: { identity: input.asker, name: askerPerson.name, role, kind: askerPerson.kind },
+    text,
+    askedAt: now,
+    status: "waiting",
+  };
+  const replyTo = personOf(input.asker, askerPerson);
+  const people_ = [...new Set([replyTo, ...lines.map((l) => personOf(l.speaker, people.get(l.speaker)!))])];
+
+  const state = stateFor(agent.identity, now, true)!;
+  state.entries.push({ question, lines, replyTo, people: people_ });
+  state.lines = lines;
+  const waiting = state.entries.filter((e) => e.question.status === "waiting");
+  for (const extra of waiting.slice(0, Math.max(0, waiting.length - MAX_WAITING))) {
+    state.entries.splice(state.entries.indexOf(extra), 1);
+  }
+  return question;
+}
+
+/** The questions the owner's tab can see (waiting and answered, until they expire). */
+export function listQuestions(agentIdentity: string, now = Date.now()): QuestionView[] {
+  return (stateFor(agentIdentity, now, false)?.entries ?? []).map((e) =>
+    e.answer ? { ...e.question, answer: e.answer } : { ...e.question },
+  );
+}
+
+/** A waiting question (the oldest, unless one is named) and what the meeting said around it. */
+export function getQuestion(
+  agentIdentity: string,
+  id: string | undefined,
+  now = Date.now(),
+): { question: Question; lines: MeetingLine[] } | undefined {
+  const waiting = (stateFor(agentIdentity, now, false)?.entries ?? []).filter((e) => e.question.status === "waiting");
+  const entry = id === undefined ? waiting[0] : waiting.find((e) => e.question.id === id);
+  return entry ? { question: entry.question, lines: entry.lines } : undefined;
+}
+
+/** The meeting as of the latest question (the last 10 minutes of it). */
+export function meetingLines(agentIdentity: string, now = Date.now()): MeetingLine[] {
+  const lines = stateFor(agentIdentity, now, false)?.lines ?? [];
+  return lines.filter((l) => now - l.at <= CONTEXT_WINDOW_MS);
+}
+
+function cap(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max - 1);
+  const space = cut.lastIndexOf(" ");
+  return `${(space > max / 2 ? cut.slice(0, space) : cut).trimEnd()}…`;
+}
+
+/** The assistant's answer (or the one its owner pasted), ready to post and speak. */
+export function answerQuestion(
+  agentIdentity: string,
+  id: unknown,
+  input: { spoken: unknown; details?: unknown },
+  now = Date.now(),
+): AnswerPacket {
+  const entry = (stateFor(agentIdentity, now, false)?.entries ?? []).find((e) => e.question.id === id);
+  if (!entry) throw new HttpError(404, "question_not_found", "No such question (it may have expired)");
+  if (entry.question.status === "answered") {
+    throw new HttpError(409, "already_answered", "That question was already answered");
+  }
+  const spoken = typeof input.spoken === "string" ? stripInvisible(input.spoken).trim() : "";
+  if (!spoken) throw new HttpError(400, "invalid_answer", "An answer needs something to say");
+  const details = typeof input.details === "string" ? stripInvisible(input.details).trim() : "";
+  entry.question.status = "answered";
+  entry.answer = {
+    type: "answer",
+    id: entry.question.id,
+    spoken: cap(spoken, MAX_SPOKEN_CHARS),
+    details: cap(details, MAX_DETAILS_CHARS),
+    reply_to: entry.replyTo,
+    sources: entry.people,
+  };
+  return entry.answer;
+}
+
+/** The agent left: drop everything it was holding. */
+export function forgetAgent(agentIdentity: string): void {
+  store().delete(agentIdentity);
+}
+
+export function resetQueueForTests(): void {
+  store().clear();
+}

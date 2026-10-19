@@ -1,4 +1,4 @@
-import { AccessToken, RoomServiceClient, ServerError, TrackSource } from "livekit-server-sdk";
+import { AccessToken, DataPacket_Kind, RoomServiceClient, ServerError, TrackSource } from "livekit-server-sdk";
 import type { AgentIdentity } from "./agents";
 
 export interface LivekitConfig {
@@ -129,6 +129,12 @@ async function ignoringNotFound(call: () => Promise<unknown>): Promise<void> {
 export async function removeFromRoom(room: string, identity: string): Promise<void> {
   // Already gone (left, or never connected) is fine; anything else is not.
   await ignoringNotFound(() => roomService().removeParticipant(room, identity));
+}
+
+/** A reliable data packet from the server to one participant (a connector agent's answers). */
+export async function sendToParticipant(room: string, identity: string, topic: string, message: unknown): Promise<void> {
+  const data = new TextEncoder().encode(JSON.stringify(message));
+  await roomService().sendData(room, data, DataPacket_Kind.RELIABLE, { destinationIdentities: [identity], topic });
 }
 
 /**

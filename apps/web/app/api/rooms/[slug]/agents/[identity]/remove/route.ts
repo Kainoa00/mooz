@@ -1,4 +1,5 @@
 import { revokeAgent } from "@/lib/agents";
+import { forgetAgent } from "@/lib/connector-queue";
 import { getDb } from "@/lib/db";
 import { errorResponse } from "@/lib/http";
 import { removeFromRoom } from "@/lib/livekit";
@@ -15,6 +16,7 @@ export async function POST(
     const db = getDb();
     const room = requireHost(db, req, slug);
     revokeAgent(db, { slug, agentIdentity: identity });
+    forgetAgent(identity);
     await removeFromRoom(room.livekitRoom, identity);
     return Response.json({ ok: true });
   } catch (err) {

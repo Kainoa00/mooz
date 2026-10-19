@@ -5,12 +5,13 @@ import {
   transaction,
   type AgentIdentity,
 } from "./agents";
-import { getOwned } from "./connectors";
+import { getOwned, requireOwnerKey } from "./connectors";
 import type { Db } from "./db";
 import { HttpError } from "./http";
 import { hashSecret, newId, newSecret } from "./ids";
 import { parseAgentName } from "./names";
 import type { Participant } from "./rooms";
+import { requireParticipant } from "./session";
 
 /**
  * A connector comes into a meeting as an agent run from its owner's browser tab. It
@@ -150,6 +151,13 @@ export function connectorAgentFor(db: Db, owner: Participant, requestId: string)
     throw new HttpError(409, "not_approved", "This agent is not approved in this meeting");
   }
   return toAgent(row);
+}
+
+/** The approved agent behind a request, for its owner's tab (participant and owner cookie). */
+export function requireConnectorAgent(db: Db, req: Request, slug: string, requestId: string): ConnectorAgent {
+  const owner = requireParticipant(db, req, slug);
+  requireOwnerKey(req);
+  return connectorAgentFor(db, owner, requestId);
 }
 
 /** Where a connector is right now: its approved agent, if it's in a meeting. */
