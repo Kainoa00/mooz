@@ -52,7 +52,7 @@ describe("/api/rooms/[slug]/connector-requests/[id]/questions", () => {
 
     expect(res.status).toBe(201);
     const { question } = (await res.json()) as { question: { id: string; text: string } };
-    expect(getQuestion(agent.identity, question.id)?.question.text).toBe("@Grok when is the launch?");
+    expect(getQuestion(getDb(), agent, question.id)?.question.text).toBe("@Grok when is the launch?");
 
     const listed = await GET(new Request(url, { headers: { cookie } }), params({ slug, id: requestId }));
     expect(((await listed.json()) as { questions: { id: string }[] }).questions.map((q) => q.id)).toEqual([question.id]);

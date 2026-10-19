@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { APP_LABEL, setupSteps, type AssistantApp } from "@/lib/connector-protocol";
 import { errorMessage, readBody } from "@/lib/fetch-json";
 import type { BroughtConnector } from "./ConnectorAgent";
+import { VoiceSettingsForm } from "./ConnectorVoice";
 
 interface ConnectorInfo {
   id: string;
@@ -150,6 +151,7 @@ export function ConnectorDoor({ slug, onBring }: { slug: string; onBring: (c: Br
           ))}
         </ul>
       )}
+      <VoiceSettingsForm />
       <form
         className="flex flex-wrap items-end gap-2 text-sm"
         onSubmit={(e) => {

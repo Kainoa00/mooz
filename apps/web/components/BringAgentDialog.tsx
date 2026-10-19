@@ -55,7 +55,7 @@ export function BringAgentDialog({
       </button>
       {open && (
         <div role="dialog" aria-label="Bring my agent" className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="flex w-full max-w-lg flex-col gap-4 rounded-xl bg-background p-5 text-foreground shadow-xl">
+          <div className="flex max-h-full w-full max-w-lg flex-col gap-4 overflow-y-auto rounded-xl bg-background p-5 text-foreground shadow-xl">
             <h2 className="text-lg font-semibold">Bring your agent into this meeting</h2>
             <div role="tablist" className="flex gap-2 text-sm">
               <button

@@ -1,8 +1,8 @@
 "use client";
 
-import { DisconnectReason, Room, RoomEvent, type TextStreamReader } from "livekit-client";
+import { DisconnectReason, Room, RoomEvent, Track, type LocalTrackPublication, type TextStreamReader } from "livekit-client";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ConnectorEars } from "@/lib/connector-ears";
+import { ConnectorEars, type HeardLine } from "@/lib/connector-ears";
 import {
   APP_LABEL,
   CONNECTOR_TOPIC,
@@ -14,17 +14,14 @@ import {
 } from "@/lib/connector-protocol";
 import { errorMessage, readBody } from "@/lib/fetch-json";
 import { isAgent } from "@/lib/labels";
+import type { AgentVoice } from "@/lib/voice/speaker";
+import { ConnectorHearing, openSpeaker, useVoiceSettings } from "./ConnectorVoice";
 
 /** The connector this tab brought into the meeting (kept across reloads in sessionStorage). */
 export interface BroughtConnector {
   requestId: string;
   name: string;
   app: AssistantApp;
-}
-
-/** What the agent can do with its voice (browser voice, when the owner set it up). */
-export interface AgentVoice {
-  speak(text: string): void;
 }
 
 type Phase = "waiting" | "in" | "denied" | "expired" | "removed" | "failed";
@@ -78,19 +75,17 @@ function readReviewSetting(): boolean {
 
 /**
  * The connector agent, run from its owner's tab: a second LiveKit connection as the agent
- * once the host approves it. It listens to the chat, queues questions for the owner's
- * assistant app, shows the owner a one-tap prompt for each, and posts (and speaks) the
- * answers the server hands it.
+ * once the host approves it. It listens to the chat (and, with the owner's ElevenLabs key,
+ * to what people say), queues questions for the owner's assistant app, shows the owner a
+ * one-tap prompt for each, and posts (and speaks) the answers the server hands it.
  */
 export function ConnectorAgent({
   slug,
   connector,
-  voice,
   onEnded,
 }: {
   slug: string;
   connector: BroughtConnector;
-  voice?: AgentVoice;
   onEnded: () => void;
 }) {
   const base = `/api/rooms/${slug}/connector-requests/${connector.requestId}`;
@@ -105,11 +100,15 @@ export function ConnectorAgent({
   const earsRef = useRef<ConnectorEars | null>(null);
   const delivered = useRef<Set<string> | null>(null);
   const reviewRef = useRef(review);
-  const voiceRef = useRef(voice);
-
-  useEffect(() => {
-    voiceRef.current = voice;
-  }, [voice]);
+  const voiceRef = useRef<AgentVoice | null>(null);
+  const settings = useVoiceSettings();
+  // A voice problem belongs to the key it happened with; a new key gets a fresh try.
+  const [problem, setProblem] = useState<{ key: string; message: string } | null>(null);
+  const voiceProblem = settings && problem?.key === settings.apiKey ? problem.message : null;
+  const onVoiceFatal = useCallback(
+    (message: string) => settings && setProblem({ key: settings.apiKey, message }),
+    [settings],
+  );
 
   const say = useCallback(async (text: string, replyTo: string, sources: string[] = []) => {
     const room = roomRef.current;
@@ -139,6 +138,42 @@ export function ConnectorAgent({
       else void post(packet);
     },
     [deliveredKey, post],
+  );
+
+  // Everything the agent hears, typed or said, goes through its ears.
+  const hear = useCallback(
+    async (line: HeardLine) => {
+      const ears = earsRef.current;
+      const heard = ears?.hear(line);
+      if (!ears || !heard) return;
+      const reply = async (text: string) => {
+        await say(text, heard.replyTo);
+        if (line.via === "voice") voiceRef.current?.speak(text);
+      };
+      if (heard.kind === "wake") {
+        await reply("Yes?");
+        return;
+      }
+      await reply(FILLER);
+      const res = await fetch(`${base}/questions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ asker: heard.asker, text: heard.text, lines: ears.snapshot() }),
+      }).catch(() => null);
+      const body = res ? await readBody(res) : null;
+      const question = body?.question as { id: string; text: string; asker: { name: string } } | undefined;
+      if (res?.ok && question) {
+        setAsked((list) => [...list, { id: question.id, askerName: question.asker.name, text: question.text }]);
+      } else {
+        setError(errorMessage(body, "Could not pass a question to your assistant."));
+      }
+    },
+    [base, say],
+  );
+
+  const hearSpeech = useCallback(
+    (identity: string, text: string) => void hear({ identity, person: identity, kind: "human", text, via: "voice" }),
+    [hear],
   );
 
   // 1. Wait for the host to decide.
@@ -178,11 +213,10 @@ export function ConnectorAgent({
         return;
       }
       const from = room.remoteParticipants.get(identity);
-      const ears = earsRef.current;
-      if (!from || !ears) return;
+      if (!from) return;
       const attrs = reader.info.attributes ?? {};
       const kind = isAgent(from) ? "agent" : "human";
-      const heard = ears.hear({
+      await hear({
         identity,
         person: kind === "agent" ? (from.attributes.owner_id ?? identity) : identity,
         kind,
@@ -191,24 +225,6 @@ export function ConnectorAgent({
         replyTo: attrs.reply_to,
         sources: attrs.sources?.split(",").filter(Boolean),
       });
-      if (!heard) return;
-      if (heard.kind === "wake") {
-        await say("Yes?", heard.replyTo);
-        return;
-      }
-      await say(FILLER, heard.replyTo);
-      const res = await fetch(`${base}/questions`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ asker: heard.asker, text: heard.text, lines: ears.snapshot() }),
-      }).catch(() => null);
-      const body = res ? await readBody(res) : null;
-      const question = body?.question as { id: string; text: string; asker: { name: string } } | undefined;
-      if (res?.ok && question) {
-        setAsked((list) => [...list, { id: question.id, askerName: question.asker.name, text: question.text }]);
-      } else {
-        setError(errorMessage(body, "Could not pass a question to your assistant."));
-      }
     }
 
     (async () => {
@@ -252,7 +268,32 @@ export function ConnectorAgent({
       roomRef.current = null;
       void room.disconnect();
     };
-  }, [approved, base, receive, say]);
+  }, [approved, base, receive, hear]);
+
+  // 2b. With the owner's ElevenLabs key, the agent speaks: its answers go out as its microphone.
+  useEffect(() => {
+    const room = roomRef.current;
+    if (phase !== "in" || !settings || !room) return;
+    const voice = openSpeaker(settings, (e) => {
+      if (e.fatal) setProblem({ key: settings.apiKey, message: e.message });
+    });
+    voiceRef.current = voice.speaker;
+    let publication: LocalTrackPublication | undefined;
+    let gone = false;
+    room.localParticipant
+      .publishTrack(voice.track, { source: Track.Source.Microphone, name: "voice", dtx: true })
+      .then((p) => {
+        publication = p;
+        if (gone && p.track) void room.localParticipant.unpublishTrack(p.track);
+      })
+      .catch(() => setProblem({ key: settings.apiKey, message: "Couldn't turn on your agent's voice." }));
+    return () => {
+      gone = true;
+      voiceRef.current = null;
+      voice.close();
+      if (publication?.track && room.state === "connected") void room.localParticipant.unpublishTrack(publication.track);
+    };
+  }, [phase, settings]);
 
   // 3. In case an answer's packet never arrived (or this tab reloaded): pick it up from the server.
   useEffect(() => {
@@ -305,6 +346,18 @@ export function ConnectorAgent({
           />
           Review answers before they&apos;re spoken
         </label>
+      )}
+      {phase === "in" && (
+        <p data-testid="connector-voice" className="text-xs text-zinc-300">
+          {voiceProblem
+            ? `Voice is off: ${voiceProblem} ${connector.name} still answers in chat.`
+            : settings
+              ? `🎙️ ${connector.name} hears its name and speaks, through your ElevenLabs account.`
+              : `Chat only: people reach ${connector.name} with @${connector.name}. Add an ElevenLabs key in Bring my agent to let it hear and speak.`}
+        </p>
+      )}
+      {phase === "in" && settings && !voiceProblem && (
+        <ConnectorHearing settings={settings} name={connector.name} onHeard={hearSpeech} onFatal={onVoiceFatal} />
       )}
       {phase === "in" && error && (
         <p role="alert" className="text-xs text-red-300">

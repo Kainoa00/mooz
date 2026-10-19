@@ -36,10 +36,20 @@ export function parseNotesAnnouncement(payload: Uint8Array): "on" | "off" | null
   }
 }
 
-export function notesBannerText(agentNames: string[]): string {
-  const names =
-    agentNames.length <= 1
-      ? agentNames.join("")
-      : `${agentNames.slice(0, -1).join(", ")} and ${agentNames[agentNames.length - 1]}`;
-  return `📝 ${names} ${agentNames.length === 1 ? "is" : "are"} keeping notes`;
+function list(names: string[]): string {
+  return names.length <= 1 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+/**
+ * The banner for agents that keep notes and connector agents, which pass the last few
+ * minutes of the meeting to their owner's assistant app (where its chat history keeps them).
+ */
+export function notesBannerText(keepers: string[], connectors: string[] = []): string {
+  const parts: string[] = [];
+  if (keepers.length) parts.push(`${list(keepers)} ${keepers.length === 1 ? "is" : "are"} keeping notes`);
+  if (connectors.length) {
+    const one = connectors.length === 1;
+    parts.push(`${list(connectors)} can share what's said with ${one ? "its" : "their"} assistant app${one ? "" : "s"} when asked`);
+  }
+  return `📝 ${parts.join("; ")}`;
 }

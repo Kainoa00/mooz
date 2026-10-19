@@ -34,6 +34,12 @@ describe("notes protocol", () => {
       "📝 Kainoa's Atlas and Zach's Grok are keeping notes",
     );
     expect(notesBannerText(["A", "B", "C"])).toBe("📝 A, B and C are keeping notes");
+    expect(notesBannerText([], ["Kainoa's Grok"])).toBe(
+      "📝 Kainoa's Grok can share what's said with its assistant app when asked",
+    );
+    expect(notesBannerText(["Zach's Atlas"], ["Kainoa's Grok", "Lee's Claude"])).toBe(
+      "📝 Zach's Atlas is keeping notes; Kainoa's Grok and Lee's Claude can share what's said with their assistant apps when asked",
+    );
   });
 
   it("names an agent by its owner", () => {

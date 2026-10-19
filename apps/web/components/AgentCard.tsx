@@ -1,7 +1,7 @@
 "use client";
 
-import { useIsSpeaking, useParticipantAttributes } from "@livekit/components-react";
-import type { Participant } from "livekit-client";
+import { useIsSpeaking, useParticipantAttributes, useParticipantTracks } from "@livekit/components-react";
+import { Track, type Participant } from "livekit-client";
 import { useState } from "react";
 import { APP_LABEL, type AssistantApp } from "@/lib/connector-protocol";
 import { participantLabel } from "@/lib/labels";
@@ -15,6 +15,7 @@ import { useMeeting } from "./MeetingContext";
 export function AgentCard({ participant }: { participant: Participant }) {
   const { attributes } = useParticipantAttributes({ participant });
   const speaking = useIsSpeaking(participant);
+  const mic = useParticipantTracks([Track.Source.Microphone], participant.identity).some((t) => !t.publication.isMuted);
   const { slug, isHost } = useMeeting();
   const [error, setError] = useState<string | null>(null);
   const label = participantLabel({ name: participant.name, attributes: attributes ?? {} });
@@ -36,6 +37,7 @@ export function AgentCard({ participant }: { participant: Participant }) {
       data-kind="agent"
       data-label={label}
       data-speaking={speaking}
+      data-mic={mic ? "on" : "off"}
       className="flex min-w-56 items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2"
     >
       <span
