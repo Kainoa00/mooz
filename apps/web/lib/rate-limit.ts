@@ -3,8 +3,11 @@
  * before its first ":") has its own store, so a flood of one kind of key can't crowd out another.
  */
 
+import { envInt } from "./env";
+
 const STORE = Symbol.for("mooz.rateLimits");
-const MAX_KEYS = 20_000;
+// Room for every connector's MCP window twice over (the connector cap is configurable).
+const MAX_KEYS = Math.max(20_000, 2 * envInt("MOOZ_MAX_CONNECTORS", 10_000));
 
 interface Window {
   start: number;

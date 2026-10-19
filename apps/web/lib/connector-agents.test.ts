@@ -1,13 +1,18 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { decideAgentRequest, isRevokedAgent, listPendingRequests, revokeAgent } from "./agents";
+import { PENDING_TTL_MS, decideAgentRequest, isRevokedAgent, listPendingRequests, revokeAgent } from "./agents";
 import {
+  LEFT_GRACE_MS,
+  UNJOINED_APPROVAL_MS,
   attachedConnectorAgent,
   connectorAgentFor,
+  connectorInUse,
   connectorJoinStatus,
+  noteConnectorPresence,
+  pruneConnectors,
   requestConnectorJoin,
   revokeConnectorAgents,
 } from "./connector-agents";
-import { createConnector } from "./connectors";
+import { IDLE_LINK_TTL_MS, UNUSED_LINK_TTL_MS, createConnector, listConnectors } from "./connectors";
 import { getDb } from "./db";
 import { HttpError } from "./http";
 import { addParticipant, createRoom, getRoom } from "./rooms";
@@ -137,5 +142,63 @@ describe("a connector joining a meeting", () => {
     const { requestId } = requestConnectorJoin(db, kai, KAI_KEY, connector.id);
     db.prepare("UPDATE agent_requests SET created_at = 0 WHERE id = ?").run(requestId);
     expect(connectorJoinStatus(db, kai, KAI_KEY, requestId)).toBe("expired");
+  });
+});
+
+describe("letting go of abandoned links", () => {
+  function links() {
+    const db = getDb();
+    const { slug } = createRoom(db);
+    const kai = addParticipant(db, { slug, name: "Kainoa", isHost: true });
+    const make = (name: string) => createConnector(db, KAI_KEY, { name, app: "grok" }).connector;
+    const age = (id: string, created: number, used: number | null = null) =>
+      db.prepare("UPDATE connectors SET created_at = ?, last_used_at = ? WHERE id = ?").run(created, used, id);
+    const ids = () => listConnectors(db, KAI_KEY).map((c) => c.name).sort();
+    return { db, slug, kai, make, age, ids };
+  }
+
+  it("deletes links never used in a meeting within a day, or not for half a year", () => {
+    const { db, make, age, ids } = links();
+    const now = Date.now();
+    make("Fresh");
+    age(make("Stale").id, now - UNUSED_LINK_TTL_MS - 1);
+    age(make("Idle").id, 0, now - IDLE_LINK_TTL_MS - 1);
+    age(make("Used").id, 0, now - 1000);
+    pruneConnectors(db, now);
+    expect(ids()).toEqual(["Fresh", "Used"]);
+  });
+
+  it("keeps one in a meeting, but not for a request left pending or an agent that never joined", () => {
+    const { db, slug, kai, make, age, ids } = links();
+    const now = Date.now();
+    const old = now - UNUSED_LINK_TTL_MS - 1;
+
+    const inMeeting = make("InMeeting");
+    age(inMeeting.id, old);
+    const live = requestConnectorJoin(db, kai, KAI_KEY, inMeeting.id);
+    decideAgentRequest(db, { slug, requestId: live.requestId, approve: true });
+    const agent = connectorAgentFor(db, kai, KAI_KEY, live.requestId);
+    noteConnectorPresence(db, agent.identity, "PA_1", true);
+
+    const leftPending = make("LeftPending");
+    age(leftPending.id, old);
+    const pending = requestConnectorJoin(db, kai, KAI_KEY, leftPending.id);
+    db.prepare("UPDATE agent_requests SET created_at = ? WHERE id = ?").run(now - PENDING_TTL_MS - 1, pending.requestId);
+
+    const neverJoined = make("NeverJoined");
+    age(neverJoined.id, old);
+    const unjoined = requestConnectorJoin(db, kai, KAI_KEY, neverJoined.id);
+    decideAgentRequest(db, { slug, requestId: unjoined.requestId, approve: true });
+    db.prepare("UPDATE agent_requests SET decided_at = ? WHERE id = ?").run(now - UNJOINED_APPROVAL_MS - 1, unjoined.requestId);
+
+    expect(connectorInUse(db, inMeeting.id, now)).toBe(true);
+    expect(connectorInUse(db, neverJoined.id, now)).toBe(false);
+    pruneConnectors(db, now);
+    expect(ids()).toEqual(["InMeeting"]);
+    expect(connectorJoinStatus(db, kai, KAI_KEY, live.requestId, now)).toBe("approved");
+
+    // Away past the grace period: no longer in use.
+    noteConnectorPresence(db, agent.identity, "PA_1", false, now);
+    expect(connectorInUse(db, inMeeting.id, now + LEFT_GRACE_MS + 1)).toBe(false);
   });
 });

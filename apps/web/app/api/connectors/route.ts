@@ -6,6 +6,7 @@ import {
   ownerCookieName,
   readOwnerKey,
 } from "@/lib/connectors";
+import { pruneConnectors } from "@/lib/connector-agents";
 import { sessionCookie } from "@/lib/cookies";
 import { getDb } from "@/lib/db";
 import { envInt } from "@/lib/env";
@@ -46,6 +47,7 @@ export async function POST(req: Request): Promise<Response> {
     }
     const known = readOwnerKey(req);
     const owner = known ?? newSecret();
+    pruneConnectors(db); // room for this one, if abandoned links held it
     const { connector, secret } = createConnector(db, owner, { name: body.name, app: body.app });
     const headers = new Headers({ "cache-control": "no-store" });
     if (!known) headers.append("set-cookie", sessionCookie(req, ownerCookieName(req), owner, OWNER_COOKIE_MAX_AGE));

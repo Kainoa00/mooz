@@ -6,7 +6,7 @@ import {
   type AgentIdentity,
 } from "./agents";
 import { forgetAgent } from "./connector-queue";
-import { getOwned, requireOwnerKey } from "./connectors";
+import { IDLE_LINK_TTL_MS, UNUSED_LINK_TTL_MS, getOwned, requireOwnerKey } from "./connectors";
 import type { Db } from "./db";
 import { HttpError } from "./http";
 import { hashSecret, newId, newSecret } from "./ids";
@@ -26,6 +26,18 @@ import { requireParticipant } from "./session";
 
 /** How long a connector agent may be away (a reload, a dropped connection) and still come back. */
 export const LEFT_GRACE_MS = 2 * 60 * 1000;
+/**
+ * How long an approval counts as live though LiveKit never said the agent joined (its webhook
+ * may not reach this server). After that, only an agent that really joined keeps a link alive.
+ */
+export const UNJOINED_APPROVAL_MS = 24 * 60 * 60 * 1000;
+
+/** SQL: request `r` is live (a fresh request, or an agent that's really in, or just approved). */
+const LIVE_REQUEST = `(
+  (r.status = 'pending' AND r.created_at > ?) OR
+  (r.status = 'approved' AND (r.left_at IS NULL OR r.left_at > ?) AND (r.session_sid IS NOT NULL OR r.decided_at > ?))
+)`;
+const liveSince = (now: number) => [now - PENDING_TTL_MS, now - LEFT_GRACE_MS, now - UNJOINED_APPROVAL_MS];
 
 export interface ConnectorAgent extends AgentIdentity {
   requestId: string;
@@ -257,4 +269,34 @@ export function endRoomConnectors(db: Db, slug: string): string[] {
 /** Take a connector out of every meeting (it's being deleted). */
 export function revokeConnectorAgents(db: Db, connectorId: string): Kick[] {
   return transaction(db, () => revokeLive(db, connectorId));
+}
+
+/** Whether a connector is being used in a meeting now (what keeps its link from expiring). */
+export function connectorInUse(db: Db, connectorId: string, now = Date.now()): boolean {
+  const [, left, unjoined] = liveSince(now);
+  return (
+    db
+      .prepare(
+        `SELECT 1 FROM agent_requests r WHERE r.connector_id = ? AND r.status = 'approved'
+           AND (r.left_at IS NULL OR r.left_at > ?) AND (r.session_sid IS NOT NULL OR r.decided_at > ?)`,
+      )
+      .get(connectorId, left, unjoined) !== undefined
+  );
+}
+
+/**
+ * Drop links never used in a meeting within a day, or not for half a year, unless a request
+ * for one is live; stale pending requests are revoked first, so leaving one around (or an
+ * approval whose agent never joined) can't keep a link, or a flood of them, forever.
+ */
+export function pruneConnectors(db: Db, now = Date.now()): void {
+  db.prepare(
+    `UPDATE agent_requests SET status = 'revoked', decided_at = COALESCE(decided_at, ?)
+     WHERE door = 'connector' AND status = 'pending' AND created_at <= ?`,
+  ).run(now, now - PENDING_TTL_MS);
+  db.prepare(
+    `DELETE FROM connectors
+     WHERE ((last_used_at IS NULL AND created_at < ?) OR COALESCE(last_used_at, created_at) < ?)
+       AND id NOT IN (SELECT r.connector_id FROM agent_requests r WHERE r.connector_id IS NOT NULL AND ${LIVE_REQUEST})`,
+  ).run(now - UNUSED_LINK_TTL_MS, now - IDLE_LINK_TTL_MS, ...liveSince(now));
 }

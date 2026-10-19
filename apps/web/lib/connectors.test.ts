@@ -1,10 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   MAX_CONNECTORS_PER_OWNER,
-  IDLE_LINK_TTL_MS,
   MAX_CONNECTORS,
-  UNUSED_LINK_TTL_MS,
-  pruneConnectors,
   connectorUrl,
   createConnector,
   deleteConnector,
@@ -132,17 +129,4 @@ describe("connectors", () => {
     expect(() => createConnector(db, KAI, { name: "Grok", app: "grok" })).toThrow("can't keep any more");
   });
 
-  it("let go of links never added to an app within a day, or unused for half a year", () => {
-    const db = getDb();
-    const now = Date.now();
-    const fresh = createConnector(db, KAI, { name: "Fresh", app: "grok" }).connector;
-    const stale = createConnector(db, KAI, { name: "Stale", app: "grok" }).connector;
-    const idle = createConnector(db, KAI, { name: "Idle", app: "grok" }).connector;
-    const used = createConnector(db, KAI, { name: "Used", app: "grok" }).connector;
-    db.prepare("UPDATE connectors SET created_at = ? WHERE id = ?").run(now - UNUSED_LINK_TTL_MS - 1, stale.id);
-    db.prepare("UPDATE connectors SET created_at = ?, last_used_at = ? WHERE id = ?").run(0, now - IDLE_LINK_TTL_MS - 1, idle.id);
-    db.prepare("UPDATE connectors SET created_at = ?, last_used_at = ? WHERE id = ?").run(0, now - 1000, used.id);
-    pruneConnectors(db, now);
-    expect(listConnectors(db, KAI).map((c) => c.id).sort()).toEqual([fresh.id, used.id].sort());
-  });
 });
