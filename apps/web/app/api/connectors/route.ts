@@ -8,13 +8,14 @@ import {
 } from "@/lib/connectors";
 import { sessionCookie } from "@/lib/cookies";
 import { getDb } from "@/lib/db";
+import { envInt } from "@/lib/env";
 import { HttpError, errorResponse, readJson } from "@/lib/http";
 import { newSecret } from "@/lib/ids";
 import { allow } from "@/lib/rate-limit";
 import { assertSameOrigin, publicOrigin, requireParticipant } from "@/lib/session";
 
-/** New connectors a minute, across this server: making them is rare, flooding them isn't. */
-export const CREATES_PER_MINUTE = 60;
+/** New connectors a minute, across this server (MOOZ_CONNECTORS_PER_MINUTE changes it). */
+export const CREATES_PER_MINUTE = envInt("MOOZ_CONNECTORS_PER_MINUTE", 60);
 /** And an hour per person in a meeting, so one person can't spend everyone's minute. */
 export const CREATES_PER_PERSON_PER_HOUR = 10;
 

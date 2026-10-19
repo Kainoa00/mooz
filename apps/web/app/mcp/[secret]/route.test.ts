@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { decideAgentRequest, revokeAgent } from "@/lib/agents";
 import { connectorAgentFor, requestConnectorJoin } from "@/lib/connector-agents";
 import { enqueueQuestion, listQuestions, releaseQuestion, resetQueueForTests } from "@/lib/connector-queue";
-import { createConnector, rotateConnector } from "@/lib/connectors";
+import { createConnector, listConnectors, rotateConnector } from "@/lib/connectors";
 import { getDb } from "@/lib/db";
 import { resetRateLimitsForTests } from "@/lib/rate-limit";
 import { addParticipant, createRoom } from "@/lib/rooms";
@@ -202,6 +202,18 @@ describe("the connector's MCP endpoint", () => {
     }
     const unknown = await fetchRoute(`${ORIGIN}/mcp/nope`, { method: "GET" });
     expect(unknown.status).toBe(404);
+  });
+
+  it("counts a link as used only when it's used in a meeting", async () => {
+    const { db, slug, kai, connector, secret } = setup({ attach: false });
+    const lastUsed = () => listConnectors(db, "kai-key").find((c) => c.id === connector.id)?.lastUsedAt;
+    await connect(secret);
+    expect(lastUsed()).toBeNull(); // pinging a link no one brought in doesn't keep it alive
+
+    const { requestId } = requestConnectorJoin(db, kai, "kai-key", connector.id);
+    decideAgentRequest(db, { slug, requestId, approve: true });
+    await connect(secret);
+    expect(lastUsed()).toBeGreaterThan(0);
   });
 
   it("answers an old or unknown link exactly like a missing page", async () => {

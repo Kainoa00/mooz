@@ -1,4 +1,5 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import { attachedConnectorAgent } from "@/lib/connector-agents";
 import { findConnectorBySecret, touchConnector } from "@/lib/connectors";
 import { getDb } from "@/lib/db";
 import { readCapped } from "@/lib/http";
@@ -34,7 +35,9 @@ async function handle(req: Request, ctx: { params: Promise<{ secret: string }> }
   if (!allow(`mcp:${connector.id}`, REQUESTS_PER_MINUTE, 60_000)) {
     return Response.json({ error: { code: "rate_limited", message: "Too many requests" } }, { status: 429 });
   }
-  touchConnector(db, connector);
+  // "Used" means used in a meeting: calling a link nobody brought into one doesn't keep it
+  // from expiring (so a flood of links can't be kept alive by pinging them).
+  if (attachedConnectorAgent(db, connector.id)) touchConnector(db, connector);
   const body = await readCapped(req, MAX_BODY_BYTES);
   if (body === null) {
     return Response.json({ error: { code: "too_large", message: "Request too large" } }, { status: 413 });

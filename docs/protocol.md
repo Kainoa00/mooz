@@ -270,8 +270,9 @@ Owner's assistant app            mooz server                     Owner's browser
 
 `POST /api/connectors` `{ name, app, slug }` makes one, from a meeting the caller is in, and
 returns `{ connector, url }` once (at most 10 an hour per person, 60 a minute across the server,
-and 10 per owner). A link never used is deleted after 24 hours, and any link after 180 days
-unused (unless its agent is in a meeting). The URL
+and 10 per owner; `MOOZ_CONNECTORS_PER_MINUTE` and `MOOZ_MAX_CONNECTORS` set the server's
+ceilings). Only use while its agent is in a meeting counts: a link never used in one is deleted
+after 24 hours, and any link after 180 days without use (unless its agent is in a meeting). The URL
 is `{origin}/mcp/{secret}`, a 256-bit secret that the server stores only as a hash. The
 connector belongs to the browser that made it (an HttpOnly owner cookie, kept a year, named
 `__Host-mooz_owner` over HTTPS so no other host can set it).

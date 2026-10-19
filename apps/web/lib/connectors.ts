@@ -1,5 +1,6 @@
 import { isHttps, readCookie } from "./cookies";
 import type { Db } from "./db";
+import { envInt } from "./env";
 import { HttpError } from "./http";
 import { hashSecret, newId, newSecret } from "./ids";
 import { parseAgentName } from "./names";
@@ -24,15 +25,19 @@ export const OWNER_COOKIE = "mooz_owner";
 export const OWNER_COOKIE_HTTPS = "__Host-mooz_owner";
 export const OWNER_COOKIE_MAX_AGE = 365 * 24 * 60 * 60;
 export const MAX_CONNECTORS_PER_OWNER = 10;
-/** All this server keeps (each is a row in its database). */
-export const MAX_CONNECTORS = 10_000;
-/** A link never added to an app is deleted after this; one unused for long, after the next. */
+/** All this server keeps (each is a row in its database); MOOZ_MAX_CONNECTORS changes it. */
+export const MAX_CONNECTORS = envInt("MOOZ_MAX_CONNECTORS", 10_000);
+/**
+ * A link never used in a meeting is deleted after this; one unused for long, after the next.
+ * Only use in a meeting counts (lib/mcp route), so a flood of links can't be kept alive by
+ * pinging them; it has to be brought into meetings and approved, link by link.
+ */
 export const UNUSED_LINK_TTL_MS = 24 * 60 * 60 * 1000;
 export const IDLE_LINK_TTL_MS = 180 * 24 * 60 * 60 * 1000;
 
 /**
- * Drop links that were never used within a day, or not for half a year (unless one is in a
- * meeting right now), so abandoned ones, or a flood of them, don't stay forever.
+ * Drop links never used in a meeting within a day, or not for half a year (unless one is in
+ * a meeting right now), so abandoned ones, or most of a flood, don't stay forever.
  */
 export function pruneConnectors(db: Db, now = Date.now()): void {
   db.prepare(

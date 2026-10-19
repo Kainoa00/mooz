@@ -220,8 +220,8 @@ is posted and spoken in the meeting.
 **1. Make the link (once).** In a meeting, click **Bring my agent → Grok, Claude or ChatGPT**,
 name it, pick the app and click **Create a connector**. The link is shown once; **New link**
 makes a fresh one (the old one stops working) and **Delete** removes it. It's kept for this
-browser, so it works in every meeting on this server. Add it to your app the same day: a link
-that's never used is deleted after 24 hours, and any link after 180 days unused.
+browser, so it works in every meeting on this server. Use it the same day: a link that's never
+used in a meeting is deleted after 24 hours, and any link after 180 days without use in one.
 
 **2. Add it to your app.**
 
