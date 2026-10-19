@@ -24,6 +24,8 @@ export const OWNER_COOKIE = "mooz_owner";
 export const OWNER_COOKIE_HTTPS = "__Host-mooz_owner";
 export const OWNER_COOKIE_MAX_AGE = 365 * 24 * 60 * 60;
 export const MAX_CONNECTORS_PER_OWNER = 10;
+/** All this server keeps (each is a row in its database). */
+export const MAX_CONNECTORS = 10_000;
 
 export interface Connector {
   id: string;
@@ -90,6 +92,10 @@ export function createConnector(
   input: { name: unknown; app: unknown },
 ): { connector: Connector; secret: string } {
   const ownerHash = hashSecret(ownerKey);
+  const { total } = db.prepare("SELECT COUNT(*) AS total FROM connectors").get() as { total: number };
+  if (total >= MAX_CONNECTORS) {
+    throw new HttpError(503, "server_full", "This server can't keep any more connectors right now");
+  }
   const mine = listConnectors(db, ownerKey);
   // Unique per owner here; per meeting it's checked again when it joins one.
   const name = parseAgentName(input.name, []);

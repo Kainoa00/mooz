@@ -1,14 +1,12 @@
 import { HttpError } from "./http";
+import { hasHidden } from "./text";
 
 const MAX_DISPLAY_NAME = 40;
 
-// Control characters, bidi controls and invisible spacers let a name render as
-// something else, and Unicode tags, private-use characters and the rarer variation
-// selectors can hide text that only a model reads; the robot marker is reserved for
-// agents. Joiners (U+200C/U+200D) and emoji presentation selectors (U+FE0E/U+FE0F)
-// stay allowed: Persian and Indic names and emoji sequences need them.
-const DECEPTIVE =
-  /[\p{Cc}\p{Co}\p{Cn}\u00AD\u061C\u180E\u200B\u200E\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\uFFF9-\uFFFB\uFE00-\uFE0D\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]|🤖/u;
+// Control characters, and anything meeting text drops as hidden (bidi controls, invisible
+// spacers, Unicode tags, smuggling selectors: see lib/text.ts), let a name render as
+// something other than what a model reads. The robot marker is reserved for agents.
+const DECEPTIVE = /\p{Cc}|🤖/u;
 
 /**
  * Trim and validate a human display name. People cannot use the agent marker,
@@ -21,7 +19,7 @@ export function parseDisplayName(value: unknown, agentNames: readonly string[] =
   if (name.length > MAX_DISPLAY_NAME) {
     throw new HttpError(400, "invalid_name", `Name must be at most ${MAX_DISPLAY_NAME} characters`);
   }
-  if (DECEPTIVE.test(name)) {
+  if (DECEPTIVE.test(name) || hasHidden(name)) {
     throw new HttpError(400, "invalid_name", "Names cannot contain 🤖 or invisible characters");
   }
   if (agentNames.some((agent) => agent.toLowerCase() === name.toLowerCase())) {

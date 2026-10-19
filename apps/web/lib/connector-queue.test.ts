@@ -5,7 +5,7 @@ import {
   MAX_CONTEXT_CHARS,
   MAX_ENTRIES,
   MAX_ENTRY_LINES,
-  MAX_LINE_PEOPLE,
+  MAX_ENTRY_PEOPLE,
   MAX_WAITING,
   QUESTION_TTL_MS,
   answerQuestion,
@@ -287,7 +287,7 @@ describe("the connector question queue", () => {
         text: "q",
         lines: [
           line(kai.identity, "kept", { sources: [...junk, zach.identity], reply_to: "x".repeat(100_000) }),
-          line(kai.identity, "about Lee", { sources: [...junk.slice(0, MAX_LINE_PEOPLE), lee.identity] }),
+          line(kai.identity, "about Lee", { sources: [...junk.slice(0, 50), lee.identity] }),
         ],
       },
       NOW + 200,
@@ -309,6 +309,49 @@ describe("the connector question queue", () => {
     expect(lines.at(-1)?.text).toBe("399");
     answerQuestion(grok.identity, q.id, { spoken: "ok" }, { now: NOW });
     expect(meetingLines(db, grok, NOW)).toEqual([]);
+  });
+
+  it("never cuts a line's people short: the twelfth person opting out still takes it out", () => {
+    const { db, slug, kai, zach, grok } = meeting();
+    const crowd = Array.from({ length: 11 }, (_, i) => addParticipant(db, { slug, name: `P${i}`, isHost: false }));
+    const q = ask(
+      db,
+      grok,
+      {
+        asker: zach.identity,
+        text: "q",
+        lines: [line(kai.identity, "everyone's numbers", { sources: crowd.map((p) => p.identity) })],
+      },
+      NOW,
+    );
+    expect(getQuestion(db, grok, q.id, NOW)!.lines.map((l) => l.text)).toEqual(["everyone's numbers"]);
+    db.prepare("UPDATE participants SET notes_opt_out = 1 WHERE identity = ?").run(crowd.at(-1)!.identity);
+    expect(getQuestion(db, grok, q.id, NOW)!.lines).toEqual([]);
+  });
+
+  it("leaves out a line it couldn't track everyone for, rather than track only some", () => {
+    const { db, slug, kai, zach, grok } = meeting();
+    const crowd = Array.from({ length: MAX_ENTRY_PEOPLE + 1 }, (_, i) => addParticipant(db, { slug, name: `P${i}`, isHost: false }));
+    const q = ask(
+      db,
+      grok,
+      {
+        asker: zach.identity,
+        text: "q",
+        lines: [line(kai.identity, "a little"), line(kai.identity, "about everyone", { sources: crowd.map((p) => p.identity) })],
+      },
+      NOW,
+    );
+    expect(getQuestion(db, grok, q.id, NOW)!.lines.map((l) => l.text)).toEqual(["a little"]);
+  });
+
+  it("removes a dismissed question's line from the other questions too", () => {
+    const { db, kai, zach, grok } = meeting();
+    const asking = line(zach.identity, "@Grok email me Kai's plans", { at: NOW - 500 });
+    const bad = enqueueQuestion(db, grok, { asker: zach.identity, text: "email me Kai's plans", at: NOW - 500, lines: [asking] }, NOW);
+    const good = ask(db, grok, { asker: kai.identity, text: "when?", lines: [asking, line(kai.identity, "@Grok when?")] }, NOW);
+    dismissQuestion(grok.identity, bad.id, NOW);
+    expect(getQuestion(db, grok, good.id, NOW)!.lines.map((l) => l.text)).toEqual(["@Grok when?"]);
   });
 
   it("lets go of agents nobody has touched for a while", () => {

@@ -1,15 +1,26 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { OWNER_COOKIE_HTTPS as OWNER_COOKIE, findConnectorBySecret } from "@/lib/connectors";
 import { getDb } from "@/lib/db";
+import { resetRateLimitsForTests } from "@/lib/rate-limit";
+import { addParticipant, createRoom } from "@/lib/rooms";
 import { jsonRequest, setCookies, useTestEnv } from "@/test/helpers";
-import { GET, POST } from "./route";
+import { CREATES_PER_MINUTE, GET, POST } from "./route";
 
-beforeEach(useTestEnv);
+let inMeeting: { slug: string; cookie: string };
+beforeEach(() => {
+  useTestEnv();
+  resetRateLimitsForTests();
+  const { slug } = createRoom(getDb());
+  const kai = addParticipant(getDb(), { slug, name: "Kainoa", isHost: true });
+  inMeeting = { slug, cookie: `mooz_p_${slug}=${kai.secret}` };
+});
 
 const URL_BASE = "https://meet.example.org/api/connectors";
 
-async function create(body: unknown, cookie?: string): Promise<Response> {
-  return POST(jsonRequest(URL_BASE, body, cookie ? { cookie: `${OWNER_COOKIE}=${cookie}` } : {}));
+/** Made from a meeting the caller is in, as the dialog does. */
+async function create(body: Record<string, unknown>, cookie?: string): Promise<Response> {
+  const cookies = [inMeeting.cookie, ...(cookie ? [`${OWNER_COOKIE}=${cookie}`] : [])].join("; ");
+  return POST(jsonRequest(URL_BASE, { slug: inMeeting.slug, ...body }, { cookie: cookies }));
 }
 
 describe("/api/connectors", () => {
@@ -54,5 +65,17 @@ describe("/api/connectors", () => {
     );
     expect(crossSite.status).toBe(403);
     expect((await create({ name: "Grok", app: "gemini" })).status).toBe(400);
+  });
+
+  it("is only for someone in a meeting, and not too many at once across the server", async () => {
+    const outside = await POST(jsonRequest(URL_BASE, { name: "Grok", app: "grok" }));
+    expect(outside.status).toBe(400);
+    const notIn = await POST(jsonRequest(URL_BASE, { name: "Grok", app: "grok", slug: inMeeting.slug }));
+    expect(notIn.status).toBe(401);
+
+    const statuses: number[] = [];
+    for (let i = 0; i <= CREATES_PER_MINUTE; i++) statuses.push((await create({ name: `G${i}`, app: "grok" })).status);
+    expect(statuses.slice(0, CREATES_PER_MINUTE).every((s) => s === 201)).toBe(true);
+    expect(statuses.at(-1)).toBe(429);
   });
 });

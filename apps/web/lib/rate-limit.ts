@@ -6,6 +6,7 @@ const MAX_KEYS = 10_000;
 interface Window {
   start: number;
   count: number;
+  windowMs: number;
 }
 
 function windows(): Map<string, Window> {
@@ -18,8 +19,13 @@ export function allow(key: string, limit: number, windowMs: number, now = Date.n
   const all = windows();
   let w = all.get(key);
   if (!w || now - w.start >= windowMs) {
-    if (!w && all.size >= MAX_KEYS) all.clear(); // a flood of keys: start over rather than grow
-    w = { start: now, count: 0 };
+    if (!w && all.size >= MAX_KEYS) {
+      // Full: drop windows that are over. If that frees nothing, refuse new keys rather than
+      // forget anyone's count (clearing would let a flood of keys reset every limit).
+      for (const [k, old] of all) if (now - old.start >= old.windowMs) all.delete(k);
+      if (all.size >= MAX_KEYS) return false;
+    }
+    w = { start: now, count: 0, windowMs };
     all.set(key, w);
   }
   if (w.count >= limit) return false;

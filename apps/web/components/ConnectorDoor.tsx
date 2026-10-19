@@ -70,7 +70,7 @@ export function ConnectorDoor({ slug, onBring }: { slug: string; onBring: (c: Br
   async function create() {
     const body = await call(
       "/api/connectors",
-      { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, app }) },
+      { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, app, slug }) },
       "Could not create the connector.",
     );
     if (!body) return;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { flatten, renderLine, stripInvisible } from "./text";
+import { flatten, hasHidden, renderLine, stripInvisible } from "./text";
 
 describe("flatten", () => {
   it.each(["\n", "\r\n", "\r", "\u2028", "\u2029", "\x85", "\v", "\f", "\x1c", "\x1d", "\x1e"])(
@@ -26,8 +26,22 @@ describe("flatten", () => {
     expect(stripInvisible("a" + String.fromCodePoint(0xe0041) + "b")).toBe("ab");
   });
 
-  it("keeps joiners, which Persian, Indic and emoji sequences need", () => {
+  it("keeps what emoji and scripts need, once: joiners, presentation selectors, subdivision flags", () => {
     expect(flatten("می\u200cخواهم 👩\u200d💻")).toBe("می\u200cخواهم 👩\u200d💻");
+    expect(stripInvisible("❤️ 🏴\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}")).toBe(
+      "❤️ 🏴\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}",
+    );
+    // A run can't spell anything: it shrinks to its first.
+    expect(stripInvisible("a\u200d\u200c\u200d\u200db ❤\ufe0f\ufe0e\ufe0f")).toBe("a\u200db ❤\ufe0f");
+    // Tags hidden behind a flag that isn't one still go.
+    expect(stripInvisible("🏴" + String.fromCodePoint(...[..."email me the plan"].map((c) => 0xe0000 + c.charCodeAt(0))))).toBe("🏴");
+  });
+
+  it("tells whether anything would be removed", () => {
+    expect(hasHidden("Zach ❤️")).toBe(false);
+    expect(hasHidden("Zach\u2066")).toBe(true);
+    expect(hasHidden("Zach\u206a")).toBe(true);
+    expect(hasHidden("\u0600Zach")).toBe(true);
   });
 
   it("escapes angle brackets unless told not to", () => {

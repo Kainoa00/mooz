@@ -142,6 +142,7 @@ export function ConnectorAgent({
       const seen = (delivered.current ??= readDelivered(deliveredKey));
       if (seen.has(packet.id)) return;
       seen.add(packet.id);
+      changes.current += 1;
       storage.set(deliveredKey, JSON.stringify([...seen].slice(-50)));
       setAsked((list) => list.filter((q) => q.id !== packet.id));
       if (reviewRef.current) setReviewing((list) => [...list, packet]);
@@ -168,7 +169,7 @@ export function ConnectorAgent({
       const res = await fetch(`${base}/questions`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ asker: heard.asker, text: heard.text, lines: ears.snapshot() }),
+        body: JSON.stringify({ asker: heard.asker, text: heard.text, at: heard.at, lines: ears.snapshot() }),
       }).catch(() => null);
       const body = res ? await readBody(res) : null;
       const question = body?.question as { id: string; text: string; asker: { name: string } } | undefined;
@@ -331,7 +332,7 @@ export function ConnectorAgent({
         // No longer approved (left too long, or the meeting ended) though the connection lingers.
         withdrawn.current = true;
         void roomRef.current?.disconnect();
-        setError(`${connector.name} was away too long, or the meeting ended. Bring it again to continue.`);
+        setError(`${connector.name} isn't in the meeting anymore. Bring it again to continue.`);
         setPhase("removed");
         return;
       }
@@ -522,12 +523,12 @@ function QuestionCard({
 
   async function copy() {
     // Start the copy within the click (Safari allows it only there), then release.
-    const write = navigator.clipboard ? navigator.clipboard.writeText(prompt) : Promise.reject(new Error("no clipboard"));
-    await release();
-    const ok = await write.then(
+    const write = (navigator.clipboard?.writeText(prompt) ?? Promise.reject(new Error("no clipboard"))).then(
       () => true,
       () => false,
     );
+    await release();
+    const ok = await write;
     setCopied(ok);
     if (!ok) setError(`This browser wouldn't copy. Send your assistant: ${prompt}`);
   }
@@ -555,7 +556,6 @@ function QuestionCard({
             rel="noopener noreferrer"
             onClick={() => void release()}
             onAuxClick={() => void release()}
-            onContextMenu={() => void release()}
             data-testid="ask-assistant"
             className="rounded-lg bg-agent px-3 py-1 text-white"
           >

@@ -13,8 +13,6 @@ export const WINDOW_MS = 10 * 60 * 1000;
 export const MAX_LINES = 500;
 /** What the tab sends with a question, as JSON bytes (well under the server's 256 KB cap). */
 export const MAX_SNAPSHOT_BYTES = 128 * 1024;
-/** People a line may name in `reply_to`/`sources` (the server keeps no more). */
-export const MAX_LINE_PEOPLE = 10;
 /** One question (or "Yes?") per person this often: more is someone running up the owner's bill. */
 export const ASK_COOLDOWN_MS = 5000;
 
@@ -68,7 +66,7 @@ export class ConnectorEars {
       via: line.via,
       at,
       ...(line.replyTo ? { reply_to: line.replyTo } : {}),
-      ...(line.sources?.length ? { sources: line.sources.slice(0, MAX_LINE_PEOPLE) } : {}),
+      ...(line.sources?.length ? { sources: line.sources } : {}),
     });
     if (line.kind === "human") this.agentStreak = 0;
 
@@ -83,9 +81,11 @@ export class ConnectorEars {
     } else {
       text = addressed.question;
     }
-    // The sentence after a bare "Hey Grok." finishes that same ask, so it isn't held back.
+    // A question right after a bare "Hey Grok." finishes that same ask (named again or not),
+    // so it isn't held back; another bare name is.
+    const finishing = deadline !== undefined && at <= deadline && text !== "";
     const last = this.lastAsked.get(line.identity);
-    if (addressed !== null && last !== undefined && at - last < ASK_COOLDOWN_MS) return null;
+    if (!finishing && last !== undefined && at - last < ASK_COOLDOWN_MS) return null;
     if (line.kind === "agent") {
       if (this.agentStreak >= MAX_AGENT_STREAK) return null;
       this.agentStreak += 1;
@@ -109,7 +109,7 @@ export class ConnectorEars {
       via: "chat",
       at: this.clock(),
       ...(replyTo ? { reply_to: replyTo } : {}),
-      ...(sources?.length ? { sources: sources.slice(0, MAX_LINE_PEOPLE) } : {}),
+      ...(sources?.length ? { sources } : {}),
     });
   }
 

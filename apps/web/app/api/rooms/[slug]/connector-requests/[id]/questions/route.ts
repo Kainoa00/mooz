@@ -28,7 +28,7 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
       throw new HttpError(429, "rate_limited", "Too many questions for your agent just now");
     }
     const body = await readJson(req);
-    const question = enqueueQuestion(db, agent, { asker: body.asker, text: body.text, lines: body.lines });
+    const question = enqueueQuestion(db, agent, { asker: body.asker, text: body.text, lines: body.lines, at: body.at });
     return Response.json({ question }, { status: 201 });
   } catch (err) {
     return errorResponse(err);

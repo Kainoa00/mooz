@@ -24,8 +24,11 @@ export const MAX_SPOKEN_CHARS = 400;
 export const MAX_DETAILS_CHARS = 4000;
 /** Waiting and answered questions kept per agent. */
 export const MAX_ENTRIES = 20;
-/** People a line may name in `reply_to` and `sources`. */
-export const MAX_LINE_PEOPLE = 10;
+/**
+ * People a question's lines may belong to. A line that would take it past this is left out
+ * (never cut short: a person dropped from a line's list could no longer take it out by opting out).
+ */
+export const MAX_ENTRY_PEOPLE = 100;
 /** Lines kept with a question (the newest; the text is capped at MAX_CONTEXT_CHARS too). */
 export const MAX_ENTRY_LINES = 200;
 const MAX_AGENTS = 200;
@@ -67,6 +70,10 @@ export type { AnswerPacket };
 interface Entry {
   question: Question;
   lines: StoredLine[];
+  /** Everyone the lines belong to; a line's `belongs` indexes into it. */
+  table: string[];
+  /** The line that asked it (who, when), so dismissing it removes that line everywhere. */
+  askedLine?: { speaker: string; at: number };
   replyTo: string;
   people: string[];
   answer?: AnswerPacket;
@@ -76,7 +83,8 @@ interface Entry {
 export type QuestionView = Question & { answer?: AnswerPacket };
 
 /** A line as kept: with everyone it belongs to, so a later opt-out still removes it. */
-type StoredLine = MeetingLine & { belongs: string[] };
+type StoredLine = MeetingLine & { belongs: Uint8Array };
+type ParsedLine = MeetingLine & { people: string[] };
 
 interface AgentState {
   entries: Entry[];
@@ -155,8 +163,7 @@ const personOf = (identity: string, person: Person) => (person.kind === "agent" 
 /** The people a line names, as long as they're in this meeting (nobody else matters to opt-outs). */
 function namedPeople(value: unknown, people: Map<string, Person>): string[] {
   const raw = Array.isArray(value) ? value : [value];
-  const named = raw.filter((v): v is string => typeof v === "string" && people.has(v));
-  return [...new Set(named)].slice(0, MAX_LINE_PEOPLE);
+  return raw.filter((v): v is string => typeof v === "string" && people.has(v));
 }
 
 function parseLines(
@@ -164,12 +171,12 @@ function parseLines(
   agent: ConnectorAgent,
   people: Map<string, Person>,
   now: number,
-): StoredLine[] {
+): { lines: StoredLine[]; table: string[] } {
   if (!Array.isArray(value) || value.length > MAX_LINES) {
     throw new HttpError(400, "invalid_lines", `Send at most ${MAX_LINES} lines of the meeting`);
   }
   const optedOut = (identity: string) => people.get(identity)?.optedOut === true;
-  const lines: StoredLine[] = [];
+  const lines: ParsedLine[] = [];
   for (const raw of value) {
     if (typeof raw !== "object" || raw === null) continue;
     const item = raw as Record<string, unknown>;
@@ -180,10 +187,12 @@ function parseLines(
     if (now - at > CONTEXT_WINDOW_MS) continue;
     // Left out if anyone it belongs to opted out (as the bridge's notes do).
     const belongs = [
-      item.identity,
-      ...(person.owner ? [person.owner] : []),
-      ...namedPeople(item.reply_to, people),
-      ...namedPeople(item.sources, people),
+      ...new Set([
+        item.identity,
+        ...(person.owner ? [person.owner] : []),
+        ...namedPeople(item.reply_to, people),
+        ...namedPeople(item.sources, people),
+      ]),
     ];
     if (belongs.some(optedOut)) continue;
     const text = flatten(item.text).slice(0, MAX_LINE_CHARS);
@@ -196,26 +205,31 @@ function parseLines(
       via: item.via === "voice" ? "voice" : "chat",
       text,
       at,
-      belongs,
+      people: belongs,
     });
   }
   lines.sort((a, b) => a.at - b.at);
-  // The newest that fit.
+  // The newest that fit, with everyone they belong to in one small table.
   const kept: StoredLine[] = [];
+  const index = new Map<string, number>();
   let size = 0;
   for (let i = lines.length - 1; i >= 0 && kept.length < MAX_ENTRY_LINES; i--) {
-    size += lines[i].text.length;
-    if (size > MAX_CONTEXT_CHARS) break;
-    kept.unshift(lines[i]);
+    const { people: owners, ...line } = lines[i];
+    if (size + line.text.length > MAX_CONTEXT_CHARS) break;
+    const newcomers = owners.filter((identity) => !index.has(identity));
+    if (index.size + newcomers.length > MAX_ENTRY_PEOPLE) continue; // can't track them all: leave it out
+    for (const identity of newcomers) index.set(identity, index.size);
+    size += line.text.length;
+    kept.unshift({ ...line, belongs: Uint8Array.from(owners, (identity) => index.get(identity)!) });
   }
-  return kept;
+  return { lines: kept, table: [...index.keys()] };
 }
 
 /** The owner's tab heard someone address the agent. */
 export function enqueueQuestion(
   db: Db,
   agent: ConnectorAgent,
-  input: { asker: unknown; text: unknown; lines: unknown },
+  input: { asker: unknown; text: unknown; lines: unknown; at?: unknown },
   now = Date.now(),
 ): Question {
   const people = peopleIn(db, agent.slug);
@@ -227,7 +241,7 @@ export function enqueueQuestion(
   if (!text || text.length > MAX_QUESTION_CHARS) {
     throw new HttpError(400, "invalid_question", `A question is 1–${MAX_QUESTION_CHARS} characters`);
   }
-  const lines = parseLines(input.lines, agent, people, now);
+  const { lines, table } = parseLines(input.lines, agent, people, now);
   const role = roleOf(agent, input.asker, askerPerson) as Asker["role"];
   const question: Question = {
     id: newId("q"),
@@ -240,8 +254,16 @@ export function enqueueQuestion(
   const replyTo = personOf(input.asker, askerPerson);
   const people_ = [...new Set([replyTo, ...lines.map((l) => personOf(l.speaker, people.get(l.speaker)!))])];
 
+  const askedAt = typeof input.at === "number" && Number.isFinite(input.at) ? Math.min(input.at, now) : undefined;
   const state = stateFor(agent.identity, now, true)!;
-  state.entries.push({ question, lines, replyTo, people: people_ });
+  state.entries.push({
+    question,
+    lines,
+    table,
+    ...(askedAt !== undefined ? { askedLine: { speaker: input.asker, at: askedAt } } : {}),
+    replyTo,
+    people: people_,
+  });
   const waiting = state.entries.filter((e) => e.question.status === "waiting");
   for (const extra of waiting.slice(0, Math.max(0, waiting.length - MAX_WAITING))) {
     state.entries.splice(state.entries.indexOf(extra), 1);
@@ -258,10 +280,11 @@ export function listQuestions(agentIdentity: string, now = Date.now()): Question
 }
 
 /** Lines as they may be shared now: anyone who opted out since the question came in is left out too. */
-function shareable(db: Db, agent: ConnectorAgent, lines: StoredLine[]): MeetingLine[] {
+function shareable(db: Db, agent: ConnectorAgent, entry: Entry, lines = entry.lines): MeetingLine[] {
   const people = peopleIn(db, agent.slug);
+  const out = entry.table.map((identity) => people.get(identity)?.optedOut === true);
   return lines
-    .filter((l) => !l.belongs.some((identity) => people.get(identity)?.optedOut === true))
+    .filter((l) => !l.belongs.some((i) => out[i]))
     .map(({ speaker, role, name, kind, via, text, at }) => ({ speaker, role, name, kind, via, text, at }));
 }
 
@@ -280,9 +303,16 @@ export function releaseQuestion(agentIdentity: string, id: unknown, now = Date.n
 
 /** The owner dismissed it: it's gone, for the assistant too. */
 export function dismissQuestion(agentIdentity: string, id: unknown, now = Date.now()): void {
-  const state = stateFor(agentIdentity, now, false);
+  const state = stateFor(agentIdentity, now, false)!;
   const entry = entryFor(agentIdentity, id, now);
-  state!.entries.splice(state!.entries.indexOf(entry), 1);
+  state.entries.splice(state.entries.indexOf(entry), 1);
+  // Other questions sent the line that asked it as meeting text: it goes from those too.
+  const asked = entry.askedLine;
+  if (asked) {
+    for (const other of state.entries) {
+      other.lines = other.lines.filter((l) => !(l.speaker === asked.speaker && l.at === asked.at));
+    }
+  }
 }
 
 /**
@@ -299,7 +329,7 @@ export function getQuestion(
     (e) => e.question.status === "waiting" && e.question.released,
   );
   const entry = id === undefined ? waiting[0] : waiting.find((e) => e.question.id === id);
-  return entry ? { question: entry.question, lines: shareable(db, agent, entry.lines) } : undefined;
+  return entry ? { question: entry.question, lines: shareable(db, agent, entry) } : undefined;
 }
 
 /**
@@ -311,7 +341,7 @@ export function meetingLines(db: Db, agent: ConnectorAgent, now = Date.now()): M
     (e) => e.question.status === "waiting" && e.question.released,
   );
   const newest = released.at(-1);
-  return newest ? shareable(db, agent, newest.lines.filter((l) => now - l.at <= CONTEXT_WINDOW_MS)) : [];
+  return newest ? shareable(db, agent, newest, newest.lines.filter((l) => now - l.at <= CONTEXT_WINDOW_MS)) : [];
 }
 
 function cap(text: string, max: number): string {
@@ -343,6 +373,7 @@ export function answerQuestion(
   const details = typeof input.details === "string" ? stripInvisible(input.details).trim() : "";
   entry.question.status = "answered";
   entry.lines = []; // answered: nothing reads them again
+  entry.table = [];
   entry.answer = {
     type: "answer",
     id: entry.question.id,

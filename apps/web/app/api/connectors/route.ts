@@ -8,9 +8,13 @@ import {
 } from "@/lib/connectors";
 import { sessionCookie } from "@/lib/cookies";
 import { getDb } from "@/lib/db";
-import { errorResponse, readJson } from "@/lib/http";
+import { HttpError, errorResponse, readJson } from "@/lib/http";
 import { newSecret } from "@/lib/ids";
-import { assertSameOrigin, publicOrigin } from "@/lib/session";
+import { allow } from "@/lib/rate-limit";
+import { assertSameOrigin, publicOrigin, requireParticipant } from "@/lib/session";
+
+/** New connectors a minute, across this server: making them is rare, flooding them isn't. */
+export const CREATES_PER_MINUTE = 60;
 
 /** This browser's connectors (never their links: those are shown only once). */
 export async function GET(req: Request): Promise<Response> {
@@ -23,14 +27,20 @@ export async function GET(req: Request): Promise<Response> {
   }
 }
 
-/** Create a connector; the first one makes this browser an owner. */
+/** Create a connector, from a meeting you're in; the first one makes this browser an owner. */
 export async function POST(req: Request): Promise<Response> {
   try {
     assertSameOrigin(req);
     const body = await readJson(req);
+    const db = getDb();
+    if (typeof body.slug !== "string") throw new HttpError(400, "invalid_body", "Make a connector from a meeting");
+    requireParticipant(db, req, body.slug);
+    if (!allow("connectors:create", CREATES_PER_MINUTE, 60_000)) {
+      throw new HttpError(429, "rate_limited", "Too many new connectors on this server just now. Try again in a minute.");
+    }
     const known = readOwnerKey(req);
     const owner = known ?? newSecret();
-    const { connector, secret } = createConnector(getDb(), owner, { name: body.name, app: body.app });
+    const { connector, secret } = createConnector(db, owner, { name: body.name, app: body.app });
     const headers = new Headers({ "cache-control": "no-store" });
     if (!known) headers.append("set-cookie", sessionCookie(req, ownerCookieName(req), owner, OWNER_COOKIE_MAX_AGE));
     return Response.json({ connector, url: connectorUrl(publicOrigin(req), secret) }, { status: 201, headers });

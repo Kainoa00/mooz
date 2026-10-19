@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ASK_COOLDOWN_MS, ConnectorEars, FOLLOW_UP_MS, MAX_AGENT_STREAK, MAX_LINE_PEOPLE, type HeardLine } from "./connector-ears";
+import { ASK_COOLDOWN_MS, ConnectorEars, FOLLOW_UP_MS, MAX_AGENT_STREAK, type HeardLine } from "./connector-ears";
 
 const ME = "a_grok";
 let clock = 1_000_000;
@@ -97,7 +97,7 @@ describe("ConnectorEars", () => {
     expect(e.hear(human("p_zach", "@Grok four?"))).not.toBeNull();
   });
 
-  it("sends only as much of the newest as fits, counting bytes, and names only a few people a line", () => {
+  it("sends only as much of the newest as fits, counting bytes, and never cuts a line's people short", () => {
     const e = ears();
     for (let i = 0; i < 10; i++) e.hear(human("p_zach", `${i}`.repeat(100)));
     const one = new TextEncoder().encode(JSON.stringify(e.snapshot().at(-1))).length + 1;
@@ -105,7 +105,7 @@ describe("ConnectorEars", () => {
     e.hear(human("p_lee", "界".repeat(100))); // 3 bytes a character
     expect(e.snapshot(2 + one)).toEqual([]);
     e.said("ok", "p_zach", Array.from({ length: 50 }, (_, i) => `p_${i}`));
-    expect(e.snapshot().at(-1)?.sources).toHaveLength(MAX_LINE_PEOPLE);
+    expect(e.snapshot().at(-1)?.sources).toHaveLength(50);
   });
 
   it("forgets a line whose question the owner dismissed", () => {
@@ -115,6 +115,13 @@ describe("ConnectorEars", () => {
     if (heard?.kind !== "question") throw new Error("expected a question");
     e.forget("p_mal", heard.at);
     expect(e.snapshot().map((l) => l.text)).toEqual(["anyway"]);
+  });
+
+  it("takes the question right after its 'Yes?', even when it names the agent again", () => {
+    const e = ears();
+    expect(e.hear(human("p_zach", "Hey Grok."))).toMatchObject({ kind: "wake" });
+    clock += 1500;
+    expect(e.hear(human("p_zach", "Grok, when's the launch?"))).toMatchObject({ kind: "question", text: "when's the launch?" });
   });
 
   it("answers a bare name only every few seconds", () => {

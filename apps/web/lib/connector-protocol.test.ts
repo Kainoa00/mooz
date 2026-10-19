@@ -44,11 +44,11 @@ describe("parseAnswerPacket", () => {
 
   it("caps what it keeps and fills in missing details", () => {
     const parsed = parseAnswerPacket(
-      bytes(packet({ spoken: "x".repeat(1000), details: undefined, sources: Array(100).fill("p_x") })),
+      bytes(packet({ spoken: "x".repeat(1000), details: undefined, sources: Array(300).fill("p_x") })),
     )!;
     expect(parsed.spoken.length).toBeLessThanOrEqual(400);
     expect(parsed.details).toBe("");
-    expect(parsed.sources.length).toBeLessThanOrEqual(50);
+    expect(parsed.sources.length).toBe(200);
   });
 });
 

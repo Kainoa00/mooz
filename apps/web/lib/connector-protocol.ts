@@ -28,7 +28,9 @@ export interface AnswerPacket {
 
 const MAX_SPOKEN = 400;
 const MAX_DETAILS = 4000;
-const MAX_SOURCES = 50;
+// Above what the server can name (lib/connector-queue.ts MAX_ENTRY_PEOPLE): never cut short,
+// since anyone dropped from `sources` couldn't take the answer out of notes by opting out.
+const MAX_SOURCES = 200;
 
 /** An answer packet from the server, validated and capped (null if it isn't one). */
 export function parseAnswerPacket(payload: Uint8Array): AnswerPacket | null {

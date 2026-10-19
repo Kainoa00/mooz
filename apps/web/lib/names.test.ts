@@ -66,6 +66,9 @@ describe("hidden text in names", () => {
       "Zach\u00ad",
       "Zach\ufe00",
       "Zach" + String.fromCodePoint(0xe0100),
+      "Zach\u206a",
+      "\u0600Zach",
+      "Zach\u200d\u200d\u200d",
     ]) {
       expect(() => parseDisplayName(hidden)).toThrow("invisible");
     }

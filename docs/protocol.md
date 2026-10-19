@@ -268,7 +268,8 @@ Owner's assistant app            mooz server                     Owner's browser
 
 ### The connector link
 
-`POST /api/connectors` `{ name, app }` makes one and returns `{ connector, url }` once. The URL
+`POST /api/connectors` `{ name, app, slug }` makes one, from a meeting the caller is in, and
+returns `{ connector, url }` once (at most 60 a minute across the server, 10 per owner). The URL
 is `{origin}/mcp/{secret}`, a 256-bit secret that the server stores only as a hash. The
 connector belongs to the browser that made it (an HttpOnly owner cookie, kept a year, named
 `__Host-mooz_owner` over HTTPS so no other host can set it).
@@ -300,20 +301,22 @@ The tab hears the meeting like a bridge agent does, with the same rules for bein
 (both detectors run `bridge/tests/addressing_cases.json`): chat always, and speech when the
 owner has added their own ElevenLabs key in the browser.
 
-`POST …/{requestId}/questions` `{ asker, text, lines }` queues a question with what the tab
-heard lately, each line `{ identity, text, via, at, reply_to?, sources? }` (at most 20 questions a
+`POST …/{requestId}/questions` `{ asker, text, at, lines }` queues a question (`at` is when the
+line that asked it was heard) with what the tab heard lately, each line
+`{ identity, text, via, at, reply_to?, sources? }` (at most 20 questions a
 minute per agent and 60 per meeting, and 256 KB a request). The server keeps only the last 10
-minutes of lines from people in the meeting (the newest 200, at most 12,000 characters, each
-naming at most 10 people), re-derives names and roles itself, and leaves out every line that
-belongs to someone who opted out of notes (the speaker, an agent's owner, or anyone in
-`reply_to` or `sources`), checking again when the assistant reads it. Questions live in server
+minutes of lines from people in the meeting (the newest 200, at most 12,000 characters),
+re-derives names and roles itself, and leaves out every line that belongs to someone who opted
+out of notes (the speaker, an agent's owner, or anyone in `reply_to` or `sources`), checking
+again when the assistant reads it. Those lists are never cut short: a line that would bring a
+question past 100 people to track is left out instead. Questions live in server
 memory only: at most 5 wait per agent, each for 10 minutes, at most 20 in all (an answered one
 keeps no lines), and all are dropped when the agent leaves for good. `GET …/questions` lists
 them, with the answer once there is one.
 
 **The owner's tap decides.** A queued question is invisible to the assistant until the owner taps
 Ask or Copy for it, which sends `POST …/questions/{qid}/release`. `DELETE …/questions/{qid}`
-dismisses one for good. `POST …/questions/{qid}/answer` `{ spoken, details? }` takes an answer
+dismisses one for good, and takes the line that asked it out of the other questions too. `POST …/questions/{qid}/answer` `{ spoken, details? }` takes an answer
 the owner pasted (for any of their questions).
 
 ### The MCP endpoint

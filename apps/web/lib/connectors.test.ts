@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   MAX_CONNECTORS_PER_OWNER,
+  MAX_CONNECTORS,
   connectorUrl,
   createConnector,
   deleteConnector,
@@ -115,5 +116,16 @@ describe("connectors", () => {
 
   it("have a URL under /mcp", () => {
     expect(connectorUrl("https://meet.example.org", "abc")).toBe("https://meet.example.org/mcp/abc");
+  });
+
+  it("stop at what the server can keep", () => {
+    const db = getDb();
+    const insert = db.prepare(
+      "INSERT INTO connectors (id, owner_hash, name, app, secret_hash, created_at) VALUES (?, ?, 'G', 'grok', ?, 0)",
+    );
+    db.exec("BEGIN");
+    for (let i = 0; i < MAX_CONNECTORS; i++) insert.run(`c${i}`, `o${i}`, `s${i}`);
+    db.exec("COMMIT");
+    expect(() => createConnector(db, KAI, { name: "Grok", app: "grok" })).toThrow("can't keep any more");
   });
 });
