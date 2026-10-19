@@ -117,6 +117,8 @@ test("the owner brings Grok through a connector; it answers through the owner's 
 
   // Nothing reaches the assistant until Kainoa taps (here, Copy prompt).
   expect(await call(grok, "get_question")).toContain("No question is waiting");
+  expect(await call(grok, "read_meeting")).toContain("Nothing to read");
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: baseURL });
   await card.getByTestId("copy-prompt").click();
   await expect(card.getByTestId("copy-prompt")).toHaveText("Copied");
 

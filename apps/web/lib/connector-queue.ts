@@ -25,8 +25,10 @@ export const MAX_DETAILS_CHARS = 4000;
 /** Waiting and answered questions kept per agent. */
 export const MAX_ENTRIES = 20;
 /** People a line may name in `reply_to` and `sources`. */
-export const MAX_LINE_PEOPLE = 50;
-const MAX_AGENTS = 500;
+export const MAX_LINE_PEOPLE = 10;
+/** Lines kept with a question (the newest; the text is capped at MAX_CONTEXT_CHARS too). */
+export const MAX_ENTRY_LINES = 200;
+const MAX_AGENTS = 200;
 const SWEEP_EVERY_MS = 60_000;
 
 export type Role = "owner" | "guest" | "agent" | "you";
@@ -78,7 +80,6 @@ type StoredLine = MeetingLine & { belongs: string[] };
 
 interface AgentState {
   entries: Entry[];
-  lines: StoredLine[];
   touched: number;
 }
 
@@ -108,12 +109,11 @@ function stateFor(agentIdentity: string, now: number, create: boolean): AgentSta
       const oldest = [...all.entries()].sort((a, b) => a[1].touched - b[1].touched)[0];
       all.delete(oldest[0]);
     }
-    state = { entries: [], lines: [], touched: now };
+    state = { entries: [], touched: now };
     all.set(agentIdentity, state);
   }
   if (state) {
     state.entries = state.entries.filter((e) => now - e.question.askedAt <= QUESTION_TTL_MS);
-    state.lines = state.lines.filter((l) => now - l.at <= CONTEXT_WINDOW_MS);
     state.touched = now;
   }
   return state;
@@ -203,7 +203,7 @@ function parseLines(
   // The newest that fit.
   const kept: StoredLine[] = [];
   let size = 0;
-  for (let i = lines.length - 1; i >= 0; i--) {
+  for (let i = lines.length - 1; i >= 0 && kept.length < MAX_ENTRY_LINES; i--) {
     size += lines[i].text.length;
     if (size > MAX_CONTEXT_CHARS) break;
     kept.unshift(lines[i]);
@@ -242,7 +242,6 @@ export function enqueueQuestion(
 
   const state = stateFor(agent.identity, now, true)!;
   state.entries.push({ question, lines, replyTo, people: people_ });
-  state.lines = lines;
   const waiting = state.entries.filter((e) => e.question.status === "waiting");
   for (const extra of waiting.slice(0, Math.max(0, waiting.length - MAX_WAITING))) {
     state.entries.splice(state.entries.indexOf(extra), 1);
@@ -303,10 +302,16 @@ export function getQuestion(
   return entry ? { question: entry.question, lines: shareable(db, agent, entry.lines) } : undefined;
 }
 
-/** The meeting as of the latest question (the last 10 minutes of it). */
+/**
+ * The meeting around the newest question the owner sent the assistant (the last 10 minutes of
+ * it), or nothing while no such question waits: a link alone never reads the meeting.
+ */
 export function meetingLines(db: Db, agent: ConnectorAgent, now = Date.now()): MeetingLine[] {
-  const lines = stateFor(agent.identity, now, false)?.lines ?? [];
-  return shareable(db, agent, lines.filter((l) => now - l.at <= CONTEXT_WINDOW_MS));
+  const released = (stateFor(agent.identity, now, false)?.entries ?? []).filter(
+    (e) => e.question.status === "waiting" && e.question.released,
+  );
+  const newest = released.at(-1);
+  return newest ? shareable(db, agent, newest.lines.filter((l) => now - l.at <= CONTEXT_WINDOW_MS)) : [];
 }
 
 function cap(text: string, max: number): string {
@@ -337,6 +342,7 @@ export function answerQuestion(
   if (!spoken) throw new HttpError(400, "invalid_answer", "An answer needs something to say");
   const details = typeof input.details === "string" ? stripInvisible(input.details).trim() : "";
   entry.question.status = "answered";
+  entry.lines = []; // answered: nothing reads them again
   entry.answer = {
     type: "answer",
     id: entry.question.id,

@@ -104,6 +104,12 @@ export function ConnectorAgent({
   // Questions this tab knows of (it asked them, or the server listed them). A pushed answer
   // counts only for one of these; anything else waits for the server's list.
   const known = useRef(new Set<string>());
+  // Which heard line asked each question, so a dismissed one leaves the ears too.
+  const askedBy = useRef(new Map<string, { identity: string; at: number }>());
+  // The owner cancelled or took it out: this tab's agent connection must go, whatever is in flight.
+  const withdrawn = useRef(false);
+  // Bumped whenever this tab changes its card list, so an older poll response can't undo it.
+  const changes = useRef(0);
   const voiceRef = useRef<AgentVoice | null>(null);
   const settings = useVoiceSettings();
   // A voice problem belongs to the key it happened with; a new key gets a fresh try.
@@ -148,6 +154,7 @@ export function ConnectorAgent({
   const hear = useCallback(
     async (line: HeardLine) => {
       const ears = earsRef.current;
+      if (withdrawn.current || !roomRef.current) return;
       const heard = ears?.hear(line);
       if (!ears || !heard) return;
       const reply = async (text: string) => {
@@ -158,7 +165,6 @@ export function ConnectorAgent({
         await reply("Yes?");
         return;
       }
-      await reply(FILLER);
       const res = await fetch(`${base}/questions`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -167,7 +173,12 @@ export function ConnectorAgent({
       const body = res ? await readBody(res) : null;
       const question = body?.question as { id: string; text: string; asker: { name: string } } | undefined;
       if (res?.ok && question) {
+        // "On it" only once it really is: a refused question gets no filler left hanging.
+        await reply(FILLER);
         known.current.add(question.id);
+        askedBy.current.set(question.id, { identity: heard.asker, at: heard.at });
+        changes.current += 1;
+        setError(null);
         setAsked((list) =>
           list.some((q) => q.id === question.id)
             ? list
@@ -261,10 +272,10 @@ export function ConnectorAgent({
       room.on(RoomEvent.Disconnected, (reason) => {
         if (cancelled) return;
         roomRef.current = null;
-        setPhase(reason === DisconnectReason.PARTICIPANT_REMOVED ? "removed" : "failed");
+        setPhase(withdrawn.current || reason === DisconnectReason.PARTICIPANT_REMOVED ? "removed" : "failed");
       });
       await room.connect(url, token, { autoSubscribe: false });
-      if (cancelled) {
+      if (cancelled || withdrawn.current) {
         await room.disconnect();
         return;
       }
@@ -314,7 +325,16 @@ export function ConnectorAgent({
   useEffect(() => {
     if (phase !== "in") return;
     const timer = setInterval(async () => {
+      const before = changes.current;
       const res = await fetch(`${base}/questions`, { cache: "no-store" }).catch(() => null);
+      if (res?.status === 409 || res?.status === 404) {
+        // No longer approved (left too long, or the meeting ended) though the connection lingers.
+        withdrawn.current = true;
+        void roomRef.current?.disconnect();
+        setError(`${connector.name} was away too long, or the meeting ended. Bring it again to continue.`);
+        setPhase("removed");
+        return;
+      }
       if (!res?.ok) return;
       const body = await readBody(res);
       const questions = (body?.questions ?? []) as {
@@ -325,7 +345,7 @@ export function ConnectorAgent({
         answer?: AnswerPacket;
       }[];
       for (const q of questions) known.current.add(q.id);
-      setAsked(
+      if (changes.current === before) setAsked(
         questions
           .filter((q) => q.status === "waiting")
           .map((q) => ({ id: q.id, askerName: q.asker.name, text: q.text })),
@@ -333,7 +353,7 @@ export function ConnectorAgent({
       for (const q of questions) if (q.answer) receive(q.answer);
     }, ANSWER_POLL_MS);
     return () => clearInterval(timer);
-  }, [phase, base, receive]);
+  }, [phase, base, receive, connector.name]);
 
   /** Cancel the request, or take the agent out of the meeting. */
   async function withdraw() {
@@ -342,11 +362,17 @@ export function ConnectorAgent({
       setError(errorMessage(res ? await readBody(res) : null, "Could not take your agent out. Try again."));
       return;
     }
+    // Leave from this side too: don't count on the server's kick (or wait for a connect in flight).
+    withdrawn.current = true;
+    void roomRef.current?.disconnect();
     setError(null);
     setPhase("removed");
   }
 
   async function dismiss(id: string) {
+    changes.current += 1;
+    const line = askedBy.current.get(id);
+    if (line) earsRef.current?.forget(line.identity, line.at);
     setAsked((list) => list.filter((x) => x.id !== id));
     await fetch(`${base}/questions/${id}`, { method: "DELETE" }).catch(() => null);
   }
@@ -495,9 +521,15 @@ function QuestionCard({
       .catch(() => setError("Your assistant may not see this question. Try again."));
 
   async function copy() {
+    // Start the copy within the click (Safari allows it only there), then release.
+    const write = navigator.clipboard ? navigator.clipboard.writeText(prompt) : Promise.reject(new Error("no clipboard"));
     await release();
-    await navigator.clipboard?.writeText(prompt).catch(() => undefined);
-    setCopied(true);
+    const ok = await write.then(
+      () => true,
+      () => false,
+    );
+    setCopied(ok);
+    if (!ok) setError(`This browser wouldn't copy. Send your assistant: ${prompt}`);
   }
 
   async function submit() {
@@ -522,6 +554,8 @@ function QuestionCard({
             target="_blank"
             rel="noopener noreferrer"
             onClick={() => void release()}
+            onAuxClick={() => void release()}
+            onContextMenu={() => void release()}
             data-testid="ask-assistant"
             className="rounded-lg bg-agent px-3 py-1 text-white"
           >

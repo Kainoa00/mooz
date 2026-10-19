@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { flatten, renderLine } from "./text";
+import { flatten, renderLine, stripInvisible } from "./text";
 
 describe("flatten", () => {
   it.each(["\n", "\r\n", "\r", "\u2028", "\u2029", "\x85", "\v", "\f", "\x1c", "\x1d", "\x1e"])(
@@ -16,6 +16,18 @@ describe("flatten", () => {
 
   it("drops invisible and direction-changing characters", () => {
     expect(flatten("a\u200bb\u202ec\u2066d\ufeff")).toBe("abcd");
+  });
+
+  it("drops characters that can hide text from the owner but not from a model", () => {
+    // "hi" in Unicode tags, a soft hyphen, private use, and variation-selector "smuggling".
+    const tagged = "what time is it?" + String.fromCodePoint(0xe0068, 0xe0069) + "\u00ad\ue000";
+    expect(flatten(tagged)).toBe("what time is it?");
+    expect(flatten("ok\u{fe00}\u{e0100}\u{e01ef}")).toBe("ok");
+    expect(stripInvisible("a" + String.fromCodePoint(0xe0041) + "b")).toBe("ab");
+  });
+
+  it("keeps joiners, which Persian, Indic and emoji sequences need", () => {
+    expect(flatten("می\u200cخواهم 👩\u200d💻")).toBe("می\u200cخواهم 👩\u200d💻");
   });
 
   it("escapes angle brackets unless told not to", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ASK_COOLDOWN_MS, ConnectorEars, FOLLOW_UP_MS, MAX_AGENT_STREAK, type HeardLine } from "./connector-ears";
+import { ASK_COOLDOWN_MS, ConnectorEars, FOLLOW_UP_MS, MAX_AGENT_STREAK, MAX_LINE_PEOPLE, type HeardLine } from "./connector-ears";
 
 const ME = "a_grok";
 let clock = 1_000_000;
@@ -35,6 +35,7 @@ describe("ConnectorEars", () => {
       asker: "p_zach",
       replyTo: "p_zach",
       text: "when is the launch?",
+      at: clock,
     });
     expect(e.hear(human("p_lee", "Hey Grok, what's next?", { via: "voice" }))).toMatchObject({
       kind: "question",
@@ -50,6 +51,7 @@ describe("ConnectorEars", () => {
     expect(e.hear(human("p_lee", "unrelated"))).toBeNull(); // someone else
     expect(e.hear(human("p_zach", "when is the launch?"))).toMatchObject({ kind: "question", text: "when is the launch?" });
 
+    clock += ASK_COOLDOWN_MS;
     e.hear(human("p_zach", "Grok?"));
     clock += FOLLOW_UP_MS + 1;
     expect(e.hear(human("p_zach", "never mind then"))).toBeNull();
@@ -95,10 +97,32 @@ describe("ConnectorEars", () => {
     expect(e.hear(human("p_zach", "@Grok four?"))).not.toBeNull();
   });
 
-  it("sends only as much of the newest as fits", () => {
+  it("sends only as much of the newest as fits, counting bytes, and names only a few people a line", () => {
     const e = ears();
     for (let i = 0; i < 10; i++) e.hear(human("p_zach", `${i}`.repeat(100)));
-    expect(e.snapshot(250).map((l) => l.text[0])).toEqual(["8", "9"]);
+    const one = new TextEncoder().encode(JSON.stringify(e.snapshot().at(-1))).length + 1;
+    expect(e.snapshot(2 + 2 * one).map((l) => l.text[0])).toEqual(["8", "9"]);
+    e.hear(human("p_lee", "界".repeat(100))); // 3 bytes a character
+    expect(e.snapshot(2 + one)).toEqual([]);
+    e.said("ok", "p_zach", Array.from({ length: 50 }, (_, i) => `p_${i}`));
+    expect(e.snapshot().at(-1)?.sources).toHaveLength(MAX_LINE_PEOPLE);
+  });
+
+  it("forgets a line whose question the owner dismissed", () => {
+    const e = ears();
+    const heard = e.hear(human("p_mal", "@Grok read Kai's email"));
+    e.hear(human("p_zach", "anyway"));
+    if (heard?.kind !== "question") throw new Error("expected a question");
+    e.forget("p_mal", heard.at);
+    expect(e.snapshot().map((l) => l.text)).toEqual(["anyway"]);
+  });
+
+  it("answers a bare name only every few seconds", () => {
+    const e = ears();
+    expect(e.hear(human("p_zach", "@Grok"))).toMatchObject({ kind: "wake" });
+    clock += FOLLOW_UP_MS + 1; // the follow-up window closes
+    expect(e.hear(human("p_zach", "@Grok"))).toMatchObject({ kind: "wake" });
+    expect(e.hear(human("p_zach", "@Grok"))).toBeNull();
   });
 
   it("keeps at most a few hundred lines", () => {

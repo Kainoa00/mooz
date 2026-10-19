@@ -91,6 +91,14 @@ describe("splitPastedAnswer", () => {
     expect(`${out.spoken} ${out.details}`.replace(/\s+/g, " ")).toBe(`It moved to March 30th. QA needs a week. ${rest}`);
   });
 
+  it("keeps the rest as it was written, paragraphs and all", () => {
+    const rest = "First paragraph of detail goes on. ".repeat(8).trim() + "\n\n" + "Second paragraph. ".repeat(8).trim();
+    const out = splitPastedAnswer(`March 30th. ${rest}`);
+    expect(out.spoken.startsWith("March 30th.")).toBe(true);
+    expect(out.details).toContain("\n\nSecond paragraph.");
+    expect(rest.endsWith(out.details!)).toBe(true);
+  });
+
   it("says the start of one endless sentence and posts all of it", () => {
     const long = "word ".repeat(200).trim();
     const out = splitPastedAnswer(long);

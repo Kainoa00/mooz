@@ -8,20 +8,25 @@
 
 // Everything that could start a new line for a model's tokenizer.
 const LINE_BREAKS = /\r\n|[\r\n\v\f\x1c-\x1e\x85\u2028\u2029]/g;
-// Invisible and direction-changing characters (also refused in display names).
-const INVISIBLE = /[​-‏‪-‮⁠-⁤⁦-⁩﻿]/g;
+// Anything that shows as nothing, or can carry hidden text to a model: format characters
+// (bidi controls, Unicode tags, soft hyphens…), private-use and unassigned code points, lone
+// surrogates, and variation selectors (which can smuggle bytes after an emoji). Joiners stay:
+// Persian and Indic text and emoji sequences need them, and they carry nothing.
+const INVISIBLE = /[\p{Cf}\p{Co}\p{Cn}\p{Cs}\u{FE00}-\u{FE0F}\u{E0100}-\u{E01EF}]/gu;
+const keepJoiners = (c: string) => (c === "\u200C" || c === "\u200D" ? c : "");
+const clean = (text: string) => text.replace(INVISIBLE, keepJoiners);
 
 /** One visible line; with `markup`, angle brackets are escaped so text can't close a block. */
 export const BREAK = " ⏎ ";
 
 export function flatten(text: string, { markup = true }: { markup?: boolean } = {}): string {
-  const flat = text.replace(INVISIBLE, "").normalize("NFKC").replace(INVISIBLE, "").replace(LINE_BREAKS, BREAK);
+  const flat = clean(clean(text).normalize("NFKC")).replace(LINE_BREAKS, BREAK);
   return markup ? flat.replaceAll("<", "&lt;").replaceAll(">", "&gt;") : flat;
 }
 
 /** Text shown or spoken as-is (an answer): keeps its lines, loses hidden characters. */
 export function stripInvisible(text: string): string {
-  return text.replace(INVISIBLE, "");
+  return clean(text);
 }
 
 export interface RenderableLine {

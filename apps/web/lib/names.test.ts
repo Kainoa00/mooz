@@ -57,3 +57,19 @@ describe("parseAgentName", () => {
     );
   });
 });
+
+describe("hidden text in names", () => {
+  it("refuses Unicode tags, private use and smuggling selectors, but not emoji or joiners", () => {
+    for (const hidden of [
+      "Zach" + String.fromCodePoint(0xe0068, 0xe0069),
+      "Zach\ue000",
+      "Zach\u00ad",
+      "Zach\ufe00",
+      "Zach" + String.fromCodePoint(0xe0100),
+    ]) {
+      expect(() => parseDisplayName(hidden)).toThrow("invisible");
+    }
+    expect(parseDisplayName("Zach ❤️")).toBe("Zach ❤️");
+    expect(parseDisplayName("👩\u200d💻 Lee")).toBe("👩\u200d💻 Lee");
+  });
+});

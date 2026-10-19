@@ -288,9 +288,10 @@ agent's (microphone and data only, no attribute edits) with `door = connector`. 
 for the same connector revokes the older one, and `DELETE …/{requestId}` cancels it or takes the
 agent out.
 
-The agent is in the meeting only while its tab is. When LiveKit reports it left, its assistant
-can't reach the meeting and its questions are dropped; if it isn't back within 2 minutes, the
-approval ends and the owner must bring it again. When the meeting ends, its connector agents are
+The agent is in the meeting while its tab is. LiveKit's webhook tells mooz when the tab's session
+leaves or joins (a late "left" from a replaced session is ignored). It may be away up to 2
+minutes (a reload); after that the approval ends, its questions are dropped, and coming back
+gets it removed, so the owner brings it again. When the meeting ends, its connector agents are
 revoked.
 
 ### Questions
@@ -301,12 +302,13 @@ owner has added their own ElevenLabs key in the browser.
 
 `POST …/{requestId}/questions` `{ asker, text, lines }` queues a question with what the tab
 heard lately, each line `{ identity, text, via, at, reply_to?, sources? }` (at most 20 questions a
-minute per agent, and 256 KB a request). The server keeps only
-the last 10 minutes (at most 12,000 characters) of lines from people in the meeting, re-derives
-names and roles itself, and leaves out every line that belongs to someone who opted out of notes
-(the speaker, an agent's owner, or anyone in `reply_to` or `sources`), checking again when the
-assistant reads it. Questions live in server memory only: at most 5 wait per agent, each for 10
-minutes, at most 20 in all, and all are dropped when the agent leaves. `GET …/questions` lists
+minute per agent and 60 per meeting, and 256 KB a request). The server keeps only the last 10
+minutes of lines from people in the meeting (the newest 200, at most 12,000 characters, each
+naming at most 10 people), re-derives names and roles itself, and leaves out every line that
+belongs to someone who opted out of notes (the speaker, an agent's owner, or anyone in
+`reply_to` or `sources`), checking again when the assistant reads it. Questions live in server
+memory only: at most 5 wait per agent, each for 10 minutes, at most 20 in all (an answered one
+keeps no lines), and all are dropped when the agent leaves for good. `GET …/questions` lists
 them, with the answer once there is one.
 
 **The owner's tap decides.** A queued question is invisible to the assistant until the owner taps
@@ -325,7 +327,7 @@ the owner released:
 | Tool | Does |
 |---|---|
 | `get_question({ question_id? })` | The oldest released question (or the one named): who asked (`your owner`, `a guest` or `another AI agent`), the question inside `<question>`, how to answer, and the meeting as `[role] name (via): text` lines inside `<meeting>` |
-| `read_meeting()` | The same meeting lines, as of the latest question |
+| `read_meeting()` | The meeting lines around the newest released question (nothing while none waits) |
 | `post_answer({ question_id, spoken, details? })` | Answers it. `spoken` (at most 400 characters) is read aloud; `details` (at most 4,000) is added in chat |
 
 Meeting text is normalized (NFKC), stripped of invisible characters, flattened to one line per

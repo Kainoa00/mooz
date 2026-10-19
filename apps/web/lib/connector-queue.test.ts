@@ -4,6 +4,7 @@ import { connectorAgentFor, requestConnectorJoin, type ConnectorAgent } from "./
 import {
   MAX_CONTEXT_CHARS,
   MAX_ENTRIES,
+  MAX_ENTRY_LINES,
   MAX_LINE_PEOPLE,
   MAX_WAITING,
   QUESTION_TTL_MS,
@@ -48,6 +49,13 @@ function meeting() {
   decideAgentRequest(db, { slug, requestId, approve: true });
   const grok: ConnectorAgent = connectorAgentFor(db, kai, "kai-key", requestId);
   return { db, slug, kai, zach, lee, atlas, grok };
+}
+
+/** Someone asks, and the owner taps to send it to their assistant. */
+function ask(...args: Parameters<typeof enqueueQuestion>) {
+  const q = enqueueQuestion(...args);
+  releaseQuestion(args[1].identity, q.id, args[3]);
+  return q;
 }
 
 const line = (identity: string, text: string, extra: Record<string, unknown> = {}) => ({
@@ -99,7 +107,7 @@ describe("the connector question queue", () => {
     const { db, kai, zach, lee, atlas, grok } = meeting();
     const leeAtlas = "a_leesagent00000"; // not in the meeting: dropped like any stranger
 
-    enqueueQuestion(
+    ask(
       db,
       grok,
       {
@@ -145,7 +153,7 @@ describe("the connector question queue", () => {
   it("escapes meeting text and keeps only the last 10 minutes, newest within the size cap", () => {
     const { db, kai, zach, grok } = meeting();
     const long = "x".repeat(900);
-    const q = enqueueQuestion(
+    const q = ask(
       db,
       grok,
       {
@@ -185,7 +193,7 @@ describe("the connector question queue", () => {
 
   it("ignores malformed lines but keeps the question", () => {
     const { db, kai, zach, grok } = meeting();
-    enqueueQuestion(
+    ask(
       db,
       grok,
       { asker: zach.identity, text: "q", lines: [null, 3, { identity: kai.identity }, line(kai.identity, "fine")] },
@@ -271,7 +279,7 @@ describe("the connector question queue", () => {
     expect(listQuestions(grok.identity, NOW + 100)).toHaveLength(MAX_ENTRIES);
 
     const junk = Array.from({ length: 10_000 }, (_, i) => `p_junk${i}`);
-    enqueueQuestion(
+    ask(
       db,
       grok,
       {
@@ -288,9 +296,24 @@ describe("the connector question queue", () => {
     expect(meetingLines(db, grok, NOW + 200).map((l) => l.text)).toEqual(["kept"]);
   });
 
+  it("keeps a bounded number of lines per question, and none once it's answered", () => {
+    const { db, kai, zach, grok } = meeting();
+    const q = ask(
+      db,
+      grok,
+      { asker: zach.identity, text: "q", lines: Array.from({ length: 400 }, (_, i) => line(kai.identity, `${i}`)) },
+      NOW,
+    );
+    const lines = getQuestion(db, grok, q.id, NOW)!.lines;
+    expect(lines).toHaveLength(MAX_ENTRY_LINES);
+    expect(lines.at(-1)?.text).toBe("399");
+    answerQuestion(grok.identity, q.id, { spoken: "ok" }, { now: NOW });
+    expect(meetingLines(db, grok, NOW)).toEqual([]);
+  });
+
   it("lets go of agents nobody has touched for a while", () => {
     const { db, zach, grok } = meeting();
-    enqueueQuestion(db, grok, { asker: zach.identity, text: "q", lines: [line(zach.identity, "hi")] }, NOW);
+    ask(db, grok, { asker: zach.identity, text: "q", lines: [line(zach.identity, "hi")] }, NOW);
     const later = NOW + QUESTION_TTL_MS + 120_000;
     listQuestions("a_someoneelse0000", later); // any use of the queue sweeps
     expect(listQuestions(grok.identity, later)).toEqual([]);
@@ -298,7 +321,7 @@ describe("the connector question queue", () => {
 
   it("forgets an agent entirely (when it leaves)", () => {
     const { db, zach, grok } = meeting();
-    enqueueQuestion(db, grok, { asker: zach.identity, text: "q", lines: [line(zach.identity, "hi")] }, NOW);
+    ask(db, grok, { asker: zach.identity, text: "q", lines: [line(zach.identity, "hi")] }, NOW);
     forgetAgent(grok.identity);
     expect(listQuestions(grok.identity, NOW)).toEqual([]);
     expect(meetingLines(db, grok, NOW)).toEqual([]);

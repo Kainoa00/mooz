@@ -97,7 +97,7 @@ describe("POST /api/livekit/webhook", () => {
     expect(setRoomMetadata.mock.calls).toEqual([[getRoom(db, allowed.slug)!.livekitRoom, '{"notes_allowed":true}']]);
   });
 
-  it("takes a connector agent out while its tab is gone, and lets it back within a couple of minutes", async () => {
+  it("lets a connector agent's tab step out for a couple of minutes, then takes it out with its questions", async () => {
     const db = getDb();
     const { slug } = createRoom(db);
     const kai = addParticipant(db, { slug, name: "Kainoa", isHost: true });
@@ -106,22 +106,29 @@ describe("POST /api/livekit/webhook", () => {
     decideAgentRequest(db, { slug, requestId, approve: true });
     const grok = connectorAgentFor(db, kai, "kai-key", requestId);
     enqueueQuestion(db, grok, { asker: kai.identity, text: "q", lines: [] });
-    const event = (name: string) =>
-      JSON.stringify({ event: name, room: { name: grok.livekitRoom }, participant: { identity: grok.identity } });
+    const event = (name: string, sid: string) =>
+      JSON.stringify({ event: name, room: { name: grok.livekitRoom }, participant: { identity: grok.identity, sid } });
 
-    await POST(await signed(event("participant_left")));
-    expect(attachedConnectorAgent(db, connector.id)).toBeUndefined(); // its assistant can't reach the meeting
-    expect(listQuestions(grok.identity)).toEqual([]);
-    expect(connectorJoinStatus(db, kai, "kai-key", requestId)).toBe("approved"); // a reload may come back
-
-    await POST(await signed(event("participant_joined")));
-    expect(attachedConnectorAgent(db, connector.id)?.identity).toBe(grok.identity);
+    // A reload: the old session leaves after the new one joined. That late "left" changes nothing.
+    await POST(await signed(event("participant_joined", "PA_one")));
+    await POST(await signed(event("participant_joined", "PA_two")));
+    await POST(await signed(event("participant_left", "PA_one")));
+    const later = Date.now() + LEFT_GRACE_MS + 1;
+    expect(attachedConnectorAgent(db, connector.id, later)?.identity).toBe(grok.identity);
     expect(removeFromRoom).not.toHaveBeenCalled();
 
-    await POST(await signed(event("participant_left")));
-    const later = Date.now() + LEFT_GRACE_MS + 1;
-    expect(connectorJoinStatus(db, kai, "kai-key", requestId, later)).toBe("revoked");
-    expect(() => connectorAgentFor(db, kai, "kai-key", requestId, later)).toThrow("not approved");
+    // Gone for a moment: still reachable, questions kept.
+    await POST(await signed(event("participant_left", "PA_two")));
+    expect(attachedConnectorAgent(db, connector.id)?.identity).toBe(grok.identity);
+    expect(listQuestions(grok.identity)).toHaveLength(1);
+    expect(connectorJoinStatus(db, kai, "kai-key", requestId)).toBe("approved");
+
+    // Gone too long: out, and its questions with it.
+    const tooLate = Date.now() + LEFT_GRACE_MS + 1000;
+    expect(attachedConnectorAgent(db, connector.id, tooLate)).toBeUndefined();
+    expect(listQuestions(grok.identity)).toEqual([]);
+    expect(connectorJoinStatus(db, kai, "kai-key", requestId, tooLate)).toBe("revoked");
+    expect(() => connectorAgentFor(db, kai, "kai-key", requestId, tooLate)).toThrow("not approved");
   });
 
   it("ends a meeting's connector agents when the meeting ends", async () => {
@@ -140,5 +147,32 @@ describe("POST /api/livekit/webhook", () => {
     expect(connectorJoinStatus(db, kai, "kai-key", requestId)).toBe("revoked");
     expect(attachedConnectorAgent(db, connector.id)).toBeUndefined();
     expect(listQuestions(grok.identity)).toEqual([]);
+  });
+
+  it("kicks a connector agent that comes back after the grace period", async () => {
+    const db = getDb();
+    const { slug } = createRoom(db);
+    const kai = addParticipant(db, { slug, name: "Kainoa", isHost: true });
+    const { connector } = createConnector(db, "kai-key", { name: "Grok", app: "grok" });
+    const { requestId } = requestConnectorJoin(db, kai, "kai-key", connector.id);
+    decideAgentRequest(db, { slug, requestId, approve: true });
+    const grok = connectorAgentFor(db, kai, "kai-key", requestId);
+    const event = (name: string) =>
+      JSON.stringify({ event: name, room: { name: grok.livekitRoom }, participant: { identity: grok.identity, sid: "PA_1" } });
+    await POST(await signed(event("participant_joined")));
+    await POST(await signed(event("participant_left")));
+    db.prepare("UPDATE agent_requests SET left_at = ? WHERE id = ?").run(Date.now() - LEFT_GRACE_MS - 1000, requestId);
+
+    await POST(await signed(event("participant_joined")));
+
+    expect(removeFromRoom).toHaveBeenCalledWith(grok.livekitRoom, grok.identity);
+    expect(connectorJoinStatus(db, kai, "kai-key", requestId)).toBe("revoked");
+  });
+
+  it("refuses an oversized body before checking it", async () => {
+    const res = await POST(
+      new Request("http://localhost/api/livekit/webhook", { method: "POST", body: "x".repeat(70 * 1024) }),
+    );
+    expect(res.status).toBe(413);
   });
 });

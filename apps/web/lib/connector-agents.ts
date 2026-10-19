@@ -5,6 +5,7 @@ import {
   transaction,
   type AgentIdentity,
 } from "./agents";
+import { forgetAgent } from "./connector-queue";
 import { getOwned, requireOwnerKey } from "./connectors";
 import type { Db } from "./db";
 import { HttpError } from "./http";
@@ -18,7 +19,8 @@ import { requireParticipant } from "./session";
  * goes through the same host approval as a bridge agent; once approved, the owner's
  * tab (proven by their participant cookie and the owner cookie the connector belongs to)
  * can get its token, again after a reload, until the agent is removed, its owner takes it
- * out, the meeting ends, or it has been gone from the meeting for a couple of minutes.
+ * out, the meeting ends, or it has been gone from the meeting for more than a couple of
+ * minutes (then its questions go too).
  * A connector is in one meeting at a time: bringing it to another takes it out of the first.
  */
 
@@ -143,10 +145,11 @@ function ownedRow(db: Db, owner: Participant, ownerKey: string, requestId: strin
   return row;
 }
 
-/** Away too long: it has to be brought in (and approved) again. */
+/** Away too long: it has to be brought in (and approved) again, and its questions go. */
 function expireIfGone(db: Db, row: Row, now: number): Row {
   if (row.status !== "approved" || row.left_at === null || now - row.left_at <= LEFT_GRACE_MS) return row;
   db.prepare("UPDATE agent_requests SET status = 'revoked' WHERE id = ? AND status = 'approved'").run(row.id);
+  forgetAgent(row.agent_identity);
   return { ...row, status: "revoked" };
 }
 
@@ -183,14 +186,16 @@ export function requireConnectorAgent(db: Db, req: Request, slug: string, reques
   return connectorAgentFor(db, requireParticipant(db, req, slug), requireOwnerKey(req), requestId);
 }
 
-/** Where a connector is right now: its approved agent, if that agent is in a meeting. */
-export function attachedConnectorAgent(db: Db, connectorId: string): ConnectorAgent | undefined {
+/**
+ * Where a connector is right now: its approved agent, if that agent is in a meeting (or
+ * stepped out moments ago: a reload keeps its questions and lets its assistant answer).
+ */
+export function attachedConnectorAgent(db: Db, connectorId: string, now = Date.now()): ConnectorAgent | undefined {
   const row = db
-    .prepare(
-      `${SELECT} AND r.connector_id = ? AND r.status = 'approved' AND r.left_at IS NULL ORDER BY r.created_at DESC LIMIT 1`,
-    )
+    .prepare(`${SELECT} AND r.connector_id = ? AND r.status = 'approved' ORDER BY r.created_at DESC LIMIT 1`)
     .get(connectorId) as Row | undefined;
-  return row ? toAgent(row) : undefined;
+  if (!row) return undefined;
+  return expireIfGone(db, row, now).status === "approved" ? toAgent(row) : undefined;
 }
 
 /** The owner cancels a request, or takes their agent out. Returns the agent to disconnect. */
@@ -203,14 +208,36 @@ export function withdrawConnector(db: Db, owner: Participant, ownerKey: string, 
   return row.status === "approved" ? { livekitRoom: row.livekit_room, identity: row.agent_identity } : undefined;
 }
 
-/** LiveKit says a connector agent's tab left or came back. True if it is one. */
-export function noteConnectorPresence(db: Db, agentIdentity: string, here: boolean, now = Date.now()): boolean {
-  const { changes } = db
-    .prepare(
-      `UPDATE agent_requests SET left_at = ? WHERE agent_identity = ? AND door = 'connector' AND status = 'approved'`,
-    )
-    .run(here ? null : now, agentIdentity);
-  return changes > 0;
+/**
+ * LiveKit says a connector agent's tab joined (as session `sid`) or left. A "left" counts only
+ * for the session that last joined, so a late one from a replaced connection changes nothing.
+ * Coming back after the grace period doesn't count either: returns "expired" (kick it).
+ */
+export function noteConnectorPresence(
+  db: Db,
+  agentIdentity: string,
+  sid: string | undefined,
+  here: boolean,
+  now = Date.now(),
+): "expired" | undefined {
+  const live = "agent_identity = ? AND door = 'connector' AND status = 'approved'";
+  if (here) {
+    const row = db.prepare(`SELECT left_at FROM agent_requests WHERE ${live}`).get(agentIdentity) as
+      | { left_at: number | null }
+      | undefined;
+    if (row?.left_at != null && now - row.left_at > LEFT_GRACE_MS) {
+      db.prepare(`UPDATE agent_requests SET status = 'revoked' WHERE ${live}`).run(agentIdentity);
+      return "expired";
+    }
+    db.prepare(`UPDATE agent_requests SET left_at = NULL, session_sid = ? WHERE ${live}`).run(sid ?? null, agentIdentity);
+  } else {
+    db.prepare(`UPDATE agent_requests SET left_at = ? WHERE ${live} AND (session_sid IS NULL OR session_sid = ?)`).run(
+      now,
+      agentIdentity,
+      sid ?? null,
+    );
+  }
+  return undefined;
 }
 
 /** The meeting ended: its connector agents are done. Returns their identities. */

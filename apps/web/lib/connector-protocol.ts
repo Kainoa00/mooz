@@ -111,19 +111,17 @@ export const SPOKEN_LIMIT = 400;
 export function splitPastedAnswer(text: string): { spoken: string; details?: string } {
   const all = text.trim();
   if (all.length <= SPOKEN_LIMIT) return { spoken: all };
-  const sentences = all.split(/(?<=[.!?])\s+|\n+/).filter((x) => x.trim());
-  let spoken = "";
-  let used = 0;
-  for (const sentence of sentences.slice(0, 3)) {
-    const next = spoken ? `${spoken} ${sentence.trim()}` : sentence.trim();
-    if (next.length > SPOKEN_LIMIT) break;
-    spoken = next;
-    used += 1;
+  // Sentence ends, by position in the original, so what's left keeps its own layout.
+  const ends = [...all.matchAll(/[.!?](?=\s)|\n/g)].map((m) => m.index + 1);
+  let cut = 0;
+  for (const end of ends.slice(0, 3)) {
+    if (all.slice(0, end).trim().length > SPOKEN_LIMIT) break;
+    cut = end;
   }
-  if (!spoken) {
+  if (!cut) {
     // One very long sentence: say its start, and post it all.
-    const cut = all.slice(0, SPOKEN_LIMIT - 1);
-    return { spoken: `${cut.slice(0, Math.max(cut.lastIndexOf(" "), SPOKEN_LIMIT / 2)).trimEnd()}…`, details: all };
+    const head = all.slice(0, SPOKEN_LIMIT - 1);
+    return { spoken: `${head.slice(0, Math.max(head.lastIndexOf(" "), SPOKEN_LIMIT / 2)).trimEnd()}…`, details: all };
   }
-  return { spoken, details: sentences.slice(used).join("\n").trim() };
+  return { spoken: all.slice(0, cut).replace(/\s+/g, " ").trim(), details: all.slice(cut).trim() };
 }

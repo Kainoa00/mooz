@@ -85,6 +85,8 @@ const MIGRATIONS = [
    CREATE INDEX agent_requests_by_connector ON agent_requests(connector_id, status);`,
   // When a connector agent's tab left the meeting (cleared when it comes back).
   `ALTER TABLE agent_requests ADD COLUMN left_at INTEGER;`,
+  // Which LiveKit session that tab is, so a late "left" from an old session doesn't count.
+  `ALTER TABLE agent_requests ADD COLUMN session_sid TEXT;`,
 ];
 
 function migrate(db: Db): void {

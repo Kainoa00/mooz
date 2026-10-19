@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readCookie } from "./cookies";
+import { isHttps, readCookie } from "./cookies";
 
 describe("readCookie", () => {
   const req = (cookie?: string) =>
@@ -12,5 +12,20 @@ describe("readCookie", () => {
   it("returns undefined when absent", () => {
     expect(readCookie(req("a=1"), "b")).toBeUndefined();
     expect(readCookie(req(), "b")).toBeUndefined();
+  });
+});
+
+describe("isHttps", () => {
+  it("trusts the configured public address over what a proxy forgot to say", () => {
+    const plain = new Request("http://internal:3000/x");
+    try {
+      process.env.MOOZ_PUBLIC_URL = "https://meet.example.com";
+      expect(isHttps(plain)).toBe(true);
+      process.env.MOOZ_PUBLIC_URL = "not a url";
+      expect(isHttps(plain)).toBe(false);
+    } finally {
+      delete process.env.MOOZ_PUBLIC_URL;
+    }
+    expect(isHttps(new Request("http://x/", { headers: { "x-forwarded-proto": "https" } }))).toBe(true);
   });
 });

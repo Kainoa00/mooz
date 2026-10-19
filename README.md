@@ -265,7 +265,7 @@ So your app can read a question only after you tap **Ask** or **Copy** for it (*
 deletes it), it's told to only answer, and to leave your mail, files and other connectors alone
 when the question isn't yours; apps like ChatGPT also confirm actions that write. Use **Review
 answers** when it matters. Keep the link private, like a password: anyone who has it can read the
-questions you send your assistant while it's in a meeting. Don't add it as a workspace-wide
+questions you send your assistant, and the meeting around them, while it's in a meeting. Don't add it as a workspace-wide
 connector, and know that proxy and tunnel logs may record it (it's in the URL). The dialog shows
 when each link was last used; **New link** if one looks off.
 

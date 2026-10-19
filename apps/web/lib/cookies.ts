@@ -15,6 +15,15 @@ export function readCookie(req: Request, name: string): string | undefined {
 }
 
 export function isHttps(req: Request): boolean {
+  // The configured public address is the truth (a TLS proxy may not say x-forwarded-proto).
+  const configured = process.env.MOOZ_PUBLIC_URL;
+  if (configured) {
+    try {
+      return new URL(configured).protocol === "https:";
+    } catch {
+      // fall through to what the request says
+    }
+  }
   const forwarded = req.headers.get("x-forwarded-proto");
   if (forwarded) return forwarded.split(",")[0].trim() === "https";
   return new URL(req.url).protocol === "https:";
