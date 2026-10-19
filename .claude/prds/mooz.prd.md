@@ -69,7 +69,7 @@ We'll know we're right when **people who complete setup use an agent in at least
 | 6 | Local voice and launch | OpenAI-compatible local voice (VoiceStudio), VPS guide, meeting summary export, security hardening backlog (below), README and demo, v0.1 release | pending | — |
 
 ## Open Questions
-- [ ] Do grok.com, chatgpt.com and claude.ai `?q=` prefill links still work at build time? They are undocumented, so verify before M4.
+- [x] Do grok.com, chatgpt.com and claude.ai `?q=` prefill links still work at build time? Yes, as of October 2026 (third-party reports): ChatGPT sends the prompt at once; Claude (`/new?q=`) and Grok fill it in and wait for Enter. They are still undocumented, so mooz always offers Copy prompt and Paste the answer too, and the live check confirms them.
 - [ ] Can an HTTPS meeting page call a local speech server at `http://localhost:3900` (mixed content and Private Network Access rules) in Chrome, Safari and Firefox? Verify before M6.
 - [ ] Does ElevenLabs realtime speech-to-text allow enough concurrent streams per key for a 6-person meeting? Verify in M1.
 - [ ] Does Muse's custom connector builder work against mooz's API, or does Muse need a cataloged connector? Revisit in v0.2.

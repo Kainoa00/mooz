@@ -21,8 +21,8 @@ heard in the meeting.
 > **Status: v0.1 in progress.** Milestones 1–3 are done: people meet by link, anyone can bring
 > a personal agent (Claude or Grok) that reads their folders, repos and GitHub, remembers what
 > they tell it, keeps meeting notes when everyone agrees, and researches in the background while
-> the meeting goes on. Next up is connecting your existing Grok / Claude / ChatGPT app (M4). See
-> the [roadmap](#roadmap).
+> the meeting goes on. Connecting the Grok, Claude or ChatGPT app you already use (M4) is built
+> and in review. See the [roadmap](#roadmap).
 
 ## Quickstart (local)
 
@@ -72,7 +72,8 @@ memory and a choice of brain, see [Your personal agent](#your-personal-agent).
   billed on top: about 5 searches per task (Claude charges $10 per 1,000, and the results count
   as input tokens; xAI bills each search call). A meeting allows at most 20 tasks.
 
-ElevenLabs runs in zero-retention mode, so it keeps no audio.
+mooz asks ElevenLabs not to keep audio or transcripts (zero-retention mode). ElevenLabs offers that
+mode to enterprise accounts; on other plans your account's own history settings apply.
 
 ## Your personal agent
 
@@ -208,6 +209,64 @@ write anywhere, but no model is perfect. For anything sensitive, ask for the res
 `init --model …` sets the model per agent. Either way, a question that needs files or memory
 gets a quick "One sec, checking." while it looks.
 
+## Connect Grok, Claude or ChatGPT
+
+Already have an assistant app you like, with its memory and your other connectors? Bring it
+instead of (or as well as) a bridge agent. mooz gives you a private **connector link** that you
+add to the app once. In a meeting, your assistant joins as `🤖 Kainoa's Grok`; when someone asks
+it something, you get a one-tap link that sends the question to your app, and the app's answer
+is posted and spoken in the meeting.
+
+**1. Make the link (once).** In a meeting, click **Bring my agent → Grok, Claude or ChatGPT**,
+name it, pick the app and click **Create a connector**. The link is shown once; **New link**
+makes a fresh one (the old one stops working) and **Delete** removes it. It's kept for this
+browser, so it works in every meeting on this server.
+
+**2. Add it to your app.**
+
+| App | Where | Notes |
+|---|---|---|
+| Grok | grok.com/connectors → New Connector → Custom → paste the link | |
+| Claude | Settings → Connectors → Add custom connector → name it mooz, paste the link | |
+| ChatGPT | Settings → Apps & Connectors → Advanced → Developer mode, then create a connector with the link and no authentication | ChatGPT asks you to confirm each answer it posts. If your plan can't use connectors that write, use **Paste the answer** |
+
+Your assistant's servers call the link, so the mooz server must be reachable over HTTPS. A
+public server already is. To try it from your laptop, run a tunnel, then open mooz **through
+the tunnel's address** (mooz checks that requests come from its public address):
+
+```bash
+cloudflared tunnel --url http://localhost:3000     # prints https://<random>.trycloudflare.com
+echo "MOOZ_PUBLIC_URL=https://<random>.trycloudflare.com" >> .env && docker compose up -d
+```
+
+**3. Bring it in.** Click **Bring to this meeting**; the host approves it like any agent. Then
+anyone can type **`@Grok …`**. A card appears for you: **Ask Grok ↗** opens your app with a
+short prompt (Claude and Grok wait for you to press Enter; ChatGPT sends it straight away). Your
+app reads the question through the connector and answers; mooz says "One sec, checking." in the
+meantime. **Copy prompt** and **Paste the answer** work with any app. Turn on **Review answers
+before they're spoken** to approve each one first.
+
+**Voice (optional).** Without it, people reach your assistant in chat. Add your ElevenLabs API
+key in the same dialog and it also hears its name said out loud ("Hey Grok, …") and speaks its
+answers. The key stays in your browser and is sent only to ElevenLabs. Your tab transcribes up
+to 6 people, and only while someone is talking.
+
+**What your app sees.** The question, who asked (marked as you, a guest or another agent), and
+the last 10 minutes of the meeting, labelled by role and marked as information, never
+instructions. People who choose **Leave me out** are left out of it. The link mooz opens carries
+only the question's ID, never what was said. Your app keeps the conversation in its own history
+(and may remember it), so everyone in the meeting sees a banner saying your assistant can share
+what's said, and can opt out.
+
+**Your app holds your memory and maybe your mail or files.** Meeting text could try to steer it.
+That's why nothing reaches it until you tap, why it's told to only answer, and why apps like
+ChatGPT confirm actions that write. Use **Review answers** when it matters, and keep the link
+private: anyone who has it can read what your assistant is asked while it's in a meeting.
+
+**Costs:** your assistant app's own plan; with voice, ElevenLabs bills you for transcription
+(per minute of speech) and for the answers it speaks. The mooz server pays for nothing and holds
+no keys.
+
 ## How it works
 
 ```
@@ -222,7 +281,8 @@ gets a quick "One sec, checking." while it looks.
                                                └──────────────────────────┘
 ```
 
-- `apps/web`: the Next.js app (rooms, join links, the approval flow, the meeting UI).
+- `apps/web`: the Next.js app (rooms, join links, the approval flow, the meeting UI, and the
+  connector door: the MCP endpoint and the connector agent that runs in its owner's tab).
 - `bridge`: `mooz-agent`, a Python package that is both the CLI and an SDK.
 - [`docs/protocol.md`](docs/protocol.md): the bridge protocol, for connecting agents written
   in any language.
@@ -248,7 +308,7 @@ The project's planning documents are in `.claude/prds/` (requirements) and `.cla
 | **M1 ✅ First agent in the room** | Meet by link. Host-approved agents that answer by voice and chat when addressed |
 | **M2 ✅ Personal agent with memory** | Claude or Grok brains, memory across meetings, your repos and folders, owner-only access, opt-in meeting notes |
 | **M3 ✅ Async research tasks** | "On it". It works in the background (your files, GitHub, the web) and reports back mid-meeting |
-| M4 Connector | Bring the Grok / Claude / ChatGPT app you already use, with its memory, via a private MCP link |
+| M4 Connector (in review) | Bring the Grok / Claude / ChatGPT app you already use, with its memory, via a private MCP link |
 | M5 Many agents | One speaker at a time, agent-to-agent conversations with a "Continue?" pause |
 | M6 Local voice and launch | VoiceStudio / any OpenAI-compatible local speech server, VPS guide, security hardening |
 
@@ -260,6 +320,9 @@ file and git tools are read-only, confined to the owner's chosen folders, and ca
 programs from a repository (git filters, hooks and the like are disabled). GitHub access is
 read-only. Web search is only for the owner's background tasks, and is off for Grok unless the
 owner turns it on, because xAI's search can open links.
+A connector link is a 256-bit secret, stored only as a hash; rotating or deleting it cuts off
+access at once, and it can do nothing while its agent isn't in a meeting. Pages run only scripts
+carrying a per-request nonce and connect only to the mooz server, its LiveKit and ElevenLabs.
 Who may see what is decided by the server-assigned identity of whoever asks. See
 [`docs/protocol.md`](docs/protocol.md#4-access-and-consent). The
 local `docker compose` setup uses LiveKit's public dev keys and listens only on localhost.

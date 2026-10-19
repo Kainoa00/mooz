@@ -86,7 +86,8 @@ Attributes the server sets on every participant:
 | `kind` | `human` | `agent` |
 | `owner_id` | — | The owner's participant identity |
 | `owner_name` | — | The owner's display name |
-| `door` | — | `bridge` (v0.2 adds `connector`) |
+| `door` | — | `bridge`, or `connector` (see [5. Connector door](#5-connector-door)) |
+| `connector_app` | — | For a connector agent: `grok`, `claude`, `chatgpt` or `other` |
 
 Clients must always show agents as `🤖 {owner_name}'s {name}` with an agent badge.
 
@@ -246,6 +247,89 @@ sent whenever a task changes:
   and notes. This covers quick answers, status answers and tasks, including a question that
   overflows into a task.
 
+## 5. Connector door
+
+A second way in, for people who'd rather bring the assistant app they already use (Grok,
+Claude, ChatGPT or any app that takes a custom MCP connector) than run a bridge. The app never
+joins the call itself: its owner's browser tab runs the agent, and the app answers through a
+private MCP link.
+
+```
+Owner's assistant app            mooz server                     Owner's browser tab
+      │                               │◀── POST …/connector-requests ──│ { connectorId }
+      │                               │    (host approves as usual)    │
+      │                               │─── POST …/{id}/token ─────────▶│ joins as the agent
+      │                               │                                │ hears "@Grok …"
+      │                               │◀── POST …/{id}/questions ──────│ { asker, text, lines }
+      │◀── owner taps "Ask Grok ↗" (the prompt carries only the question's ID) ──│
+      │── get_question ──────────────▶│                                │
+      │── post_answer ───────────────▶│── data packet `mooz.connector` ▶│ posts in chat, speaks
+```
+
+### The connector link
+
+`POST /api/connectors` `{ name, app }` makes one and returns `{ connector, url }` once. The URL
+is `{origin}/mcp/{secret}`, a 256-bit secret that the server stores only as a hash. The
+connector belongs to the browser that made it (an HttpOnly `mooz_owner` cookie, kept a year).
+`GET /api/connectors` lists them, `POST /api/connectors/{id}/rotate` replaces the secret (the old
+link stops working) and `DELETE /api/connectors/{id}` removes it and its agent. Changes must
+come from the same origin, and someone else's connector looks like one that doesn't exist.
+
+### Joining
+
+`POST /api/rooms/{slug}/connector-requests` `{ connectorId }` asks to bring it in and returns
+`{ requestId, status: "pending" }`. The host approves it in the same tray as bridge agents.
+`GET …/{requestId}` returns `{ status }` (`pending`, `approved`, `denied`, `revoked` or
+`expired`), and once approved `POST …/{requestId}/token` returns `{ token, url, identity, name }`
+for the tab's agent connection. Its token is a bridge agent's (microphone and data only, no
+attribute edits) with `door = connector`. A newer request for the same connector revokes the
+older one.
+
+### Questions
+
+The tab hears the meeting like a bridge agent does, with the same rules for being addressed
+(both detectors run `bridge/tests/addressing_cases.json`): chat always, and speech when the
+owner has added their own ElevenLabs key in the browser.
+
+`POST …/{requestId}/questions` `{ asker, text, lines }` queues a question with what the tab
+heard lately, each line `{ identity, text, via, at, reply_to?, sources? }`. The server keeps only
+the last 10 minutes (at most 12,000 characters) of lines from people in the meeting, re-derives
+names and roles itself, and leaves out every line that belongs to someone who opted out of notes
+(the speaker, an agent's owner, or anyone in `reply_to` or `sources`), checking again when the
+assistant reads it. Questions live in server memory only: at most 5 wait per agent, each for 10
+minutes, and all are dropped when the agent leaves. `GET …/questions` lists them, with the
+answer once there is one. `POST …/questions/{qid}/answer` `{ spoken, details? }` takes an answer
+the owner pasted.
+
+### The MCP endpoint
+
+`/mcp/{secret}` speaks MCP over Streamable HTTP, statelessly, with no authentication beyond the
+secret. Requests are capped at 64 KB and 30 a minute per connector; an unknown secret gets a
+plain 404. Its tools, which work only while the connector's agent is in a meeting:
+
+| Tool | Does |
+|---|---|
+| `get_question({ question_id? })` | The oldest waiting question (or the one named): who asked (`your owner`, `a guest` or `another AI agent`), the question, how to answer, and the meeting as `[role] name (via): text` lines inside `<meeting>` |
+| `read_meeting()` | The same meeting lines, as of the latest question |
+| `post_answer({ question_id, spoken, details? })` | Answers it. `spoken` (at most 400 characters) is read aloud; `details` (at most 4,000) is added in chat |
+
+Meeting text is flattened to one line per message, stripped of invisible characters and
+escaped, and marked as information, never instructions.
+
+### Answers
+
+The server sends each answer to the agent's identity only, as a reliable data packet on topic
+`mooz.connector`:
+
+```json
+{ "type": "answer", "id": "q_…", "spoken": "March 30th.", "details": "", "reply_to": "p_…", "sources": ["p_…"] }
+```
+
+The tab accepts it only from the server (a packet with no sending participant), posts
+`spoken` and `details` to `lk.chat` with the `reply_to` and `sources` attributes, and speaks
+`spoken`. If a packet is missed, the tab picks the answer up from `GET …/questions`. The owner
+can choose to review each answer before it's posted.
+
 ## Changelog
 
 - **v0** (M1): bridge door, single-use tokens, host approval and removal, `lk.chat`.
@@ -257,3 +341,6 @@ sent whenever a task changes:
   `task.cancel` on `mooz.v0`, and chat messages addressed to one person (private results). A
   task's report carries `reply_to` (its owner) and `sources` (whose words the task was given).
   All additive; M2 agents keep working.
+- **v0** (M4): the connector door: connector links, `connector-requests`, the `/mcp/{secret}`
+  endpoint, `mooz.connector` answer packets, and the `door = connector` and `connector_app`
+  attributes. All additive; bridge agents are unchanged.

@@ -197,6 +197,21 @@ The agent's ears and mouth run in the **owner's browser tab**, so the mooz serve
     - Fix every finding, then re-review.
 - **Validate**: the full validation block; a live checklist for you (needs your Grok, Claude and ChatGPT accounts and a tunnel).
 
+## Deviations (found while building)
+- **CSP is per request, in `proxy.ts`, not a static header in `next.config.ts`.** A static policy
+  can only list connections; a nonce policy (`script-src 'nonce-…' 'strict-dynamic'`) is what stops
+  injected script from reading the owner's ElevenLabs key. `connect-src` names this server, the
+  configured LiveKit origin and ElevenLabs instead of any `wss:`. Every page renders per request so
+  it gets a nonce.
+- **People can opt out of a connector even when no one keeps notes.** The notes banner (with
+  Leave me out) now also shows while a connector agent is in the meeting, because its owner's app
+  keeps the conversation. Opt-outs are checked again when the assistant reads, not only when the
+  question is queued.
+- **Hearing taps the owner's own meeting connection,** not the agent's: the tab already receives
+  and plays everyone's audio, so the agent connection subscribes to nothing. Audio goes to Scribe
+  only while someone is talking (a speech gate with pre-roll), which cuts the owner's cost and
+  avoids Scribe closing idle streams.
+
 ## Validation
 ```bash
 pnpm -C apps/web lint && pnpm -C apps/web typecheck && pnpm -C apps/web exec vitest run --coverage

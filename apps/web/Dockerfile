@@ -13,6 +13,8 @@ WORKDIR /app
 ENV NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0
 COPY --from=build /repo/apps/web/.next/standalone ./
 COPY --from=build /repo/apps/web/.next/static ./apps/web/.next/static
+# Standalone output leaves public/ out (it holds the connector agent's audio worklet).
+COPY --from=build /repo/apps/web/public ./apps/web/public
 RUN mkdir -p /data && chown node:node /data
 USER node
 EXPOSE 3000
