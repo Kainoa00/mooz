@@ -12,11 +12,15 @@ const LINE_BREAKS = /\r\n|[\r\n\v\f\x1c-\x1e\x85\u2028\u2029]/g;
 // (bidi controls, Unicode tags, soft hyphens…), private-use code points, lone surrogates and
 // the variation selectors that can smuggle bytes after an emoji. What emoji need stays, once:
 // a joiner (Persian and Indic text use them too) or a presentation selector (❤️), and the tag
-// letters of a subdivision flag (🏴󠁧󠁢󠁳󠁣󠁴󠁿). A run of joiners or selectors shrinks to one, so it can't
-// spell anything either.
+// letters of the three standard subdivision flags (England, Scotland, Wales: 🏴󠁧󠁢󠁳󠁣󠁴󠁿). A run of joiners and selectors keeps at most one selector
+// then one joiner (the pair in 🏳️‍🌈), so it can't spell anything either.
 const HIDDEN =
-  /(\u{1F3F4}[\u{E0030}-\u{E0039}\u{E0061}-\u{E007A}]{2,6}\u{E007F})|([\u200C\u200D\uFE0E\uFE0F])[\u200C\u200D\uFE0E\uFE0F]*|[\p{Cf}\p{Co}\p{Cs}\u{FE00}-\u{FE0D}\u{E0100}-\u{E01EF}]/gu;
-const clean = (text: string) => text.replace(HIDDEN, (_all, flag?: string, kept?: string) => flag ?? kept ?? "");
+  /(\u{1F3F4}\u{E0067}\u{E0062}(?:\u{E0065}\u{E006E}\u{E0067}|\u{E0073}\u{E0063}\u{E0074}|\u{E0077}\u{E006C}\u{E0073})\u{E007F})|([\u200C\u200D\uFE0E\uFE0F]+)|[\p{Cf}\p{Co}\p{Cs}\u{FE00}-\u{FE0D}\u{E0100}-\u{E01EF}]/gu;
+const SELECTOR = /[\uFE0E\uFE0F]/;
+const JOINER = /[\u200C\u200D]/;
+const shrink = (run: string) => (run.match(SELECTOR)?.[0] ?? "") + (run.match(JOINER)?.[0] ?? "");
+const clean = (text: string) =>
+  text.replace(HIDDEN, (_all, flag?: string, run?: string) => flag ?? (run ? shrink(run) : ""));
 
 /** Whether text has anything `flatten` would remove as hidden (display names refuse those). */
 export function hasHidden(text: string): boolean {

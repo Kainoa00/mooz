@@ -134,7 +134,8 @@ export function ConnectorDoor({ slug, onBring }: { slug: string; onBring: (c: Br
           </code>
           <p className="text-xs text-muted">
             Anyone with this link can read what you share with your agent in a meeting, so keep it private. It&apos;s
-            shown only now; you can make a new one any time.
+            shown only now; you can make a new one any time. Add it to your app today: a link that&apos;s never used
+            is deleted after a day (and any link, after half a year unused).
           </p>
           <button type="button" onClick={copy} className="self-start rounded-lg border border-zinc-400 px-3 py-1">
             {copied ? "Copied" : "Copy link"}

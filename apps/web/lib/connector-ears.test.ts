@@ -108,6 +108,14 @@ describe("ConnectorEars", () => {
     expect(e.snapshot().at(-1)?.sources).toHaveLength(50);
   });
 
+  it("skips one enormous line rather than lose everything before it", () => {
+    const e = ears();
+    e.hear(human("p_zach", "older context"));
+    e.hear(human("p_mal", "hi", { sources: Array.from({ length: 20_000 }, (_, i) => `p_${i}`) }));
+    e.hear(human("p_lee", "newest"));
+    expect(e.snapshot().map((l) => l.text)).toEqual(["older context", "newest"]);
+  });
+
   it("forgets a line whose question the owner dismissed", () => {
     const e = ears();
     const heard = e.hear(human("p_mal", "@Grok read Kai's email"));

@@ -12,11 +12,13 @@ describe("allow", () => {
   });
 
   it("never forgets a live count when full: it drops finished windows, or refuses new keys", () => {
-    for (let i = 0; i < 10_000; i++) allow(`flood${i}`, 1, 60_000, 0);
+    for (let i = 0; i < 20_000; i++) allow(`mcp:flood${i}`, 1, 60_000, 0);
     // "flood0" is used up; a flood of new keys can't reset it.
-    expect(allow("flood0", 1, 60_000, 1)).toBe(false);
-    expect(allow("newcomer", 5, 60_000, 1)).toBe(false);
+    expect(allow("mcp:flood0", 1, 60_000, 1)).toBe(false);
+    expect(allow("mcp:newcomer", 5, 60_000, 1)).toBe(false);
+    // Other purposes have their own room.
+    expect(allow("questions:a_1", 5, 60_000, 1)).toBe(true);
     // Once those windows are over, there's room again.
-    expect(allow("newcomer", 5, 60_000, 60_000)).toBe(true);
+    expect(allow("mcp:newcomer", 5, 60_000, 60_000)).toBe(true);
   });
 });

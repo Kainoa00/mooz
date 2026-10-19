@@ -220,7 +220,8 @@ is posted and spoken in the meeting.
 **1. Make the link (once).** In a meeting, click **Bring my agent → Grok, Claude or ChatGPT**,
 name it, pick the app and click **Create a connector**. The link is shown once; **New link**
 makes a fresh one (the old one stops working) and **Delete** removes it. It's kept for this
-browser, so it works in every meeting on this server.
+browser, so it works in every meeting on this server. Add it to your app the same day: a link
+that's never used is deleted after 24 hours, and any link after 180 days unused.
 
 **2. Add it to your app.**
 
@@ -327,7 +328,9 @@ programs from a repository (git filters, hooks and the like are disabled). GitHu
 read-only. Web search is only for the owner's background tasks, and is off for Grok unless the
 owner turns it on, because xAI's search can open links.
 A connector link is a 256-bit secret, stored only as a hash; rotating or deleting it cuts off
-access at once, and it can do nothing while its agent isn't in a meeting. Pages run only scripts
+access at once, and it can do nothing while its agent isn't in a meeting. Connector and question
+limits are per person and per meeting, with server-wide ceilings; on a public server, also rate
+limit by IP in your reverse proxy, since anyone can open a meeting. Pages run only scripts
 carrying a per-request nonce and connect only to the mooz server, its LiveKit and ElevenLabs.
 Who may see what is decided by the server-assigned identity of whoever asks. See
 [`docs/protocol.md`](docs/protocol.md#4-access-and-consent). The

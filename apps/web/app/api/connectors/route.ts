@@ -15,6 +15,8 @@ import { assertSameOrigin, publicOrigin, requireParticipant } from "@/lib/sessio
 
 /** New connectors a minute, across this server: making them is rare, flooding them isn't. */
 export const CREATES_PER_MINUTE = 60;
+/** And an hour per person in a meeting, so one person can't spend everyone's minute. */
+export const CREATES_PER_PERSON_PER_HOUR = 10;
 
 /** This browser's connectors (never their links: those are shown only once). */
 export async function GET(req: Request): Promise<Response> {
@@ -34,7 +36,10 @@ export async function POST(req: Request): Promise<Response> {
     const body = await readJson(req);
     const db = getDb();
     if (typeof body.slug !== "string") throw new HttpError(400, "invalid_body", "Make a connector from a meeting");
-    requireParticipant(db, req, body.slug);
+    const me = requireParticipant(db, req, body.slug);
+    if (!allow(`connectors-by:${me.identity}`, CREATES_PER_PERSON_PER_HOUR, 60 * 60_000)) {
+      throw new HttpError(429, "rate_limited", "You've made a lot of connectors just now. Try again later.");
+    }
     if (!allow("connectors:create", CREATES_PER_MINUTE, 60_000)) {
       throw new HttpError(429, "rate_limited", "Too many new connectors on this server just now. Try again in a minute.");
     }

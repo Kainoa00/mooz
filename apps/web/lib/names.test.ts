@@ -73,6 +73,8 @@ describe("hidden text in names", () => {
       expect(() => parseDisplayName(hidden)).toThrow("invisible");
     }
     expect(parseDisplayName("Zach ❤️")).toBe("Zach ❤️");
+    expect(parseDisplayName("Zoë 🏳️‍🌈")).toBe("Zoë 🏳️‍🌈");
+    expect(parseDisplayName("Kai ❤️‍🔥 🏳️‍⚧️")).toBe("Kai ❤️‍🔥 🏳️‍⚧️");
     expect(parseDisplayName("👩\u200d💻 Lee")).toBe("👩\u200d💻 Lee");
   });
 });

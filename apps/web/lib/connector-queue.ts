@@ -83,8 +83,8 @@ interface Entry {
 export type QuestionView = Question & { answer?: AnswerPacket };
 
 /** A line as kept: with everyone it belongs to, so a later opt-out still removes it. */
-type StoredLine = MeetingLine & { belongs: Uint8Array };
-type ParsedLine = MeetingLine & { people: string[] };
+type StoredLine = MeetingLine & { belongs: Uint8Array; heard?: number };
+type ParsedLine = MeetingLine & { people: string[]; heard?: number };
 
 interface AgentState {
   entries: Entry[];
@@ -206,6 +206,8 @@ function parseLines(
       text,
       at,
       people: belongs,
+      // The tab's own time for it, unclamped, to find it again (on dismiss) whatever the clocks say.
+      ...(typeof item.at === "number" ? { heard: item.at } : {}),
     });
   }
   lines.sort((a, b) => a.at - b.at);
@@ -252,9 +254,11 @@ export function enqueueQuestion(
     released: false,
   };
   const replyTo = personOf(input.asker, askerPerson);
-  const people_ = [...new Set([replyTo, ...lines.map((l) => personOf(l.speaker, people.get(l.speaker)!))])];
+  // Everyone whose words the answer may draw on: the asker and everyone the lines belong to
+  // (as the bridge does), so the answer leaves notes and later context if any of them opts out.
+  const people_ = [...new Set([replyTo, ...table])];
 
-  const askedAt = typeof input.at === "number" && Number.isFinite(input.at) ? Math.min(input.at, now) : undefined;
+  const askedAt = typeof input.at === "number" && Number.isFinite(input.at) ? input.at : undefined;
   const state = stateFor(agent.identity, now, true)!;
   state.entries.push({
     question,
@@ -310,7 +314,7 @@ export function dismissQuestion(agentIdentity: string, id: unknown, now = Date.n
   const asked = entry.askedLine;
   if (asked) {
     for (const other of state.entries) {
-      other.lines = other.lines.filter((l) => !(l.speaker === asked.speaker && l.at === asked.at));
+      other.lines = other.lines.filter((l) => !(l.speaker === asked.speaker && l.heard === asked.at));
     }
   }
 }

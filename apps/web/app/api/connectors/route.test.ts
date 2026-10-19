@@ -4,7 +4,7 @@ import { getDb } from "@/lib/db";
 import { resetRateLimitsForTests } from "@/lib/rate-limit";
 import { addParticipant, createRoom } from "@/lib/rooms";
 import { jsonRequest, setCookies, useTestEnv } from "@/test/helpers";
-import { CREATES_PER_MINUTE, GET, POST } from "./route";
+import { CREATES_PER_MINUTE, CREATES_PER_PERSON_PER_HOUR, GET, POST } from "./route";
 
 let inMeeting: { slug: string; cookie: string };
 beforeEach(() => {
@@ -73,9 +73,23 @@ describe("/api/connectors", () => {
     const notIn = await POST(jsonRequest(URL_BASE, { name: "Grok", app: "grok", slug: inMeeting.slug }));
     expect(notIn.status).toBe(401);
 
-    const statuses: number[] = [];
-    for (let i = 0; i <= CREATES_PER_MINUTE; i++) statuses.push((await create({ name: `G${i}`, app: "grok" })).status);
-    expect(statuses.slice(0, CREATES_PER_MINUTE).every((s) => s === 201)).toBe(true);
-    expect(statuses.at(-1)).toBe(429);
+    // One person can make only so many…
+    const mine: number[] = [];
+    for (let i = 0; i <= CREATES_PER_PERSON_PER_HOUR; i++) mine.push((await create({ name: `G${i}`, app: "grok" })).status);
+    expect(mine.slice(0, CREATES_PER_PERSON_PER_HOUR).every((s) => s === 201)).toBe(true);
+    expect(mine.at(-1)).toBe(429);
+
+    // …and the whole server only so many a minute.
+    resetRateLimitsForTests();
+    const all: number[] = [];
+    for (let i = 0; i <= CREATES_PER_MINUTE; i++) {
+      const someone = addParticipant(getDb(), { slug: inMeeting.slug, name: `P${i}`, isHost: false });
+      const res = await POST(
+        jsonRequest(URL_BASE, { slug: inMeeting.slug, name: "Grok", app: "grok" }, { cookie: `mooz_p_${inMeeting.slug}=${someone.secret}` }),
+      );
+      all.push(res.status);
+    }
+    expect(all.slice(0, CREATES_PER_MINUTE).every((s) => s === 201)).toBe(true);
+    expect(all.at(-1)).toBe(429);
   });
 });

@@ -26,6 +26,22 @@ export const OWNER_COOKIE_MAX_AGE = 365 * 24 * 60 * 60;
 export const MAX_CONNECTORS_PER_OWNER = 10;
 /** All this server keeps (each is a row in its database). */
 export const MAX_CONNECTORS = 10_000;
+/** A link never added to an app is deleted after this; one unused for long, after the next. */
+export const UNUSED_LINK_TTL_MS = 24 * 60 * 60 * 1000;
+export const IDLE_LINK_TTL_MS = 180 * 24 * 60 * 60 * 1000;
+
+/**
+ * Drop links that were never used within a day, or not for half a year (unless one is in a
+ * meeting right now), so abandoned ones, or a flood of them, don't stay forever.
+ */
+export function pruneConnectors(db: Db, now = Date.now()): void {
+  db.prepare(
+    `DELETE FROM connectors
+     WHERE ((last_used_at IS NULL AND created_at < ?) OR COALESCE(last_used_at, created_at) < ?)
+       AND id NOT IN (SELECT connector_id FROM agent_requests
+                      WHERE connector_id IS NOT NULL AND status IN ('pending', 'approved'))`,
+  ).run(now - UNUSED_LINK_TTL_MS, now - IDLE_LINK_TTL_MS);
+}
 
 export interface Connector {
   id: string;
@@ -92,6 +108,7 @@ export function createConnector(
   input: { name: unknown; app: unknown },
 ): { connector: Connector; secret: string } {
   const ownerHash = hashSecret(ownerKey);
+  pruneConnectors(db);
   const { total } = db.prepare("SELECT COUNT(*) AS total FROM connectors").get() as { total: number };
   if (total >= MAX_CONNECTORS) {
     throw new HttpError(503, "server_full", "This server can't keep any more connectors right now");

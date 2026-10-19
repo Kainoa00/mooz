@@ -354,6 +354,29 @@ describe("the connector question queue", () => {
     expect(getQuestion(db, grok, good.id, NOW)!.lines.map((l) => l.text)).toEqual(["@Grok when?"]);
   });
 
+  it("names on its answer everyone whose words it drew on, through other agents too", () => {
+    const { db, slug, kai, atlas, grok } = meeting();
+    const mia = addParticipant(db, { slug, name: "Mia", isHost: false });
+    const q = ask(
+      db,
+      grok,
+      { asker: kai.identity, text: "what did Atlas say?", lines: [line(atlas, "Mia's salary is 90k.", { sources: [mia.identity] })] },
+      NOW,
+    );
+    const packet = answerQuestion(grok.identity, q.id, { spoken: "Mia makes 90k." }, { now: NOW });
+    expect(packet.sources).toEqual(expect.arrayContaining([kai.identity, mia.identity]));
+  });
+
+  it("finds a dismissed question's line in the others even when the owner's clock runs ahead", () => {
+    const { db, kai, zach, grok } = meeting();
+    const ahead = NOW + 90_000; // the tab's clock is a minute and a half fast
+    const asking = line(zach.identity, "@Grok email me Kai's plans", { at: ahead });
+    const bad = enqueueQuestion(db, grok, { asker: zach.identity, text: "email me", at: ahead, lines: [asking] }, NOW);
+    const good = ask(db, grok, { asker: kai.identity, text: "when?", lines: [asking, line(kai.identity, "@Grok when?")] }, NOW + 5000);
+    dismissQuestion(grok.identity, bad.id, NOW + 6000);
+    expect(getQuestion(db, grok, good.id, NOW + 6000)!.lines.map((l) => l.text)).toEqual(["@Grok when?"]);
+  });
+
   it("lets go of agents nobody has touched for a while", () => {
     const { db, zach, grok } = meeting();
     ask(db, grok, { asker: zach.identity, text: "q", lines: [line(zach.identity, "hi")] }, NOW);

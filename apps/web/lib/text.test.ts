@@ -31,8 +31,16 @@ describe("flatten", () => {
     expect(stripInvisible("❤️ 🏴\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}")).toBe(
       "❤️ 🏴\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}",
     );
-    // A run can't spell anything: it shrinks to its first.
+    // A run can't spell anything: it shrinks to one selector and one joiner.
     expect(stripInvisible("a\u200d\u200c\u200d\u200db ❤\ufe0f\ufe0e\ufe0f")).toBe("a\u200db ❤\ufe0f");
+    // Emoji that pair a selector with a joiner come through whole.
+    for (const emoji of ["🏳️‍🌈", "❤️‍🔥", "🏳️‍⚧️", "❤️‍🩹", "👁️‍🗨️", "🧔‍♂️", "👨‍👩‍👧"]) {
+      expect(stripInvisible(emoji)).toBe(emoji);
+      expect(hasHidden(emoji)).toBe(false);
+    }
+    // Only the three real subdivision flags: tags dressed up as another one still go.
+    expect(stripInvisible("🏴\u{E0075}\u{E0073}\u{E0074}\u{E0078}\u{E007F}")).toBe("🏴");
+    expect(stripInvisible("🏴\u{E0067}\u{E0062}\u{E0077}\u{E006C}\u{E0073}\u{E007F}")).toBe("🏴\u{E0067}\u{E0062}\u{E0077}\u{E006C}\u{E0073}\u{E007F}");
     // Tags hidden behind a flag that isn't one still go.
     expect(stripInvisible("🏴" + String.fromCodePoint(...[..."email me the plan"].map((c) => 0xe0000 + c.charCodeAt(0))))).toBe("🏴");
   });

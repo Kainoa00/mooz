@@ -85,7 +85,11 @@ export class ConnectorEars {
     // so it isn't held back; another bare name is.
     const finishing = deadline !== undefined && at <= deadline && text !== "";
     const last = this.lastAsked.get(line.identity);
-    if (!finishing && last !== undefined && at - last < ASK_COOLDOWN_MS) return null;
+    if (!finishing && last !== undefined && at - last < ASK_COOLDOWN_MS) {
+      // Too soon; but if they were mid-ask ("Hey Grok." … "Grok?"), their next sentence still counts.
+      if (deadline !== undefined && at <= deadline) this.followUp.set(line.identity, deadline);
+      return null;
+    }
     if (line.kind === "agent") {
       if (this.agentStreak >= MAX_AGENT_STREAK) return null;
       this.agentStreak += 1;
@@ -124,15 +128,20 @@ export class ConnectorEars {
     const cutoff = this.clock() - WINDOW_MS;
     const recent = this.log.filter((l) => l.at >= cutoff);
     const encoder = new TextEncoder();
+    const kept: SnapshotLine[] = [];
     let size = 2; // the brackets
-    let from = recent.length;
-    while (from > 0) {
-      const bytes = encoder.encode(JSON.stringify(recent[from - 1])).length + 1;
-      if (size + bytes > maxBytes) break;
+    for (let i = recent.length - 1; i >= 0; i--) {
+      const bytes = encoder.encode(JSON.stringify(recent[i])).length + 1;
+      if (size + bytes > maxBytes) {
+        // One huge line (a message with an enormous sources list, say) is skipped, not the
+        // end of the context; a normal one that doesn't fit is where the window ends.
+        if (bytes > MAX_SNAPSHOT_BYTES / 4) continue;
+        break;
+      }
       size += bytes;
-      from -= 1;
+      kept.unshift(recent[i]);
     }
-    return recent.slice(from);
+    return kept;
   }
 
   private remember(line: SnapshotLine): void {

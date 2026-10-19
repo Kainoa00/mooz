@@ -1,7 +1,10 @@
-/** A fixed-window request counter per key, in this process's memory. */
+/**
+ * Fixed-window request counters, in this process's memory. Each purpose (the part of a key
+ * before its first ":") has its own store, so a flood of one kind of key can't crowd out another.
+ */
 
 const STORE = Symbol.for("mooz.rateLimits");
-const MAX_KEYS = 10_000;
+const MAX_KEYS = 20_000;
 
 interface Window {
   start: number;
@@ -9,14 +12,16 @@ interface Window {
   windowMs: number;
 }
 
-function windows(): Map<string, Window> {
-  const g = globalThis as unknown as Record<symbol, Map<string, Window> | undefined>;
+function stores(): Map<string, Map<string, Window>> {
+  const g = globalThis as unknown as Record<symbol, Map<string, Map<string, Window>> | undefined>;
   return (g[STORE] ??= new Map());
 }
 
 /** Whether one more request under `key` fits in `limit` per `windowMs`; counts it if so. */
 export function allow(key: string, limit: number, windowMs: number, now = Date.now()): boolean {
-  const all = windows();
+  const purpose = key.split(":", 1)[0];
+  let all = stores().get(purpose);
+  if (!all) stores().set(purpose, (all = new Map()));
   let w = all.get(key);
   if (!w || now - w.start >= windowMs) {
     if (!w && all.size >= MAX_KEYS) {
@@ -34,5 +39,5 @@ export function allow(key: string, limit: number, windowMs: number, now = Date.n
 }
 
 export function resetRateLimitsForTests(): void {
-  windows().clear();
+  stores().clear();
 }

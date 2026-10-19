@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   MAX_CONNECTORS_PER_OWNER,
+  IDLE_LINK_TTL_MS,
   MAX_CONNECTORS,
+  UNUSED_LINK_TTL_MS,
+  pruneConnectors,
   connectorUrl,
   createConnector,
   deleteConnector,
@@ -121,11 +124,25 @@ describe("connectors", () => {
   it("stop at what the server can keep", () => {
     const db = getDb();
     const insert = db.prepare(
-      "INSERT INTO connectors (id, owner_hash, name, app, secret_hash, created_at) VALUES (?, ?, 'G', 'grok', ?, 0)",
+      "INSERT INTO connectors (id, owner_hash, name, app, secret_hash, created_at) VALUES (?, ?, 'G', 'grok', ?, ?)",
     );
     db.exec("BEGIN");
-    for (let i = 0; i < MAX_CONNECTORS; i++) insert.run(`c${i}`, `o${i}`, `s${i}`);
+    for (let i = 0; i < MAX_CONNECTORS; i++) insert.run(`c${i}`, `o${i}`, `s${i}`, Date.now());
     db.exec("COMMIT");
     expect(() => createConnector(db, KAI, { name: "Grok", app: "grok" })).toThrow("can't keep any more");
+  });
+
+  it("let go of links never added to an app within a day, or unused for half a year", () => {
+    const db = getDb();
+    const now = Date.now();
+    const fresh = createConnector(db, KAI, { name: "Fresh", app: "grok" }).connector;
+    const stale = createConnector(db, KAI, { name: "Stale", app: "grok" }).connector;
+    const idle = createConnector(db, KAI, { name: "Idle", app: "grok" }).connector;
+    const used = createConnector(db, KAI, { name: "Used", app: "grok" }).connector;
+    db.prepare("UPDATE connectors SET created_at = ? WHERE id = ?").run(now - UNUSED_LINK_TTL_MS - 1, stale.id);
+    db.prepare("UPDATE connectors SET created_at = ?, last_used_at = ? WHERE id = ?").run(0, now - IDLE_LINK_TTL_MS - 1, idle.id);
+    db.prepare("UPDATE connectors SET created_at = ?, last_used_at = ? WHERE id = ?").run(0, now - 1000, used.id);
+    pruneConnectors(db, now);
+    expect(listConnectors(db, KAI).map((c) => c.id).sort()).toEqual([fresh.id, used.id].sort());
   });
 });
