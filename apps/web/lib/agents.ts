@@ -25,6 +25,8 @@ function formatCode(raw: string): string {
   return raw.match(/.{4}/g)!.join("-");
 }
 
+export type AgentDoor = "bridge" | "connector";
+
 export interface AgentIdentity {
   identity: string;
   slug: string;
@@ -32,6 +34,10 @@ export interface AgentIdentity {
   name: string;
   ownerIdentity: string;
   ownerName: string;
+  /** How it came in (bridge when absent). */
+  door?: AgentDoor;
+  /** For a connector: the assistant app behind it. */
+  app?: string;
 }
 
 export type ClaimStatus =
@@ -42,6 +48,7 @@ export interface PendingRequest {
   id: string;
   agentName: string;
   ownerName: string;
+  door: AgentDoor;
   createdAt: number;
 }
 
@@ -67,12 +74,12 @@ export function activeAgentNames(db: Db, slug: string): string[] {
   return rows.map((r) => r.agent_name);
 }
 
-function participantNames(db: Db, slug: string): string[] {
+export function participantNames(db: Db, slug: string): string[] {
   const rows = db.prepare("SELECT name FROM participants WHERE room_slug = ?").all(slug) as { name: string }[];
   return rows.map((r) => r.name);
 }
 
-function transaction<T>(db: Db, fn: () => T): T {
+export function transaction<T>(db: Db, fn: () => T): T {
   db.exec("BEGIN IMMEDIATE");
   try {
     const result = fn();
@@ -131,15 +138,22 @@ export function claimAgentCode(
 export function listPendingRequests(db: Db, slug: string): PendingRequest[] {
   const rows = db
     .prepare(
-      `SELECT r.id, r.agent_name, p.name AS owner_name, r.created_at
+      `SELECT r.id, r.agent_name, p.name AS owner_name, r.door, r.created_at
        FROM agent_requests r JOIN participants p ON p.identity = r.owner_identity
        WHERE r.room_slug = ? AND r.status = 'pending' AND r.created_at > ? ORDER BY r.created_at`,
     )
-    .all(slug, Date.now() - PENDING_TTL_MS) as { id: string; agent_name: string; owner_name: string; created_at: number }[];
+    .all(slug, Date.now() - PENDING_TTL_MS) as {
+    id: string;
+    agent_name: string;
+    owner_name: string;
+    door: AgentDoor;
+    created_at: number;
+  }[];
   return rows.map((r) => ({
     id: r.id,
     agentName: r.agent_name,
     ownerName: r.owner_name,
+    door: r.door,
     createdAt: r.created_at,
   }));
 }

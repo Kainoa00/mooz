@@ -86,16 +86,18 @@ export async function mintHumanToken(input: {
  */
 export async function mintAgentToken(agent: AgentIdentity): Promise<string> {
   const { apiKey, apiSecret } = livekitConfig();
+  const attributes: Record<string, string> = {
+    kind: "agent",
+    door: agent.door ?? "bridge",
+    owner_id: agent.ownerIdentity,
+    owner_name: agent.ownerName,
+  };
+  if (agent.app) attributes.connector_app = agent.app;
   const at = new AccessToken(apiKey, apiSecret, {
     identity: agent.identity,
     name: agent.name,
     ttl: AGENT_TOKEN_TTL,
-    attributes: {
-      kind: "agent",
-      door: "bridge",
-      owner_id: agent.ownerIdentity,
-      owner_name: agent.ownerName,
-    },
+    attributes,
   });
   at.addGrant({
     roomJoin: true,

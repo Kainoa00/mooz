@@ -79,6 +79,10 @@ const MIGRATIONS = [
      last_used_at INTEGER
    );
    CREATE UNIQUE INDEX connectors_by_owner_name ON connectors(owner_hash, lower(name));`,
+  // Two doors into a meeting: the bridge (mooz-agent) or a connector, run from its owner's tab.
+  `ALTER TABLE agent_requests ADD COLUMN door TEXT NOT NULL DEFAULT 'bridge';
+   ALTER TABLE agent_requests ADD COLUMN connector_id TEXT REFERENCES connectors(id) ON DELETE SET NULL;
+   CREATE INDEX agent_requests_by_connector ON agent_requests(connector_id, status);`,
 ];
 
 function migrate(db: Db): void {

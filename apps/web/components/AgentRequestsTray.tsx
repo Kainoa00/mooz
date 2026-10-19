@@ -7,6 +7,7 @@ interface PendingRequest {
   id: string;
   agentName: string;
   ownerName: string;
+  door?: "bridge" | "connector";
 }
 
 const POLL_MS = 2000;
@@ -77,8 +78,9 @@ export function AgentRequestsTray({ slug }: { slug: string }) {
           className="flex flex-col gap-2 rounded-xl border border-zinc-700 bg-zinc-900 p-3 text-sm text-white shadow-lg"
         >
           <span>
-            🤖 <strong>{r.ownerName}&apos;s {r.agentName}</strong> wants to join. It will hear the meeting and
-            can speak when addressed.
+            🤖 <strong>{r.ownerName}&apos;s {r.agentName}</strong> wants to join
+            {r.door === "connector" ? " (their own assistant app, through a connector)" : ""}. It will hear the
+            meeting and can speak when addressed.
           </span>
           <div className="flex gap-2">
             <button type="button" onClick={() => decide(r.id, "approve")} className="rounded-lg bg-agent px-3 py-1 text-white">

@@ -29,7 +29,9 @@ describe("GET /api/rooms/[slug]/agent-requests", () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
-      requests: [{ id: claim.requestId, agentName: "Grok", ownerName: "Zach", createdAt: expect.any(Number) }],
+      requests: [
+        { id: claim.requestId, agentName: "Grok", ownerName: "Zach", door: "bridge", createdAt: expect.any(Number) },
+      ],
     });
   });
 
