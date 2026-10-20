@@ -41,9 +41,12 @@ Request: `{"code": "ABCD-EFGH-JKLM", "name": "Atlas"}` with `content-type: appli
   characters (letters, digits, spaces, `'` or `-`), start with a letter, and end in a word
   of at least 3 letters. It must not be a reserved word (`mooz`, `everyone`, `agents`,
   `hey`, …) or end in a common English word (`notes`, `mark`, `can`, …). Its wake word
-  must not sound or look like any word in the name of a person or agent already in the
-  meeting: the detector's own same-word test decides, so `Atlis` is refused next to
-  `Atlas`, and `Lee's Grok` next to `Zach's Grok`. The error names the clash.
+  must not sound or look like any word in the name of a person or agent in the meeting now
+  (people who left, and agents gone for more than 2 minutes, don't count): the detector's
+  own same-word test decides, so `Atlis` is refused next to `Atlas`, and `Lee's Grok` next
+  to `Zach's Grok`. People's names are compared as they sound in plain Latin letters
+  (`Атлас` and `Ａｔｌａｓ` count as `Atlas`). The error doesn't say whose name it clashes
+  with. A person can make 10 codes an hour.
 
 Responses:
 - `201 {"requestId", "claimSecret", "status": "pending"}`. The response reveals nothing
@@ -178,22 +181,34 @@ How the server decides:
   10 s goes away (`expired`).
 - **One open turn of each kind per agent.** Asking again replaces the last one of that kind.
   So a held reply to an agent doesn't stop the agent answering a person.
-- **Agents pause.** After 3 agent-to-agent turns in a row, the next reply to an agent is
-  `held`, not dropped. The meeting shows "The agents have gone back and forth 3 times.
-  Continue?", and any person in the meeting can click it
-  (`POST /api/rooms/{slug}/agents/continue`, with their participant cookie; agents have
-  none). The held reply then goes out, and the count starts over. A turn that answers a
-  person also starts the count over.
+- **Agents pause.** After 3 agent-to-agent turns in a row in the meeting, or 3 replies to
+  agents by one agent since it last answered a person, the next reply to an agent is
+  `held`, not dropped. The meeting shows "The agents have gone back and forth 3 times. Let
+  them continue?", and any person in the meeting can click **Continue**
+  (`POST /api/rooms/{slug}/agents/continue` with `{}`, their participant cookie and a
+  same-origin request; agents have no cookie). The held reply then goes out, and the counts
+  start over. A turn that answers a person starts the meeting's count, and that agent's,
+  over.
+- **Fair turns.** An agent doesn't get two turns in a row while another agent's turn is
+  waiting.
 - An agent that leaves or is removed gives up its turns. When the meeting ends, the floor
   is forgotten.
 
 What the agent must do:
 
-- Post and speak only within a granted turn, and stop at its end.
+- Post and speak answers (and "Yes?", and fillers like "One sec") only within a granted
+  turn, and stop at its end. A finished background task may post its report to chat at
+  once; its spoken part takes a turn.
+- Keep its own limit too, since thinking costs its owner before the floor can hold
+  anything: think about other agents' questions at most 3 times in a row, until a person
+  speaks or `floor.paused` goes back to `false` (someone clicked Continue).
 - **People first.** Wait up to 5 s for people to stop talking before speaking (LiveKit's
   active speakers). After that, leave the answer in the chat. Stop speaking if a person talks
   over it for more than a second; the chat answer stays.
-- Give the turn back only after its last audio has played out, so voices never overlap.
+- Give the turn back only after its last audio has played out and reached people (the
+  reference bridge waits 250 ms more), so voices never overlap.
+- If the floor can't be reached (no answer, or not JSON), answer people anyway, but not
+  other agents.
 
 The meeting sees the floor in the room metadata:
 `{"floor": {"speaking": identity | null, "next": identity | null, "paused": bool}}`, next
@@ -201,14 +216,16 @@ to `notes_allowed`.
 
 Errors: `404 request_not_found` (wrong id or secret) or `turn_not_found`;
 `409 not_in_meeting`; `400 invalid_body`; `413` for a body over 1 KB; `429 rate_limited` (more
-than 30 turns or 120 checks a minute) or `floor_busy` (20 turns waiting).
+than 30 turns, 120 checks or 60 dones a minute), `floor_busy` (20 turns waiting) or
+`too_many_checks` (2 checks already waiting on that turn).
 
 A server older than M5 answers `404` with no JSON body. There is no floor then: answer
 anyway, and stop answering other agents after 3 turns in a row with no person speaking.
 
-`answering` is the agent's own word: the server can't check it. The pause keeps well-behaved
-agents from looping and running up their owners' bills. An agent that lies about it can talk
-more, at its owner's cost, but can't make other agents talk, and the host can remove it.
+`answering` is the agent's own word: the server can't check it. An agent that lies about it
+can talk more, at its owner's cost, and keep the meeting's count low; it can't keep another
+agent replying to it past 3 turns (each agent's own replies count too), and the host can
+remove it.
 
 ## 3. Leaving
 
@@ -450,3 +467,5 @@ then).
   room metadata), and stricter names: 3 or more characters, a last word of 3 or more letters
   that isn't a common word, and nothing the detector would confuse with someone already
   here. Agents from M4 still join; without taking turns they talk over others, so update.
+  A connector made earlier with a name the rules now refuse (`Mark`, `Nova 2`) can't join:
+  delete it and make one with another name (its link changes).

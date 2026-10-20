@@ -91,12 +91,14 @@ describe("takeTurn", () => {
     expect(await takeTurn(BASE, { answering: "person", speak: true }, deps(lost.fetch))).toBeNull();
   });
 
-  it("goes ahead when the server can't be reached or answers nonsense", async () => {
+  it("answers a person, but not an agent, when the server can't be reached or answers nonsense", async () => {
     for (const reply of [new Error("offline"), { status: 502 }, { status: 200, body: { nope: true } }]) {
-      const { fetch } = server({ [`POST ${BASE}/turns`]: [reply as Reply] });
-      const held = await takeTurn(BASE, { answering: "person", speak: true }, deps(fetch));
+      const person = server({ [`POST ${BASE}/turns`]: [reply as Reply] });
+      const held = await takeTurn(BASE, { answering: "person", speak: true }, deps(person.fetch));
       expect(held).toEqual({ release: expect.any(Function) });
       await held!.release();
+      const agent = server({ [`POST ${BASE}/turns`]: [reply as Reply] });
+      expect(await takeTurn(BASE, { answering: "agent", speak: true }, deps(agent.fetch))).toBeNull();
     }
   });
 

@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 import pytest
 from livekit import rtc
 
-from mooz_agent.agent import FILLER, FOLLOW_UP_SECONDS, MAX_AGENT_STREAK, Agent
+from mooz_agent.agent import ACK_WAIT_SECONDS, FILLER, FOLLOW_UP_SECONDS, MAX_AGENT_STREAK, Agent
 from mooz_agent.providers.base import Answer, BrainError
 from mooz_agent.providers.fakes import EchoBrain, FakeSTT, FakeTTS
 from mooz_agent.room import ChatMessage, Speaker
@@ -39,6 +39,8 @@ class FakeRoom:
         self.on_human_track_ended = None
         self.on_participant_joined = None
         self.on_notes_policy_changed = None
+        self.on_floor_changed = None
+        self.paused = False
         self.on_signal = None
         self.replayed = False
         self.speaking = False
@@ -70,6 +72,9 @@ class FakeRoom:
 
     def notes_allowed(self) -> bool:
         return False
+
+    def floor_paused(self) -> bool:
+        return self.paused
 
     def is_opted_out(self, identity: str) -> bool:
         return False
@@ -321,9 +326,7 @@ GO = Granted()
 
 
 class FakeFloor:
-    """A shared floor that lets everything out, or nothing (`grant=None`)."""
-
-    shared = True
+    """A meeting floor that lets everything out, or nothing (`grant=None`)."""
 
     def __init__(self, grant: Granted | None = GO) -> None:
         self.grant = grant
@@ -362,12 +365,46 @@ async def test_asks_for_a_turn_of_the_right_kind() -> None:
     assert len(room.sent) == 2
 
 
-async def test_with_a_shared_floor_the_server_decides_when_agents_must_pause() -> None:
+async def test_keeps_its_own_limit_on_agents_with_a_floor_too_until_a_person_lets_them_go_on() -> (
+    None
+):
+    # Thinking costs the owner before the floor can hold anything: an agent spamming "@Atlas"
+    # gets only a few answers.
     room, agent = with_floor(FakeFloor())
     for i in range(MAX_AGENT_STREAK + 2):
         hear(agent, GROK, f"@Atlas ping {i}", via="chat")
         await settle(agent)
-    assert len(room.sent) == MAX_AGENT_STREAK + 2
+    assert len(room.sent) == MAX_AGENT_STREAK
+
+    # The floor paused the agents, and then a person clicked Continue.
+    assert room.on_floor_changed is not None
+    room.paused = True
+    room.on_floor_changed()
+    hear(agent, GROK, "@Atlas still paused", via="chat")
+    await settle(agent)
+    assert len(room.sent) == MAX_AGENT_STREAK
+    room.paused = False
+    room.on_floor_changed()
+    hear(agent, GROK, "@Atlas carry on", via="chat")
+    await settle(agent)
+    assert len(room.sent) == MAX_AGENT_STREAK + 1
+
+
+async def test_yes_waits_only_briefly_for_the_floor_and_the_follow_up_window_still_opens() -> None:
+    floor = FakeFloor(grant=None)  # the floor stays busy
+    clock = Clock()
+    room = FakeRoom()
+    agent = Agent(
+        room=room, stt=FakeSTT({}), tts=FakeTTS(), brain=EchoBrain(), clock=clock, turns=floor
+    )  # type: ignore[arg-type]
+    agent.wire()
+    hear(agent, KAI, "Hey Atlas.")
+    await settle(agent)
+    assert floor.asked == [("person", ACK_WAIT_SECONDS)] and room.sent == []
+    clock.now += FOLLOW_UP_SECONDS - 1
+    hear(agent, KAI, "what is the plan")
+    await settle(agent)
+    assert floor.asked[-1] == ("person", None)  # the question that followed is for Atlas
 
 
 async def test_an_answer_that_never_got_a_turn_is_not_remembered_as_said() -> None:

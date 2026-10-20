@@ -70,7 +70,7 @@ describe("POST /api/rooms/[slug]/join", () => {
 
     const alike = await POST(jsonRequest(url(slug), { name: "Atlis Smith" }), params({ slug }));
     expect(alike.status).toBe(409);
-    expect((await alike.json()).error.message).toMatch(/sounds like Atlas/);
+    expect((await alike.json()).error.message).toMatch(/sounds like the name of an agent/);
   });
 
   it.each([

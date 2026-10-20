@@ -12,12 +12,14 @@ import {
   createAgentCode,
   decideAgentRequest,
   getClaimStatus,
+  LEFT_GRACE_MS,
   listPendingRequests,
   noteBridgePresence,
+  participantNames,
   requireBridgeAgent,
 } from "./agents";
 import { getDb } from "./db";
-import { addParticipant, createRoom } from "./rooms";
+import { addParticipant, createRoom, notePersonPresence } from "./rooms";
 import { useTestEnv } from "@/test/helpers";
 
 beforeEach(useTestEnv);
@@ -322,3 +324,34 @@ describe("requireBridgeAgent", () => {
     );
   });
 });
+
+describe("who holds a name", () => {
+  it("is the people in the meeting now, not everyone who ever joined", () => {
+    const { db, slug, guest } = meeting();
+    expect(participantNames(db, slug).sort()).toEqual(["Kainoa", "Zach"]);
+    notePersonPresence(db, guest.identity, "PA_1", true);
+    notePersonPresence(db, guest.identity, "PA_old", false); // a late "left" for an old connection
+    expect(participantNames(db, slug)).toContain("Zach");
+    notePersonPresence(db, guest.identity, "PA_1", false);
+    expect(participantNames(db, slug)).toEqual(["Kainoa"]);
+    expect(() => claimAgentCode(db, { code: createAgentCode(db, meetingHost(db, slug)).code, name: "Zack" })).not.toThrow();
+  });
+
+  it("is agents that are here, or away for a moment", () => {
+    vi.useFakeTimers();
+    const { db, slug, host } = meeting();
+    const claim = claimAgentCode(db, { code: createAgentCode(db, host).code, name: "Atlas" });
+    decideAgentRequest(db, { slug, requestId: claim.requestId, approve: true });
+    const status = getClaimStatus(db, claim.requestId, claim.claimSecret);
+    const identity = status.status === "approved" ? status.agent.identity : "";
+    noteBridgePresence(db, identity, "PA_1", true);
+    noteBridgePresence(db, identity, "PA_1", false);
+    expect(activeAgentNames(db, slug)).toEqual(["Atlas"]);
+    vi.advanceTimersByTime(LEFT_GRACE_MS + 1);
+    expect(activeAgentNames(db, slug)).toEqual([]);
+  });
+});
+
+function meetingHost(db: ReturnType<typeof getDb>, slug: string) {
+  return addParticipant(db, { slug, name: "Lee", isHost: false });
+}

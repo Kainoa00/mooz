@@ -9,8 +9,9 @@ export { MAX_AGENT_STREAK };
  * only (nothing outlives the meeting). Before an agent posts or speaks an answer it asks
  * for a turn. One turn is granted at a time: answers to people go ahead of replies to
  * agents, then first come first served. A turn ends when the agent is done, leaves, or runs
- * out of time. After MAX_AGENT_STREAK agent-to-agent turns in a row, the next reply to an
- * agent is held (not dropped) until a person in the meeting lets the agents continue.
+ * out of time. After MAX_AGENT_STREAK agent-to-agent turns in a row in the meeting, or by any
+ * one agent since it last answered a person, the next reply to an agent is held (not dropped)
+ * until a person in the meeting lets the agents continue.
  */
 
 /** The longest a turn with speech may take; a chat-only turn gets less. */
@@ -20,6 +21,8 @@ export const CHAT_TURN_MS = 10_000;
 export const WAITING_TTL_MS = 10_000;
 /** Turns open at once in one meeting (each agent has at most one of each kind). */
 export const MAX_OPEN_TURNS = 20;
+/** Checks waiting on one turn at once. */
+export const MAX_WAITERS = 2;
 /** A floor nobody has used for this long is forgotten, with its count. */
 export const FLOOR_IDLE_MS = 10 * 60 * 1000;
 /** How long an agent can still look up a turn that ended (to learn why). */
@@ -66,6 +69,14 @@ interface Floor {
   seq: number;
   /** Agent-to-agent turns granted in a row. */
   streak: number;
+  /**
+   * Each agent's replies to agents since it last answered a person. What a turn answers is the
+   * agent's own word, so one agent claiming to answer people can't keep resetting the count above
+   * and keep another replying to it.
+   */
+  replies: Map<string, number>;
+  /** Who had the last turn: not the same agent twice in a row while another is waiting. */
+  last?: string;
   /** Replies to agents are held until someone lets the agents continue. */
   paused: boolean;
   activeAt: number;
@@ -117,14 +128,24 @@ function end(floor: Floor, turn: Turn, reason: EndReason, now: number): void {
   setStatus(floor, turn, "ended");
 }
 
+/** Whether a reply to an agent must wait for a person: the agents have had their run. */
+function mustWait(floor: Floor, reply: Turn): boolean {
+  return floor.paused || floor.streak >= MAX_AGENT_STREAK || (floor.replies.get(reply.agent) ?? 0) >= MAX_AGENT_STREAK;
+}
+
 /**
- * The turn that would be granted next: answers to people first, then replies to agents,
- * unless the agents have had their run of turns.
+ * The turn that would be granted next: answers to people first, then replies to agents, unless
+ * the agents have had their run of turns. First come, first served, except that an agent doesn't
+ * get two turns in a row while another agent's turn is waiting.
  */
 function nextUp(floor: Floor, open: Turn[]): Turn | undefined {
   const waiting = open.filter((t) => t.status === "waiting");
-  const repliesWait = floor.paused || floor.streak >= MAX_AGENT_STREAK;
-  return waiting.find((t) => t.answering === "person") ?? (repliesWait ? undefined : waiting[0]);
+  const reply = waiting.find((t) => t.answering === "agent");
+  const candidates = [
+    ...waiting.filter((t) => t.answering === "person"),
+    ...(reply && !mustWait(floor, reply) ? [reply] : []),
+  ];
+  return candidates.find((t) => t.agent !== floor.last) ?? candidates[0];
 }
 
 function grantNext(floor: Floor, now: number): void {
@@ -133,7 +154,10 @@ function grantNext(floor: Floor, now: number): void {
   if (!open.some((t) => t.status === "granted")) {
     const next = nextUp(floor, open);
     if (next) {
+      const replies = next.answering === "person" ? 0 : (floor.replies.get(next.agent) ?? 0) + 1;
+      floor.replies.set(next.agent, replies);
       floor.streak = next.answering === "person" ? 0 : floor.streak + 1;
+      floor.last = next.agent;
       next.endsAt = now + (next.speak ? SPEAKING_TURN_MS : CHAT_TURN_MS);
       setStatus(floor, next, "granted");
     } else if (replies.length) {
@@ -213,7 +237,15 @@ function floorFor(slug: string): Floor {
   const floors = store().floors;
   let floor = floors.get(slug);
   if (!floor) {
-    floor = { turns: new Map(), seq: 0, streak: 0, paused: false, activeAt: Date.now(), listeners: new Map() };
+    floor = {
+      turns: new Map(),
+      seq: 0,
+      streak: 0,
+      replies: new Map(),
+      paused: false,
+      activeAt: Date.now(),
+      listeners: new Map(),
+    };
     floors.set(slug, floor);
   }
   return floor;
@@ -278,6 +310,9 @@ export function waitForTurn(
   const { floor, turn } = find(slug, agent, turnId);
   const start = getTurn(slug, agent, turnId);
   if (start.status !== "waiting" && start.status !== "held") return Promise.resolve(start);
+  if (turn.waiters >= MAX_WAITERS) {
+    throw new HttpError(429, "too_many_checks", "This turn is already being checked");
+  }
   return new Promise((resolve) => {
     const listeners = floor.listeners.get(turn.id) ?? new Set();
     floor.listeners.set(turn.id, listeners);
@@ -338,6 +373,7 @@ export function continueAgents(slug: string): boolean {
     if (!held.length) return false;
     floor.paused = false;
     floor.streak = 0;
+    floor.replies.clear();
     floor.activeAt = now;
     for (const t of held) {
       t.seenAt = now;

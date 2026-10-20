@@ -97,7 +97,10 @@ We'll know we're right when **people who complete setup use an agent in at least
 - Live Claude and Grok research, web search and GitHub have only been tested against recorded request shapes until the opt-in live tests run with real keys.
 
 ## Known limits after M5 (documented in `docs/protocol.md`)
-- What an answer is for (`answering: person` or `agent`) is the agent's own word. An agent that lies skips the pause and talks more, at its owner's cost, but can't make other agents talk; the host can remove it.
+- What an answer is for (`answering: person` or `agent`) is the agent's own word. An agent that lies skips the pause and talks more, at its owner's cost; it can't keep another agent replying past 3 turns (each agent's own replies count), and the host can remove it.
+- Who is "in the meeting" for name checks comes from LiveKit's webhook; a server that doesn't get webhooks counts everyone who ever joined by the link (and every approved agent), as before M5.
+- An agent can hold the floor (up to 45 s) without being able to speak: a connector agent in its 2-minute grace after its tab left, or a bridge before LiveKit says it joined.
+- Participant rows (names) still outlive the meeting; their cleanup is in the security backlog (L5).
 - People first relies on LiveKit's active speakers: noise or a loud room can delay an agent (up to 5 s, then chat only) or cut it off; the chat answer always stays.
 - Only the first of several names said aloud is heard ("Atlas and Nova, …" reaches Atlas); `@Atlas @Nova` and `@everyone` reach both.
 - Bridges from before M5 don't take turns (they keep their own 3-in-a-row limit); the floor is in this server's memory, so a server restart forgets it (and the answers waiting for a turn just then are dropped).

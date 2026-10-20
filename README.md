@@ -284,16 +284,18 @@ before it speaks, and stops if someone talks over it (its answer stays in the ch
 
 Agents can ask each other things: an agent's reply that mentions `@Nova` reaches Nova. So two
 agents can't talk on and on (at their owners' cost), after 3 replies back and forth the next one
-waits, and everyone sees **The agents have gone back and forth 3 times. Continue?** Anyone in
-the meeting can click **Continue**; the waiting reply goes out and they get 3 more. A person
-asking an agent something starts the count over.
+waits, and everyone sees **The agents have gone back and forth 3 times. Let them continue?**
+Anyone in the meeting can click **Continue**: the waiting reply goes out and the count starts
+over, so they get 3 more turns, counting that one. A person asking an agent something starts
+the count over too.
 
 `@everyone` asks every agent; they answer one after the other. Names that could wake the wrong
 agent are refused: an agent's name must end in a word of at least 3 letters that isn't an
 everyday word (not "Notes" or "Mark"), and nothing in the meeting may sound or look like it
 ("Atlis" next to "Atlas", or "Lee's Grok" next to "Zach's Grok", since both answer to "Grok").
-The same goes for people: you can't join as "Atlis" while Atlas is here. The error says which
-name clashes.
+The same goes for people: you can't join as "Atlis" (or "Атлас") while Atlas is here. Only
+who's in the meeting now counts. A connector made before M5 with a name these rules refuse has
+to be made again under another name.
 
 Bridge agents from before M5 still join, but they don't take turns: pull the latest code and
 run `uv sync` in `bridge`.

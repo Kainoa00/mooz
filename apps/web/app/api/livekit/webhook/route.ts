@@ -8,7 +8,7 @@ import { errorResponse, HttpError, readCapped } from "@/lib/http";
 import { livekitConfig, removeFromRoom } from "@/lib/livekit";
 import { getNotesPolicy } from "@/lib/notes";
 import { publishRoomState } from "@/lib/room-state";
-import { getRoomByLivekitName } from "@/lib/rooms";
+import { getRoomByLivekitName, notePersonPresence } from "@/lib/rooms";
 
 /**
  * LiveKit calls this for room events (configured in livekit.yaml). A removed agent
@@ -16,7 +16,8 @@ import { getRoomByLivekitName } from "@/lib/rooms";
  * room LiveKit starts again (after everyone left) gets its notes policy back. A
  * connector agent whose tab leaves may come back for a couple of minutes (a reload);
  * after that it's out, with its questions. An agent that leaves gives up its turns (a bridge
- * agent can't take more until it's back). When the meeting ends, its connector agents are
+ * agent can't take more until it's back); a late "left" for a connection it already replaced
+ * changes nothing. When the meeting ends, its connector agents are
  * done and its floor is forgotten.
  */
 export async function POST(req: Request): Promise<Response> {
@@ -36,6 +37,7 @@ export async function POST(req: Request): Promise<Response> {
     const db = getDb();
     if (event.event === "participant_joined" && identity && room) {
       noteBridgePresence(db, identity, sid, true);
+      notePersonPresence(db, identity, sid, true);
       if (isRevokedAgent(db, identity)) await removeFromRoom(room, identity);
       else if (noteConnectorPresence(db, identity, sid, true) === "expired") {
         forgetAgent(identity);
@@ -43,9 +45,11 @@ export async function POST(req: Request): Promise<Response> {
       }
     }
     if (event.event === "participant_left" && identity) {
-      noteConnectorPresence(db, identity, sid, false);
-      noteBridgePresence(db, identity, sid, false);
-      leaveFloors(identity);
+      const connector = noteConnectorPresence(db, identity, sid, false) === "left";
+      const bridge = noteBridgePresence(db, identity, sid, false);
+      notePersonPresence(db, identity, sid, false);
+      // Only the session that's in now gives up its turns (not a late "left" for an old one).
+      if (connector || bridge) leaveFloors(identity);
     }
     if (event.event === "room_finished" && room) {
       const meeting = getRoomByLivekitName(db, room);

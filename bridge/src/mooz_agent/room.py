@@ -89,6 +89,7 @@ class MeetingRoom:
         self.on_human_track_ended: TrackEndedHandler | None = None
         self.on_participant_joined: JoinHandler | None = None
         self.on_notes_policy_changed: Callable[[], None] | None = None
+        self.on_floor_changed: Callable[[], None] | None = None
         self.on_signal: SignalHandler | None = None
         self._opted_out: set[str] = set()
         self._speaking: set[str] = set()  # people talking right now (LiveKit's active speakers)
@@ -169,9 +170,20 @@ class MeetingRoom:
         if isinstance(participant, rtc.RemoteParticipant):
             self._track_opt_out(participant)
 
+    def floor_paused(self) -> bool:
+        """Whether agents' replies to each other wait for a person: room metadata floor.paused."""
+        try:
+            data = json.loads(self._room.metadata or "{}")
+        except ValueError:
+            return False
+        floor = data.get("floor") if isinstance(data, dict) else None
+        return isinstance(floor, dict) and floor.get("paused") is True
+
     def _handle_metadata_changed(self, _old: str, _new: str) -> None:
         if self.on_notes_policy_changed:
             self.on_notes_policy_changed()
+        if self.on_floor_changed:
+            self.on_floor_changed()
 
     async def send_signal(self, message: dict[str, object], to: list[str] | None = None) -> None:
         """A mooz.v0 message to everyone, or only to `to`. LiveKit stamps us as the sender."""

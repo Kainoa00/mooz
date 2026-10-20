@@ -86,6 +86,17 @@ describe("a connector joining a meeting", () => {
     expect(() => requestConnectorJoin(db, kai, KAI_KEY, connector.id)).toThrow("already called");
   });
 
+  it("says what to do about a name made before today's rules refused it", () => {
+    const db = getDb();
+    const { slug } = createRoom(db);
+    const kai = addParticipant(db, { slug, name: "Kainoa", isHost: true });
+    const { connector } = createConnector(db, KAI_KEY, { name: "Grok", app: "grok" });
+    db.prepare("UPDATE connectors SET name = 'Mark' WHERE id = ?").run(connector.id);
+    expect(() => requestConnectorJoin(db, kai, KAI_KEY, connector.id)).toThrowError(
+      expect.objectContaining({ status: 400, code: "reserved_name", message: expect.stringContaining("delete it") }),
+    );
+  });
+
   it("is in one meeting at a time: joining another leaves the first", () => {
     const { db, slug, kai, connector } = meeting();
     const first = requestConnectorJoin(db, kai, KAI_KEY, connector.id);

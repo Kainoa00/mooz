@@ -11,6 +11,7 @@ import {
   leaveFloors,
   MAX_AGENT_STREAK,
   MAX_OPEN_TURNS,
+  MAX_WAITERS,
   requestTurn,
   resetFloorsForTests,
   setFloorListener,
@@ -133,6 +134,23 @@ describe("taking turns", () => {
     expect(getTurn("other-room", "atlas", there.id).status).toBe("ended");
   });
 
+  it("doesn't give one agent turn after turn while another waits", () => {
+    // Asking again replaces a granted turn, but the new one goes behind whoever is waiting.
+    ask("liar", "person");
+    const nova = ask("nova", "agent");
+    for (let i = 0; i < 3; i++) ask("liar", "person");
+    expect(status("nova", nova.id)).toBe("granted");
+  });
+
+  it("lets only so many checks wait on one turn", () => {
+    ask("atlas");
+    const nova = ask("nova");
+    for (let i = 0; i < MAX_WAITERS; i++) void waitForTurn(ROOM, "nova", nova.id, 1000);
+    expect(() => waitForTurn(ROOM, "nova", nova.id, 1000)).toThrowError(
+      expect.objectContaining({ status: 429, code: "too_many_checks" }),
+    );
+  });
+
   it("keeps one open turn of each kind per agent: asking again replaces the last", () => {
     const first = ask("atlas");
     const nova = ask("nova");
@@ -242,8 +260,34 @@ describe("pausing agents that keep talking to each other", () => {
     turn("atlas", "agent");
     turn("nova", "agent");
     turn("atlas", "person");
-    for (let i = 0; i < MAX_AGENT_STREAK; i++) expect(turn("nova", "agent").status).toBe("granted");
+    for (const agent of ["grok", "lee", "grok"]) expect(turn(agent, "agent").status).toBe("granted");
     expect(ask("atlas", "agent").status).toBe("held");
+  });
+
+  it("holds an agent that keeps replying to agents, however often another claims to answer people", () => {
+    // Liar says every turn answers a person (which resets the meeting's count); Nova, honestly,
+    // replies to it. Nova gets its run, then waits for a person.
+    for (let i = 0; i < MAX_AGENT_STREAK; i++) {
+      turn("liar", "person");
+      expect(turn("nova", "agent").status).toBe("granted");
+    }
+    turn("liar", "person");
+    expect(ask("nova", "agent").status).toBe("held");
+    expect(floorView(ROOM).paused).toBe(true);
+    // Answering a person starts Nova's own count over, and so does Continue.
+    expect(continueAgents(ROOM)).toBe(true);
+  });
+
+  it("starts an agent's own count over when it answers a person", () => {
+    for (let i = 0; i < MAX_AGENT_STREAK - 1; i++) {
+      turn("liar", "person");
+      turn("nova", "agent");
+    }
+    turn("nova", "person");
+    for (let i = 0; i < MAX_AGENT_STREAK - 1; i++) {
+      turn("liar", "person");
+      expect(turn("nova", "agent").status).toBe("granted");
+    }
   });
 
   it("holds a reply already waiting when the pause starts", () => {

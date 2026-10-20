@@ -1,6 +1,8 @@
 """Background research in the agent: owner-only, keeps listening, reports back at a pause."""
 
 import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import pytest
@@ -11,9 +13,12 @@ from mooz_agent.config import AgentConfig
 from mooz_agent.memory import TASK_RESULT_TAG, MemoryStore
 from mooz_agent.notes import NOTES_TAG
 from mooz_agent.providers import fakes
-from mooz_agent.providers.fakes import FakeSTT, FakeTTS, OfflineModel
+from mooz_agent.providers.base import Answer
+from mooz_agent.providers.fakes import EchoBrain, FakeSTT, FakeTTS, OfflineModel
 from mooz_agent.room import Speaker
+from mooz_agent.tasks import Task
 from mooz_agent.tools.toolbox import ToolBox
+from mooz_agent.turns import Answering, Granted
 
 from .test_agent import KAI, ZACH, hear
 from .test_agent_notes import NotesRoom
@@ -343,3 +348,60 @@ async def test_notes_opt_outs_cover_task_reports(setup) -> None:  # type: ignore
     assert "what I found about launch" not in saved  # the report drew on Zach's words
     assert "ninety" not in saved
     assert "look into the launch" in saved  # Kainoa's own words stay
+
+
+# -- the spoken report and the meeting's floor ------------------------------------------
+
+
+class CountingFloor:
+    """A floor that answers every request the same way, counting them."""
+
+    def __init__(self, grant: Granted | None) -> None:
+        self.grant = grant
+        self.calls = 0
+
+    @asynccontextmanager
+    async def turn(
+        self, *, answering: Answering, speak: bool, max_wait: float | None = None
+    ) -> AsyncIterator[Granted | None]:
+        self.calls += 1
+        await asyncio.sleep(0)  # the HTTP round trip
+        yield self.grant
+
+
+def finished(title: str = "Look into the launch") -> Task:
+    task = Task(id="t1", title=title, owner=KAI.identity, private=False, created_at=0.0)
+    task.state = "done"
+    task.result = Answer("It's March 30th.")
+    return task
+
+
+@pytest.mark.parametrize("why", ["refused", "busy past the deadline"])
+async def test_the_spoken_report_gives_up_when_no_turn_comes(why: str) -> None:
+    floor = CountingFloor(grant=None)
+    room, tts = TasksRoom(), FakeTTS()
+    agent = Agent(room=room, stt=FakeSTT({}), tts=tts, brain=EchoBrain(), turns=floor)  # type: ignore[arg-type]
+    agent.quiet_seconds = 0.01
+    agent.report_wait_seconds = 0.5 if why == "refused" else 0.0
+    await asyncio.wait_for(agent._report(finished()), timeout=2.0)
+    assert any(m.startswith("📋") for m in room.sent)  # the chat has it
+    assert floor.calls <= 1 and tts.spoken == []
+
+
+async def test_the_spoken_report_tries_again_after_someone_talks_over_its_turn() -> None:
+    room, tts = TasksRoom(), FakeTTS()
+    agent = Agent(
+        room=room, stt=FakeSTT({}), tts=tts, brain=EchoBrain(), turns=CountingFloor(Granted())
+    )  # type: ignore[arg-type]
+    agent.quiet_seconds = 0.01
+    agent.report_retry_seconds = 0.01
+    calls = 0
+
+    def humans_speaking() -> bool:
+        nonlocal calls
+        calls += 1
+        return calls == 2  # quiet, then someone starts just as the turn comes, then quiet again
+
+    room.humans_speaking = humans_speaking  # type: ignore[method-assign]
+    await asyncio.wait_for(agent._report(finished()), timeout=2.0)
+    assert any(s.startswith("Kainoa, about the launch") for s in tts.spoken)

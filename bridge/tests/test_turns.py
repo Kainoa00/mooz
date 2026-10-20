@@ -49,7 +49,7 @@ async def test_takes_a_free_floor_at_once_and_gives_it_back() -> None:
         async with floor.turn(answering="person", speak=True) as granted:
             assert granted is not None and granted.deadline == 145.0
             assert not done.called
-        assert floor.shared and floor.supported is True
+        assert floor.supported is True
 
     request = ask.calls.last.request
     assert request.headers["authorization"] == "Bearer s3cret"
@@ -124,7 +124,7 @@ async def test_goes_ahead_on_a_server_without_turns_and_stops_asking() -> None:
             async with floor.turn(answering="agent", speak=True) as granted:
                 assert granted is LOCAL
     assert ask.call_count == 1
-    assert floor.supported is False and not floor.shared
+    assert floor.supported is False
 
 
 @respx.mock
@@ -141,23 +141,26 @@ async def test_says_nothing_when_the_server_refuses() -> None:
 
 
 @respx.mock
-async def test_goes_ahead_when_the_server_cannot_be_reached() -> None:
+async def test_answers_a_person_but_not_an_agent_when_the_server_cannot_be_reached() -> None:
     respx.post(BASE).mock(side_effect=httpx.ConnectError("down"))
     async with httpx.AsyncClient() as http:
         floor = turns(http)
         async with floor.turn(answering="person", speak=True) as granted:
             assert granted is LOCAL
-        assert floor.supported is None and floor.shared  # it may be back next time
+        # With no floor to pause them, two agents could go back and forth for ever.
+        async with floor.turn(answering="agent", speak=True) as granted:
+            assert granted is None
+        assert floor.supported is None  # it may be back next time
 
 
 @respx.mock
-async def test_goes_ahead_on_a_garbled_answer() -> None:
+async def test_goes_ahead_on_a_garbled_answer_only_for_a_person() -> None:
     respx.post(BASE).respond(502, text="Bad Gateway")
-    async with (
-        httpx.AsyncClient() as http,
-        turns(http).turn(answering="person", speak=True) as granted,
-    ):
-        assert granted is LOCAL
+    async with httpx.AsyncClient() as http:
+        async with turns(http).turn(answering="person", speak=True) as granted:
+            assert granted is LOCAL
+        async with turns(http).turn(answering="agent", speak=True) as granted:
+            assert granted is None
 
 
 @respx.mock
@@ -211,6 +214,5 @@ async def test_gives_the_turn_back_when_the_answer_is_cancelled() -> None:
 
 async def test_no_floor_always_goes_ahead() -> None:
     floor = NoFloor()
-    assert not floor.shared
     async with floor.turn(answering="agent", speak=True) as granted:
         assert granted is LOCAL and granted.deadline is None

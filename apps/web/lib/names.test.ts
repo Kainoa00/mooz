@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseAgentName, parseDisplayName } from "./names";
+import { foldName, parseAgentName, parseDisplayName } from "./names";
 
 describe("parseDisplayName", () => {
   it("collapses whitespace", () => {
@@ -72,7 +72,13 @@ describe("parseAgentName", () => {
     ["Grok", "Zach's Grok"], // so is the other's
   ])("rejects %j next to %j: the wrong one would answer", (name, taken) => {
     expect(() => parseAgentName(name, [taken])).toThrowError(
-      expect.objectContaining({ status: 409, code: "name_taken", message: expect.stringContaining(taken) }),
+      expect.objectContaining({ status: 409, code: "name_taken", message: expect.stringContaining("sounds too much like") }),
+    );
+  });
+
+  it("doesn't say whose name it clashes with: the asker may not see everyone who counts", () => {
+    expect(() => parseAgentName("Zack", ["Kainoa Zach"])).toThrowError(
+      expect.objectContaining({ message: expect.not.stringContaining("Kainoa") }),
     );
   });
 
@@ -80,9 +86,7 @@ describe("parseAgentName", () => {
     ["Grok Prime", "Grok"], // saying "Grok Prime" would wake Grok too
     ["Nova Atlas", "Zach's Atlas"],
   ])("rejects %j next to the agent %j, whose wake word it holds", (name, agent) => {
-    expect(() => parseAgentName(name, [], [agent])).toThrowError(
-      expect.objectContaining({ status: 409, code: "name_taken", message: expect.stringContaining(agent) }),
-    );
+    expect(() => parseAgentName(name, [], [agent])).toThrowError(expect.objectContaining({ status: 409, code: "name_taken" }));
   });
 
   it("lets an agent hold a person's name as a word that isn't its wake word: people don't wake", () => {
@@ -103,10 +107,23 @@ describe("people's names next to agents", () => {
     ["Atlis", "Atlas"],
     ["Grok Smith", "Zach's Grok"],
     ["grok", "Grok"],
+    ["Ａｔｌａｓ", "Atlas"], // fullwidth
+    ["Аtlas", "Atlas"], // a Cyrillic А
+    ["Атлас", "Atlas"], // Atlas, in Cyrillic
+    ["Nóva", "Nova"],
   ])("refuses %j while %j is here", (name, agent) => {
     expect(() => parseDisplayName(name, [agent])).toThrowError(
-      expect.objectContaining({ status: 409, code: "name_taken", message: expect.stringContaining(agent) }),
+      expect.objectContaining({ status: 409, code: "name_taken", message: expect.stringContaining("an agent") }),
     );
+  });
+
+  it("folds names to how they sound in plain Latin letters", () => {
+    expect(foldName("Ｚｏë Ελένη Мария")).toBe("zoe eleni mariya");
+  });
+
+  it("allows names in other scripts that sound different", () => {
+    expect(parseDisplayName("Мария", ["Atlas"])).toBe("Мария");
+    expect(parseDisplayName("José", ["Atlas"])).toBe("José");
   });
 
   it("allows a person whose name only shares a word with a multi-word agent's other words", () => {

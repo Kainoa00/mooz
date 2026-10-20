@@ -25,12 +25,11 @@ export function parseDisplayName(value: unknown, agentNames: readonly string[] =
   if (DECEPTIVE.test(name) || hasHidden(name)) {
     throw new HttpError(400, "invalid_name", "Names cannot contain 🤖 or invisible characters");
   }
-  const agent = agentNames.find((a) => heardAs(name, a));
-  if (agent) {
+  if (agentNames.some((a) => heardAs(name, a))) {
     throw new HttpError(
       409,
       "name_taken",
-      `"${name}" sounds like ${agent}, an agent in this meeting: saying it would wake the agent. Pick another name.`,
+      `"${name}" sounds like the name of an agent in this meeting: saying it would wake the agent. Pick another name.`,
     );
   }
   return name;
@@ -39,10 +38,34 @@ export function parseDisplayName(value: unknown, agentNames: readonly string[] =
 /** Whether two words would be heard as each other, either way round. */
 const alike = (a: string, b: string) => a === b || sameWord(a, b) || sameWord(b, a);
 
+// How Cyrillic and Greek letters sound in Latin ones, so "Атлас" (or "Аtlas", with one
+// Cyrillic letter) is heard as Atlas.
+const TRANSLIT: Record<string, string> = {
+  а: "a", б: "b", в: "v", г: "g", ґ: "g", д: "d", е: "e", ё: "e", є: "ye", ж: "zh", з: "z", и: "i",
+  і: "i", ї: "yi", й: "y", к: "k", л: "l", м: "m", н: "n", о: "o", п: "p", р: "r", с: "s", т: "t",
+  у: "u", ф: "f", х: "kh", ц: "ts", ч: "ch", ш: "sh", щ: "shch", ъ: "", ы: "y", ь: "", э: "e",
+  ю: "yu", я: "ya", α: "a", β: "b", γ: "g", δ: "d", ε: "e", ζ: "z", η: "i", θ: "th", ι: "i",
+  κ: "k", λ: "l", μ: "m", ν: "n", ξ: "x", ο: "o", π: "p", ρ: "r", σ: "s", ς: "s", τ: "t", υ: "y",
+  φ: "f", χ: "ch", ψ: "ps", ω: "o",
+};
+
+/**
+ * A name as it sounds in plain Latin letters (what speech-to-text writes when it's said):
+ * fullwidth and other lookalike forms, accents, and Cyrillic and Greek letters folded.
+ */
+export function foldName(name: string): string {
+  return name
+    .normalize("NFKC")
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/[\u0370-\u03ff\u0400-\u04ff]/g, (c) => TRANSLIT[c] ?? c);
+}
+
 /** Whether saying any word of `name` would be heard as `agent`'s wake word. */
 function heardAs(name: string, agent: string): boolean {
-  const wake = wakeWord(agent);
-  return wake !== undefined && nameWords(name).some((w) => alike(w, wake));
+  const wake = wakeWord(foldName(agent));
+  return wake !== undefined && nameWords(foldName(name)).some((w) => alike(w, wake));
 }
 
 // An agent wakes up when its name is said, so names that people say all the
@@ -70,7 +93,7 @@ export function parseAgentName(value: unknown, people: readonly string[], agents
     throw new HttpError(
       400,
       "invalid_agent_name",
-      "Agent names are 2–24 characters: letters, numbers, spaces, apostrophes or dashes, starting with a letter",
+      "Agent names are 3–24 characters: letters, numbers, spaces, apostrophes or dashes, starting with a letter",
     );
   }
   const key = name.toLowerCase();
@@ -81,15 +104,15 @@ export function parseAgentName(value: unknown, people: readonly string[], agents
   if (wake.length < 3) {
     throw new HttpError(400, "invalid_agent_name", "An agent's name needs a last word of at least 3 letters");
   }
-  if (takenNames.some((taken) => taken.trim().toLowerCase() === key)) {
+  if (takenNames.some((taken) => foldName(taken.trim()) === key)) {
     throw new HttpError(409, "name_taken", `Someone in this meeting is already called "${name}"`);
   }
-  const clash = takenNames.find((taken) => heardAs(taken, name)) ?? agents.find((agent) => heardAs(name, agent));
-  if (clash) {
+  // Which name it clashes with isn't said: the asker may not be able to see everyone who counts.
+  if (takenNames.some((taken) => heardAs(taken, name)) || agents.some((agent) => heardAs(name, agent))) {
     throw new HttpError(
       409,
       "name_taken",
-      `"${name}" sounds too much like "${clash}", who's already in this meeting: the wrong one would answer. Pick a name that sounds different.`,
+      `"${name}" sounds too much like someone already in this meeting: the wrong one would answer. Pick a name that sounds different.`,
     );
   }
   return name;

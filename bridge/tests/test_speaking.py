@@ -95,8 +95,6 @@ GO = Granted()
 
 
 class FakeTurns:
-    shared = True
-
     def __init__(self, rec: Recorder, grant: Granted | None = GO) -> None:
         self.rec = rec
         self.grant = grant

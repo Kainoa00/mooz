@@ -151,6 +151,31 @@ describe("bridge turns", () => {
     expect((await ask(atlas)).res.status).toBe(409);
   });
 
+  it("gives nothing to an agent removed while its request was on the way", async () => {
+    const { db, slug, agents } = meeting(["Atlas"]);
+    const [atlas] = agents;
+    let send!: () => void;
+    const body = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        await new Promise<void>((r) => (send = r));
+        controller.enqueue(new TextEncoder().encode(JSON.stringify({ answering: "person", speak: true })));
+        controller.close();
+      },
+    });
+    const slow = new Request(base(atlas), {
+      method: "POST",
+      headers: { "content-type": "application/json", ...auth(atlas) },
+      body,
+      duplex: "half",
+    } as RequestInit);
+    const pending = ASK(slow, params({ id: atlas.requestId }));
+    await vi.waitFor(() => expect(send).toBeDefined());
+    revokeAgent(db, { slug, agentIdentity: atlas.identity });
+    send();
+    expect((await pending).status).toBe(409);
+    expect(floorView(slug).speaking).toBeNull();
+  });
+
   it("only lets an agent see its own turns", async () => {
     const [atlas, nova] = meeting().agents;
     const { turn } = await ask(atlas);

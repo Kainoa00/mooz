@@ -52,7 +52,9 @@ const GO_AHEAD: HeldTurn = { release: async () => undefined };
 
 /**
  * Ask for a turn and wait (up to `maxWaitMs`) until it comes. Null: don't answer (the server
- * said no, or the turn ended or never came). If the server can't be reached, go ahead.
+ * said no, or the turn ended or never came). If the server can't be reached, answer a person
+ * anyway, but not another agent: with no floor to pause them, two agents could go back and
+ * forth on their owners' bills.
  */
 export async function takeTurn(
   base: string,
@@ -67,10 +69,10 @@ export async function takeTurn(
       body: JSON.stringify({ answering: options.answering, speak: options.speak }),
     });
   } catch {
-    return GO_AHEAD;
+    outcome = { garbled: true };
   }
   if ("refused" in outcome) return null;
-  if ("garbled" in outcome) return GO_AHEAD;
+  if ("garbled" in outcome) return options.answering === "person" ? GO_AHEAD : null;
   let turn = outcome.turn;
   const release = async () => {
     await deps.fetch(`${base}/turns/${turn.id}/done`, { method: "POST" }).catch(() => undefined);

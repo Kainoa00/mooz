@@ -12,6 +12,8 @@ export const APPROVAL_WINDOW_MS = 10 * 60 * 1000;
 export const MAX_NAME_ATTEMPTS = 5;
 /** Pending requests the host never answers lapse, so they cannot squat names forever. */
 export const PENDING_TTL_MS = 10 * 60 * 1000;
+/** How long an agent may be away (a reload, a dropped connection) and still come back. */
+export const LEFT_GRACE_MS = 2 * 60 * 1000;
 
 // No I, O, 0 or 1: codes are read off a screen and typed into a terminal.
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -63,19 +65,27 @@ export function createAgentCode(db: Db, owner: Participant): { code: string; exp
   return { code: formatCode(raw), expiresAt };
 }
 
-/** Names of agents that are waiting or in the meeting (their wake words). */
+/**
+ * Names of agents that are waiting, in the meeting, or away for a moment (their wake words). One
+ * that left for good no longer holds its name.
+ */
 export function activeAgentNames(db: Db, slug: string): string[] {
+  const now = Date.now();
   const rows = db
     .prepare(
       `SELECT agent_name FROM agent_requests
-       WHERE room_slug = ? AND (status = 'approved' OR (status = 'pending' AND created_at > ?))`,
+       WHERE room_slug = ? AND ((status = 'approved' AND (left_at IS NULL OR left_at > ?))
+         OR (status = 'pending' AND created_at > ?))`,
     )
-    .all(slug, Date.now() - PENDING_TTL_MS) as { agent_name: string }[];
+    .all(slug, now - LEFT_GRACE_MS, now - PENDING_TTL_MS) as { agent_name: string }[];
   return rows.map((r) => r.agent_name);
 }
 
+/** Names of the people in the meeting now (not everyone who ever joined by its link). */
 export function participantNames(db: Db, slug: string): string[] {
-  const rows = db.prepare("SELECT name FROM participants WHERE room_slug = ?").all(slug) as { name: string }[];
+  const rows = db.prepare("SELECT name FROM participants WHERE room_slug = ? AND left_at IS NULL").all(slug) as {
+    name: string;
+  }[];
   return rows.map((r) => r.name);
 }
 
@@ -305,17 +315,17 @@ export function requireBridgeAgent(db: Db, requestId: string, claimSecret: strin
 
 /**
  * LiveKit says a bridge agent joined (as session `sid`) or left. A "left" counts only for the
- * session that last joined, so a late one from a replaced connection changes nothing.
+ * session that last joined, so a late one from a replaced connection changes nothing. Returns
+ * whether a "left" counted.
  */
-export function noteBridgePresence(db: Db, agentIdentity: string, sid: string | undefined, here: boolean): void {
+export function noteBridgePresence(db: Db, agentIdentity: string, sid: string | undefined, here: boolean): boolean {
   const live = "agent_identity = ? AND door = 'bridge' AND status = 'approved'";
   if (here) {
     db.prepare(`UPDATE agent_requests SET left_at = NULL, session_sid = ? WHERE ${live}`).run(sid ?? null, agentIdentity);
-  } else {
-    db.prepare(`UPDATE agent_requests SET left_at = ? WHERE ${live} AND (session_sid IS NULL OR session_sid = ?)`).run(
-      Date.now(),
-      agentIdentity,
-      sid ?? null,
-    );
+    return false;
   }
+  const { changes } = db
+    .prepare(`UPDATE agent_requests SET left_at = ? WHERE ${live} AND (session_sid IS NULL OR session_sid = ?)`)
+    .run(Date.now(), agentIdentity, sid ?? null);
+  return changes > 0;
 }

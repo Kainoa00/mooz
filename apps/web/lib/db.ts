@@ -87,6 +87,9 @@ const MIGRATIONS = [
   `ALTER TABLE agent_requests ADD COLUMN left_at INTEGER;`,
   // Which LiveKit session that tab is, so a late "left" from an old session doesn't count.
   `ALTER TABLE agent_requests ADD COLUMN session_sid TEXT;`,
+  // When a person left the meeting, and as which session (names are checked against who's here).
+  `ALTER TABLE participants ADD COLUMN left_at INTEGER;
+   ALTER TABLE participants ADD COLUMN session_sid TEXT;`,
 ];
 
 function migrate(db: Db): void {

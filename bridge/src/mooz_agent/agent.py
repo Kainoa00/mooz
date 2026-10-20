@@ -45,9 +45,9 @@ log = logging.getLogger(__name__)
 
 # After "Hey Atlas." on its own, the same person's next sentence is the question.
 FOLLOW_UP_SECONDS = 8.0
-# Without a meeting floor (an older server), answer other agents at most this many times in
-# a row before a person speaks again, so two agents can't talk to each other forever. With
-# one, the server holds the reply instead, until a person lets the agents continue.
+# Think about other agents' questions at most this many times in a row (each costs the owner),
+# until a person speaks or lets the agents continue. The meeting's floor also holds the reply
+# that would go past it; on an older server without one, this is the only limit.
 MAX_AGENT_STREAK = 3
 APOLOGY = Answer("Sorry, I couldn't think that through just now. Please try again.")
 # Said out loud (not posted to chat) when an answer needs tools, so the room isn't left in silence.
@@ -64,6 +64,10 @@ TASK_LIST_INTERVAL = 2.0
 # REPORT_WAIT_SECONDS (the chat already has the result, so after that the voice is skipped).
 QUIET_SECONDS = 2.5
 REPORT_WAIT_SECONDS = 90.0
+# Between tries at speaking a report when someone started talking just as its turn came.
+REPORT_RETRY_SECONDS = 3.0
+# "Yes?" waits only this long for the floor: later, it would only get in the way.
+ACK_WAIT_SECONDS = 2.0
 OVERFLOWED = "This needs more digging. I'll keep at it and report back."
 _TASK_VERB = re.compile(
     r"^(?:look into|research|dig into|investigate|find out|figure out)\s+", re.I
@@ -86,6 +90,7 @@ class AgentRoom(Protocol):
     on_human_track_ended: TrackEndedHandler | None
     on_participant_joined: JoinHandler | None
     on_notes_policy_changed: Callable[[], None] | None
+    on_floor_changed: Callable[[], None] | None
     on_signal: SignalHandler | None
 
     def participants(self) -> list[Speaker]: ...
@@ -102,6 +107,7 @@ class AgentRoom(Protocol):
     ) -> Awaitable[None]: ...
     def replay_tracks(self) -> None: ...
     def notes_allowed(self) -> bool: ...
+    def floor_paused(self) -> bool: ...
     def is_opted_out(self, identity: str) -> bool: ...
     def send_signal(
         self, message: dict[str, object], to: list[str] | None = None
@@ -143,6 +149,7 @@ class Agent:
         self._clock = clock
         self._follow_up: dict[str, float] = {}
         self._agent_streak = 0
+        self._paused = False  # the meeting's agents are waiting for a person
         self._tasks: set[asyncio.Task[None]] = set()
         # Meeting notes need a brain that can summarize and a memory to keep them in.
         self.notes: NotesKeeper | None = None
@@ -173,6 +180,7 @@ class Agent:
             brain.on_overflow = self._overflow_to_task
         self.quiet_seconds = QUIET_SECONDS
         self.report_wait_seconds = REPORT_WAIT_SECONDS
+        self.report_retry_seconds = REPORT_RETRY_SECONDS
         self._last_voice = float("-inf")
         self.task_list_interval = TASK_LIST_INTERVAL
         self._task_list_due: dict[str, float] = {}  # identity -> when they may get it again
@@ -187,6 +195,7 @@ class Agent:
         self.room.on_chat = self.on_chat
         self.room.on_participant_joined = self._on_joined
         self.room.on_notes_policy_changed = self._on_notes_policy_changed
+        self.room.on_floor_changed = self._on_floor_changed
         self.room.on_signal = self._on_signal
         # People already in the room published before these handlers existed.
         self.room.replay_tracks()
@@ -238,11 +247,17 @@ class Agent:
     def _allowed(self, asker: Speaker) -> bool:
         if asker.kind != "agent":
             return True
-        if not self.mouth.turns.shared and self._agent_streak >= MAX_AGENT_STREAK:
+        if self._agent_streak >= MAX_AGENT_STREAK:
             log.info("not answering %s: %d agent turns in a row", asker.name, MAX_AGENT_STREAK)
             return False
         self._agent_streak += 1
         return True
+
+    def _on_floor_changed(self) -> None:
+        paused = self.room.floor_paused()
+        if self._paused and not paused:
+            self._agent_streak = 0  # a person let the agents continue
+        self._paused = paused
 
     def _other_agents(self) -> list[str]:
         return [
@@ -252,10 +267,10 @@ class Agent:
         ]
 
     async def _acknowledge(self, asker: Speaker, heard_at: float) -> None:
-        # Open the window now (a question asked while "Yes?" plays still counts), and
-        # start its countdown once "Yes?" has actually been said.
+        # Open the window now (a question asked while "Yes?" plays still counts), and start its
+        # countdown once "Yes?" has been said, or skipped because the floor was busy.
         self._follow_up[asker.identity] = float("inf")
-        await self._say(Answer("Yes?"), heard_at, asker)
+        await self._say(Answer("Yes?"), heard_at, asker, max_wait=ACK_WAIT_SECONDS)
         if asker.identity in self._follow_up:
             self._follow_up[asker.identity] = self._clock() + FOLLOW_UP_SECONDS
 
@@ -328,6 +343,8 @@ class Agent:
         heard_at: float,
         asker: Speaker | None = None,
         sources: frozenset[str] = frozenset(),
+        *,
+        max_wait: float | None = None,
     ) -> None:
         def first_frame() -> None:
             latency_ms = (self._clock() - heard_at) * 1000
@@ -343,6 +360,7 @@ class Agent:
                 reply_to=about,
                 sources=sources,
                 answering=answering,
+                max_wait=max_wait,
             )
         except asyncio.CancelledError:
             raise
@@ -687,13 +705,20 @@ class Agent:
         self.transcript.add(line)
         self._note(line)
         deadline = self._clock() + self.report_wait_seconds
-        while await self._wait_for_quiet(deadline):
+        while self._clock() < deadline and await self._wait_for_quiet(deadline):
+            talking = False
+
+            def still_quiet() -> bool:
+                nonlocal talking
+                talking = not self._quiet()
+                return not talking
+
             try:
                 # Quiet again by the time it's our turn (we may have been answering someone)?
                 if await self.mouth.say(
                     Answer(spoken),
                     chat=False,
-                    only_if=self._quiet,
+                    only_if=still_quiet,
                     max_wait=max(0.0, deadline - self._clock()),
                 ):
                     return
@@ -702,6 +727,9 @@ class Agent:
             except Exception:
                 log.exception("could not say the task result")
                 return
+            if not talking:
+                return  # no turn came (the floor stayed busy, or the server said no)
+            await asyncio.sleep(self.report_retry_seconds)
 
     def _quiet(self) -> bool:
         """Nobody is talking: no one mid-sentence, and no one has finished one just now."""

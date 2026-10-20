@@ -44,14 +44,19 @@ function limit(key: string, perMinute: number): void {
 
 const NO_STORE = { "cache-control": "no-store" };
 
-/** POST …/turns `{ answering: "person" | "agent", speak: boolean }`: ask for a turn. */
-export async function askForTurn(agent: FloorAgent, req: Request): Promise<Response> {
-  limit(`turns:${agent.identity}`, TURN_REQUESTS_PER_MINUTE);
+/**
+ * POST …/turns `{ answering: "person" | "agent", speak: boolean }`: ask for a turn. The body is
+ * read first and the agent checked after, so one removed while its request was arriving gets
+ * nothing.
+ */
+export async function askForTurn(req: Request, who: () => FloorAgent): Promise<Response> {
   const { answering, speak } = await readJson(req, BODY_BYTES);
   if (answering !== "person" && answering !== "agent") {
     throw new HttpError(400, "invalid_body", 'answering must be "person" or "agent"');
   }
   if (typeof speak !== "boolean") throw new HttpError(400, "invalid_body", "speak must be true or false");
+  const agent = who();
+  limit(`turns:${agent.identity}`, TURN_REQUESTS_PER_MINUTE);
   const turn = requestTurn(agent.slug, agent.identity, { answering: answering satisfies Answering, speak });
   return Response.json({ turn: turnJson(turn) }, { status: 201, headers: NO_STORE });
 }
@@ -65,5 +70,6 @@ export async function checkTurn(agent: FloorAgent, turnId: string, req: Request)
 
 /** POST …/turns/{turn}/done: finished (or no longer wanted). */
 export function finishTurn(agent: FloorAgent, turnId: string): Response {
+  limit(`turn-dones:${agent.identity}`, TURN_REQUESTS_PER_MINUTE * 2);
   return Response.json({ turn: turnJson(endTurn(agent.slug, agent.identity, turnId)) }, { headers: NO_STORE });
 }

@@ -183,12 +183,16 @@ describe("POST /api/livekit/webhook", () => {
       JSON.stringify({ event, room: { name: a.livekitRoom }, participant: { identity: a.identity, sid } });
 
     await POST(await signed(ev("participant_joined", "PA_1")));
-    await POST(await signed(ev("participant_left", "PA_1")));
+    await POST(await signed(ev("participant_joined", "PA_2"))); // reconnected
+    await POST(await signed(ev("participant_left", "PA_1"))); // the old connection, late
+    expect(floorView(meeting.slug).speaking).toBe(a.identity);
+    expect(db.prepare("SELECT left_at FROM agent_requests WHERE agent_identity = ?").get(a.identity)).toEqual({ left_at: null });
+    await POST(await signed(ev("participant_left", "PA_2")));
     expect(floorView(meeting.slug).speaking).toBe("agent-other");
     expect(db.prepare("SELECT left_at FROM agent_requests WHERE agent_identity = ?").get(a.identity)).toEqual({
       left_at: expect.any(Number),
     });
-    await POST(await signed(ev("participant_joined", "PA_2")));
+    await POST(await signed(ev("participant_joined", "PA_3")));
     expect(db.prepare("SELECT left_at FROM agent_requests WHERE agent_identity = ?").get(a.identity)).toEqual({ left_at: null });
 
     await POST(await signed(JSON.stringify({ event: "room_finished", room: { name: a.livekitRoom } })));

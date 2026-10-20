@@ -50,6 +50,15 @@ describe("POST /api/rooms/[slug]/agents/continue", () => {
     expect((await call(slug, {})).status).toBe(401);
     expect((await call(slug, { cookie: `mooz_p_${slug}=nope` })).status).toBe(401);
     expect((await call(slug, { cookie: `mooz_p_${slug}=${zach.secret}`, "sec-fetch-site": "cross-site" })).status).toBe(403);
+    const form = await POST(
+      new Request(`http://localhost/api/rooms/${slug}/agents/continue`, {
+        method: "POST",
+        headers: { cookie: `mooz_p_${slug}=${zach.secret}`, "content-type": "text/plain" },
+        body: "{}",
+      }),
+      params({ slug }),
+    );
+    expect(form.status).toBe(415);
     expect(floorView(slug).paused).toBe(true);
   });
 

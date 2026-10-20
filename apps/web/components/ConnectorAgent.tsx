@@ -36,6 +36,8 @@ interface Asked {
 }
 
 const FILLER = "One sec, checking.";
+/** "Yes?" waits only this long for the floor: later, it would only get in the way. */
+const ACK_WAIT_MS = 2000;
 const STATUS_POLL_MS = 2000;
 const ANSWER_POLL_MS = 3000;
 const REVIEW_KEY = "mooz.connector.review";
@@ -193,7 +195,7 @@ export function ConnectorAgent({
       const kind: Answering = line.kind === "agent" ? "agent" : "person";
       const voice = (text: string) => (line.via === "voice" ? text : null);
       if (heard.kind === "wake") {
-        void inTurn("Yes?", heard.replyTo, kind, voice("Yes?"));
+        void inTurn("Yes?", heard.replyTo, kind, voice("Yes?"), { maxWaitMs: ACK_WAIT_MS });
         return;
       }
       const res = await fetch(`${base}/questions`, {

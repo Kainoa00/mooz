@@ -3,8 +3,8 @@
 Before the agent posts or speaks an answer it asks the mooz server for a turn, waits until
 it's granted, and gives it back when done: one agent answers at a time, answers to people
 first. A reply to another agent may be held until a person in the meeting lets the agents
-continue. An older server without a floor has no turns; the agent then goes ahead, keeping
-its own limit on replies to agents.
+continue. An older server without a floor has no turns; the agent then goes ahead (it keeps
+its own limit on replies to agents either way).
 """
 
 from __future__ import annotations
@@ -44,11 +44,6 @@ LOCAL = Granted()
 
 
 class TurnTaker(Protocol):
-    @property
-    def shared(self) -> bool:
-        """Whether a server floor keeps turns (if not, the agent limits its own replies)."""
-        ...
-
     def turn(
         self, *, answering: Answering, speak: bool, max_wait: float | None = None
     ) -> AbstractAsyncContextManager[Granted | None]:
@@ -58,8 +53,6 @@ class TurnTaker(Protocol):
 
 class NoFloor:
     """No meeting floor (tests, offline): always go ahead."""
-
-    shared = False
 
     @asynccontextmanager
     async def turn(
@@ -112,10 +105,6 @@ class Turns:
         # None until the server has answered a turn request one way or the other.
         self.supported: bool | None = None
 
-    @property
-    def shared(self) -> bool:
-        return self.supported is not False
-
     @asynccontextmanager
     async def turn(
         self, *, answering: Answering, speak: bool, max_wait: float | None = None
@@ -135,8 +124,15 @@ class Turns:
             yield None
             return
         except (httpx.HTTPError, _Garbled) as err:
-            log.warning("could not ask for a turn (%s): answering anyway", type(err).__name__)
-            yield LOCAL
+            # The floor is out of reach: answer a person anyway, but not another agent (with no
+            # floor to pause them, two agents could go back and forth on their owners' bills).
+            go = answering == "person"
+            log.warning(
+                "could not ask for a turn (%s): %s",
+                type(err).__name__,
+                "answering anyway" if go else "not replying to another agent",
+            )
+            yield LOCAL if go else None
             return
         self.supported = True
         try:

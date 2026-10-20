@@ -70,12 +70,26 @@ export function addParticipant(
 
 /** Update a returning participant's name (and host flag) in place, keeping their identity. */
 export function renameParticipant(db: Db, participant: Participant, name: string, isHost: boolean): Participant {
-  db.prepare("UPDATE participants SET name = ?, is_host = ? WHERE identity = ?").run(
+  db.prepare("UPDATE participants SET name = ?, is_host = ?, left_at = NULL WHERE identity = ?").run(
     name,
     isHost ? 1 : 0,
     participant.identity,
   );
   return { ...participant, name, isHost };
+}
+
+/**
+ * LiveKit says a person joined (as session `sid`) or left. A "left" counts only for the session
+ * that last joined, so a late one from a replaced connection changes nothing.
+ */
+export function notePersonPresence(db: Db, identity: string, sid: string | undefined, here: boolean): void {
+  if (here) {
+    db.prepare("UPDATE participants SET left_at = NULL, session_sid = ? WHERE identity = ?").run(sid ?? null, identity);
+  } else {
+    db.prepare(
+      "UPDATE participants SET left_at = ? WHERE identity = ? AND (session_sid IS NULL OR session_sid = ?)",
+    ).run(Date.now(), identity, sid ?? null);
+  }
 }
 
 export function findParticipant(

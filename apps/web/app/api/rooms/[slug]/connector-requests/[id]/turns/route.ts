@@ -11,7 +11,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ slug: string; 
   try {
     assertSameOrigin(req);
     const { slug, id } = await ctx.params;
-    return await askForTurn(requireConnectorAgent(getDb(), req, slug, id), req);
+    return await askForTurn(req, () => requireConnectorAgent(getDb(), req, slug, id));
   } catch (err) {
     return errorResponse(err);
   }

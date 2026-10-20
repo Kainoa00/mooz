@@ -1,4 +1,5 @@
 import {
+  LEFT_GRACE_MS,
   PENDING_TTL_MS,
   activeAgentNames,
   participantNames,
@@ -25,7 +26,7 @@ import { requireParticipant } from "./session";
  */
 
 /** How long a connector agent may be away (a reload, a dropped connection) and still come back. */
-export const LEFT_GRACE_MS = 2 * 60 * 1000;
+export { LEFT_GRACE_MS };
 /**
  * How long an approval counts as live though LiveKit never said the agent joined (its webhook
  * may not reach this server). After that, only an agent that really joined keeps a link alive.
@@ -95,6 +96,25 @@ function toAgent(row: Row): ConnectorAgent {
   };
 }
 
+/**
+ * A connector's name was checked when it was made, against the rules of the time; one the rules
+ * now refuse says so, and how to get going again.
+ */
+function withStoredName(name: string, check: () => string): string {
+  try {
+    return check();
+  } catch (err) {
+    if (err instanceof HttpError && err.status === 400) {
+      throw new HttpError(
+        400,
+        err.code,
+        `${err.message}. "${name}" was fine when you made it; to bring it in, delete it and make one with another name.`,
+      );
+    }
+    throw err;
+  }
+}
+
 /** Revoke a connector's pending and approved requests; returns the agents to disconnect. */
 function revokeLive(db: Db, connectorId: string): Kick[] {
   const live = db
@@ -123,7 +143,9 @@ export function requestConnectorJoin(
   const connector = getOwned(db, ownerKey, connectorId);
   return transaction(db, () => {
     const superseded = revokeLive(db, connector.id);
-    const name = parseAgentName(connector.name, participantNames(db, owner.slug), activeAgentNames(db, owner.slug));
+    const name = withStoredName(connector.name, () =>
+      parseAgentName(connector.name, participantNames(db, owner.slug), activeAgentNames(db, owner.slug)),
+    );
     const requestId = newId("r");
     db.prepare(
       `INSERT INTO agent_requests
@@ -220,7 +242,8 @@ export function withdrawConnector(db: Db, owner: Participant, ownerKey: string, 
 /**
  * LiveKit says a connector agent's tab joined (as session `sid`) or left. A "left" counts only
  * for the session that last joined, so a late one from a replaced connection changes nothing.
- * Coming back after the grace period doesn't count either: returns "expired" (kick it).
+ * Coming back after the grace period doesn't count either: returns "expired" (kick it). A "left"
+ * that counted returns "left".
  */
 export function noteConnectorPresence(
   db: Db,
@@ -228,7 +251,7 @@ export function noteConnectorPresence(
   sid: string | undefined,
   here: boolean,
   now = Date.now(),
-): "expired" | undefined {
+): "expired" | "left" | undefined {
   const live = "agent_identity = ? AND door = 'connector' AND status = 'approved'";
   if (here) {
     const row = db.prepare(`SELECT left_at FROM agent_requests WHERE ${live}`).get(agentIdentity) as
@@ -240,11 +263,10 @@ export function noteConnectorPresence(
     }
     db.prepare(`UPDATE agent_requests SET left_at = NULL, session_sid = ? WHERE ${live}`).run(sid ?? null, agentIdentity);
   } else {
-    db.prepare(`UPDATE agent_requests SET left_at = ? WHERE ${live} AND (session_sid IS NULL OR session_sid = ?)`).run(
-      now,
-      agentIdentity,
-      sid ?? null,
-    );
+    const { changes } = db
+      .prepare(`UPDATE agent_requests SET left_at = ? WHERE ${live} AND (session_sid IS NULL OR session_sid = ?)`)
+      .run(now, agentIdentity, sid ?? null);
+    if (changes > 0) return "left";
   }
   return undefined;
 }
