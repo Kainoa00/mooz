@@ -109,6 +109,18 @@ describe("claimAgentCode", () => {
     );
   });
 
+  it("rejects a name the detector would confuse with an agent's or a person's", () => {
+    const { db, host, guest } = meeting();
+    claimAgentCode(db, { code: createAgentCode(db, host).code, name: "Grok" });
+
+    for (const name of ["Grock", "Grok Prime", "Kainoah"]) {
+      expect(() => claimAgentCode(db, { code: createAgentCode(db, guest).code, name })).toThrowError(
+        expect.objectContaining({ code: "name_taken" }),
+      );
+    }
+    expect(() => claimAgentCode(db, { code: createAgentCode(db, guest).code, name: "Atlas" })).not.toThrow();
+  });
+
   it("frees the name of a denied agent", () => {
     const { db, slug, host } = meeting();
     const first = claimAgentCode(db, { code: createAgentCode(db, host).code, name: "Atlas" });

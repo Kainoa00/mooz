@@ -21,7 +21,7 @@ describe("parseAgentName", () => {
     expect(parseAgentName("  Atlas ", [])).toBe("Atlas");
   });
 
-  it.each(["Zach's Grok", "R2-D2", "Nova 2"])("accepts %j", (name) => {
+  it.each(["Zach's Grok", "Nova Prime", "Max"])("accepts %j", (name) => {
     expect(parseAgentName(name, [])).toBe(name);
   });
 
@@ -33,6 +33,12 @@ describe("parseAgentName", () => {
     ["hey", "reserved_name"],
     ["okay", "reserved_name"],
     ["A", "invalid_agent_name"],
+    ["Al", "invalid_agent_name"],
+    ["Nova 2", "invalid_agent_name"], // would wake on a bare "2"
+    ["R2-D2", "invalid_agent_name"],
+    ["Notes", "reserved_name"], // a word people say all the time
+    ["Zach's Notes", "reserved_name"],
+    ["Mark", "reserved_name"],
     ["x".repeat(25), "invalid_agent_name"],
     ["2pac", "invalid_agent_name"],
     ["<script>", "invalid_agent_name"],
@@ -55,6 +61,56 @@ describe("parseAgentName", () => {
     expect(() => parseAgentName("Zach", ["Kainoa", "zach"])).toThrowError(
       expect.objectContaining({ code: "name_taken" }),
     );
+  });
+
+  it.each([
+    ["Atlis", "Atlas"], // sounds alike
+    ["Atlass", "Atlas"], // spelled alike
+    ["Zack", "Zach"], // a person
+    ["Zack", "Kainoa Zach"], // any word of a person's name
+    ["Lee's Grok", "Grok"], // its wake word is "Grok"
+    ["Grok", "Zach's Grok"], // so is the other's
+  ])("rejects %j next to %j: the wrong one would answer", (name, taken) => {
+    expect(() => parseAgentName(name, [taken])).toThrowError(
+      expect.objectContaining({ status: 409, code: "name_taken", message: expect.stringContaining(taken) }),
+    );
+  });
+
+  it.each([
+    ["Grok Prime", "Grok"], // saying "Grok Prime" would wake Grok too
+    ["Nova Atlas", "Zach's Atlas"],
+  ])("rejects %j next to the agent %j, whose wake word it holds", (name, agent) => {
+    expect(() => parseAgentName(name, [], [agent])).toThrowError(
+      expect.objectContaining({ status: 409, code: "name_taken", message: expect.stringContaining(agent) }),
+    );
+  });
+
+  it("lets an agent hold a person's name as a word that isn't its wake word: people don't wake", () => {
+    expect(parseAgentName("Grok Prime", ["Grok"], [])).toBe("Grok Prime");
+  });
+
+  it.each([
+    ["Zach's Grok", "Zach"], // its owner: "Zach" alone doesn't wake "Zach's Grok"
+    ["Nova", "Atlas"],
+    ["Atlas", "Alice"],
+  ])("accepts %j next to %j", (name, taken) => {
+    expect(parseAgentName(name, [taken])).toBe(name);
+  });
+});
+
+describe("people's names next to agents", () => {
+  it.each([
+    ["Atlis", "Atlas"],
+    ["Grok Smith", "Zach's Grok"],
+    ["grok", "Grok"],
+  ])("refuses %j while %j is here", (name, agent) => {
+    expect(() => parseDisplayName(name, [agent])).toThrowError(
+      expect.objectContaining({ status: 409, code: "name_taken", message: expect.stringContaining(agent) }),
+    );
+  });
+
+  it("allows a person whose name only shares a word with a multi-word agent's other words", () => {
+    expect(parseDisplayName("Zach", ["Zach's Grok"])).toBe("Zach");
   });
 });
 

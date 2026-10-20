@@ -12,7 +12,11 @@ export function useTestEnv(): void {
 export const LK_KEY = "testkey";
 export const LK_SECRET = "testsecret-testsecret-testsecret-0";
 
-export function jsonRequest(url: string, body: unknown, headers: Record<string, string> = {}): Request {
+export function jsonRequest(
+  url: string,
+  body: unknown,
+  headers: Record<string, string> = {},
+): Request {
   return new Request(url, {
     method: "POST",
     headers: { "content-type": "application/json", ...headers },
@@ -20,7 +24,9 @@ export function jsonRequest(url: string, body: unknown, headers: Record<string, 
   });
 }
 
-export function params<T extends Record<string, string>>(value: T): { params: Promise<T> } {
+export function params<T extends Record<string, string>>(
+  value: T,
+): { params: Promise<T> } {
   return { params: Promise.resolve(value) };
 }
 
@@ -34,3 +40,19 @@ export function setCookies(res: Response): Record<string, string> {
   }
   return out;
 }
+
+/** Agent names that are valid and that no two of sound alike, for tests that need many. */
+export const AGENT_NAMES = [
+  "Atlas",
+  "Nova",
+  "Grok",
+  "Orion",
+  "Pixel",
+  "Quill",
+  "Sage",
+  "Vega",
+  "Juno",
+  "Kiwi",
+  "Lumen",
+  "Rocket",
+] as const;

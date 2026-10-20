@@ -3,7 +3,7 @@ import { OWNER_COOKIE_HTTPS as OWNER_COOKIE, findConnectorBySecret } from "@/lib
 import { getDb } from "@/lib/db";
 import { resetRateLimitsForTests } from "@/lib/rate-limit";
 import { addParticipant, createRoom } from "@/lib/rooms";
-import { jsonRequest, setCookies, useTestEnv } from "@/test/helpers";
+import { AGENT_NAMES as NAMES, jsonRequest, setCookies, useTestEnv } from "@/test/helpers";
 import { CREATES_PER_MINUTE, CREATES_PER_PERSON_PER_HOUR, GET, POST } from "./route";
 
 let inMeeting: { slug: string; cookie: string };
@@ -75,7 +75,7 @@ describe("/api/connectors", () => {
 
     // One person can make only so many…
     const mine: number[] = [];
-    for (let i = 0; i <= CREATES_PER_PERSON_PER_HOUR; i++) mine.push((await create({ name: `G${i}`, app: "grok" })).status);
+    for (let i = 0; i <= CREATES_PER_PERSON_PER_HOUR; i++) mine.push((await create({ name: `Grok ${NAMES[i]}`, app: "grok" })).status);
     expect(mine.slice(0, CREATES_PER_PERSON_PER_HOUR).every((s) => s === 201)).toBe(true);
     expect(mine.at(-1)).toBe(429);
 

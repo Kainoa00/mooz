@@ -408,6 +408,90 @@
    "via": "voice",
    "text": "what is next\n, Atlas?",
    "question": "what is next\n"
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "Atlas, ask Nova what she thinks",
+   "question": "ask Nova what she thinks"
+  },
+  {
+   "name": "Nova",
+   "via": "voice",
+   "text": "Atlas, ask Nova what she thinks",
+   "question": null
+  },
+  {
+   "name": "Nova",
+   "via": "voice",
+   "text": "Nova, what does Atlas think?",
+   "question": "what does Atlas think?"
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "Nova, what does Atlas think?",
+   "question": null
+  },
+  {
+   "name": "Atlas",
+   "via": "voice",
+   "text": "Ask Nova what Atlas thinks",
+   "question": null
+  },
+  {
+   "name": "Nova",
+   "via": "voice",
+   "text": "Ask Nova what Atlas thinks",
+   "question": null
+  },
+  {
+   "name": "Atlas",
+   "via": "chat",
+   "text": "@Atlas @Nova what do you think?",
+   "question": "@Nova what do you think?"
+  },
+  {
+   "name": "Nova",
+   "via": "chat",
+   "text": "@Atlas @Nova what do you think?",
+   "question": "@Atlas what do you think?"
+  },
+  {
+   "name": "Nova",
+   "via": "chat",
+   "text": "@Nova, Atlas says the deploy is blocked. Agree?",
+   "question": "Atlas says the deploy is blocked. Agree?"
+  },
+  {
+   "name": "Atlas",
+   "via": "chat",
+   "text": "@Nova, Atlas says the deploy is blocked. Agree?",
+   "question": null
+  },
+  {
+   "name": "Atlas",
+   "via": "chat",
+   "text": "@Atlas, Nova here. What's the deploy status?",
+   "question": "Nova here. What's the deploy status?"
+  },
+  {
+   "name": "Nova",
+   "via": "chat",
+   "text": "@Atlas, Nova here. What's the deploy status?",
+   "question": null
+  },
+  {
+   "name": "Nova",
+   "via": "chat",
+   "text": "Hey Nova, Atlas already answered that",
+   "question": "Atlas already answered that"
+  },
+  {
+   "name": "Atlas",
+   "via": "chat",
+   "text": "Hey Nova, Atlas already answered that",
+   "question": null
   }
  ]
 }

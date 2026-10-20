@@ -66,8 +66,11 @@ describe("POST /api/rooms/[slug]/join", () => {
     claimAgentCode(db, { code: createAgentCode(db, kai).code, name: "Atlas" });
 
     const res = await POST(jsonRequest(url(slug), { name: "atlas" }), params({ slug }));
-
     expect(res.status).toBe(409);
+
+    const alike = await POST(jsonRequest(url(slug), { name: "Atlis Smith" }), params({ slug }));
+    expect(alike.status).toBe(409);
+    expect((await alike.json()).error.message).toMatch(/sounds like Atlas/);
   });
 
   it.each([

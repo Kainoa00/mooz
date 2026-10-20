@@ -163,9 +163,9 @@ describe("letting go of abandoned links", () => {
     make("Fresh");
     age(make("Stale").id, now - UNUSED_LINK_TTL_MS - 1);
     age(make("Idle").id, 0, now - IDLE_LINK_TTL_MS - 1);
-    age(make("Used").id, 0, now - 1000);
+    age(make("Busy").id, 0, now - 1000);
     pruneConnectors(db, now);
-    expect(ids()).toEqual(["Fresh", "Used"]);
+    expect(ids()).toEqual(["Busy", "Fresh"]);
   });
 
   it("keeps one in a meeting, but not for a request left pending or an agent that never joined", () => {

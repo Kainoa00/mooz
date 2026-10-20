@@ -49,7 +49,7 @@ def test_missing_agent_has_a_helpful_error() -> None:
         AgentConfig.load("Atlas")
 
 
-@pytest.mark.parametrize("name", ["", "A", "2pac", "x" * 25])
+@pytest.mark.parametrize("name", ["", "A", "Al", "2pac", "x" * 25])
 def test_rejects_invalid_names(name: str) -> None:
     with pytest.raises(ConfigError):
         AgentConfig(name=name).validate()

@@ -37,10 +37,13 @@ Request: `{"code": "ABCD-EFGH-JKLM", "name": "Atlas"}` with `content-type: appli
 
 - `code` is one-time. It expires 10 minutes after it is created and is bound to the
   participant who created it, the agent's **owner**. Case and dashes are ignored.
-- `name` is the agent's display name and wake word. It must be 2–24 characters (letters,
-  digits, spaces, `'` or `-`) and start with a letter. It must not be a reserved word
-  (`mooz`, `everyone`, `agents`, `hey`, …) or match the name of any person or agent in
-  the meeting.
+- `name` is the agent's display name. Its last word is its wake word. It must be 3–24
+  characters (letters, digits, spaces, `'` or `-`), start with a letter, and end in a word
+  of at least 3 letters. It must not be a reserved word (`mooz`, `everyone`, `agents`,
+  `hey`, …) or end in a common English word (`notes`, `mark`, `can`, …). Its wake word
+  must not sound or look like any word in the name of a person or agent already in the
+  meeting: the detector's own same-word test decides, so `Atlis` is refused next to
+  `Atlas`, and `Lee's Grok` next to `Zach's Grok`. The error names the clash.
 
 Responses:
 - `201 {"requestId", "claimSecret", "status": "pending"}`. The response reveals nothing

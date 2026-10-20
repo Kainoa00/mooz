@@ -115,7 +115,7 @@ export function claimAgentCode(
 
     let name: string;
     try {
-      name = parseAgentName(input.name, [...participantNames(db, row.room_slug), ...activeAgentNames(db, row.room_slug)]);
+      name = parseAgentName(input.name, participantNames(db, row.room_slug), activeAgentNames(db, row.room_slug));
     } catch (err) {
       db.prepare("UPDATE agent_codes SET attempts = attempts + 1 WHERE code_hash = ?").run(codeHash);
       return { rejected: err };

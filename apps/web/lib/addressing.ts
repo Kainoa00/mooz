@@ -71,6 +71,19 @@ export function phoneticKey(word: string): string {
   return key;
 }
 
+/** A name's words as the detector compares them: lowercased, apostrophes and "'s" dropped. */
+export function nameWords(name: string): string[] {
+  return tokens(name).map((t) => t.norm);
+}
+
+/**
+ * The words that wake an agent on their own: its name if it's one word, else the last word
+ * ("Zach's Grok" answers to "Grok"; "Zach" alone doesn't wake it).
+ */
+export function wakeWord(name: string): string | undefined {
+  return nameWords(name).at(-1);
+}
+
 function tokens(text: string): Token[] {
   const out: Token[] = [];
   for (const m of text.matchAll(/[A-Za-z0-9']+/g)) {
@@ -96,7 +109,8 @@ export function ratio(a: string, b: string): number {
   return (200 * prev[b.length]) / (a.length + b.length);
 }
 
-function sameWord(heard: string, wake: string): boolean {
+/** Whether the detector would hear `heard` as the wake word `wake` (spelled or sounding alike). */
+export function sameWord(heard: string, wake: string): boolean {
   if (heard === wake) return true;
   if (heard.length < 3) return false;
   const r = ratio(heard, wake);

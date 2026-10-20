@@ -13,7 +13,7 @@ import tomli_w
 
 Brain = Literal["claude", "grok"]
 BRAINS: tuple[Brain, ...] = ("claude", "grok")
-_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9' -]{1,23}$")
+_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9' -]{2,23}$")
 _LABEL = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 _REPO = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]{1,100}$")
 
@@ -83,7 +83,7 @@ class AgentConfig:
     def validate(self) -> None:
         if not _NAME.match(self.name.strip()):
             raise ConfigError(
-                "Agent names are 2-24 characters (letters, numbers, spaces, ' or -), "
+                "Agent names are 3-24 characters (letters, numbers, spaces, ' or -), "
                 "starting with a letter"
             )
         if self.brain not in BRAINS:

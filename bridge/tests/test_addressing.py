@@ -32,6 +32,12 @@ def test_mid_sentence_vocative() -> None:
     assert ATLAS.check("So what I want to know, Atlas, is why CI fails", via="voice") is not None
 
 
+@pytest.mark.xfail(strict=True, reason="known limitation: only the first of several names is heard")
+def test_two_names_in_one_vocative() -> None:
+    # "@Atlas @Nova" or "@everyone" reach both; spoken, only Atlas answers.
+    assert AddressDetector("Nova").check("Atlas and Nova, any thoughts?", via="voice") is not None
+
+
 def test_phonetic_key_groups_spellings_that_sound_alike() -> None:
     assert phonetic_key("Atlas") == phonetic_key("Atlis") == phonetic_key("Atlus")
     assert phonetic_key("Atlas") != phonetic_key("Alice")

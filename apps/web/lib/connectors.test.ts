@@ -12,7 +12,7 @@ import {
 } from "./connectors";
 import { getDb } from "./db";
 import { HttpError } from "./http";
-import { useTestEnv } from "@/test/helpers";
+import { AGENT_NAMES as NAMES, useTestEnv } from "@/test/helpers";
 
 beforeEach(useTestEnv);
 
@@ -88,9 +88,9 @@ describe("connectors", () => {
   it("are limited per owner", () => {
     const db = getDb();
     for (let i = 0; i < MAX_CONNECTORS_PER_OWNER; i++) {
-      createConnector(db, KAI, { name: `Agent ${String.fromCharCode(65 + i)}`, app: "other" });
+      createConnector(db, KAI, { name: `Agent ${NAMES[i]}`, app: "other" });
     }
-    expect(() => createConnector(db, KAI, { name: "One More", app: "other" })).toThrow("at most");
+    expect(() => createConnector(db, KAI, { name: "Agent Zeta", app: "other" })).toThrow("at most");
   });
 
   it("ignore an empty or unknown secret", () => {
