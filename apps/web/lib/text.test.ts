@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { flatten, hasHidden, renderLine, stripInvisible } from "./text";
 
@@ -69,5 +70,15 @@ describe("renderLine", () => {
     expect(renderLine({ role: "owner", name: "Kainoa", via: "voice", kind: "human", text: "ok" })).toBe(
       "[owner] Kainoa: ok",
     );
+  });
+});
+
+describe("the shared escaping cases (the bridge runs the same file)", () => {
+  const { cases } = JSON.parse(readFileSync(new URL("../../../bridge/tests/text_cases.json", import.meta.url), "utf8")) as {
+    cases: { name: string; text: string; flat: string; markup?: boolean }[];
+  };
+
+  it.each(cases)("$name", ({ text, flat, markup }) => {
+    expect(flatten(text, { markup: markup !== false })).toBe(flat);
   });
 });

@@ -1,9 +1,9 @@
 /**
  * Meeting text as models see it: one line per message, nothing hidden, nothing that can
- * close a block. Like the bridge's rules (mooz_agent/transcript.py), plus two more for text
- * that leaves for someone else's assistant app: lookalike characters are normalized (so a
- * fullwidth "＜/meeting＞" is escaped too), and a typed line break shows as " ⏎ ", so what
- * follows it can't pass for a new message with its own role tag.
+ * close a block. Lookalike characters are normalized (so a fullwidth "＜/meeting＞" is escaped
+ * too), and a typed line break shows as " ⏎ ", so what follows it can't pass for a new message
+ * with its own role tag. The bridge (mooz_agent/transcript.py) applies the same rules; both run
+ * bridge/tests/text_cases.json.
  */
 
 // Everything that could start a new line for a model's tokenizer.
