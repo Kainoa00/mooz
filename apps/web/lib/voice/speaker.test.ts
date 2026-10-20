@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { TTS_RATE, VoiceError } from "./elevenlabs";
-import { AgentSpeaker, BARGE_IN_MS, LEAD_SECONDS, MAX_WAITING, PEOPLE_FIRST_MS, type AudioOut } from "./speaker";
+import { AgentSpeaker, BARGE_IN_MS, LEAD_SECONDS, MAX_WAITING, PEOPLE_FIRST_MS, PLAYOUT_TAIL_MS, type AudioOut } from "./speaker";
 
 function fakeOut() {
   const started: { at: number; samples: number }[] = [];
@@ -61,7 +61,8 @@ describe("AgentSpeaker", () => {
     expect(started[0]).toEqual({ at: 10 + LEAD_SECONDS, samples: 2400 });
     expect(started[1].at).toBeCloseTo(10 + LEAD_SECONDS + 2400 / TTS_RATE, 9);
     expect(started[1].samples).toBe(2); // the split sample was put back together
-    expect(time.waited()).toBeCloseTo((LEAD_SECONDS + 2402 / TTS_RATE) * 1000, 6);
+    // …and a moment more, for it to reach people.
+    expect(time.waited()).toBeCloseTo((LEAD_SECONDS + 2402 / TTS_RATE) * 1000 + PLAYOUT_TAIL_MS, 6);
   });
 
   it("never leaves a gap when the next chunk arrives just before the last one ends", async () => {

@@ -20,6 +20,9 @@ PEOPLE_FIRST_SECONDS = 5.0
 # Stop speaking when a person talks over the agent for longer than this.
 BARGE_IN_SECONDS = 1.0
 POLL_SECONDS = 0.05
+# Audio that has left our queue is still being encoded, sent and buffered on its way to people:
+# hold the turn this much longer, so the next voice never starts over our last words.
+PLAYOUT_TAIL_SECONDS = 0.25
 
 
 class Mouth:
@@ -34,6 +37,7 @@ class Mouth:
         queued_audio: Callable[[], float] = lambda: 0.0,
         clear_audio: Callable[[], None] = lambda: None,
         clock: Callable[[], float] = time.monotonic,
+        playout_tail: float = 0.0,
     ) -> None:
         self._send_chat = send_chat
         self._capture_frame = capture_frame
@@ -46,6 +50,7 @@ class Mouth:
         self.people_first_seconds = PEOPLE_FIRST_SECONDS
         self.barge_in_seconds = BARGE_IN_SECONDS
         self.poll_seconds = POLL_SECONDS
+        self.playout_tail = playout_tail
         # Our answers of each kind go one at a time (a held reply to an agent doesn't stop an
         # answer to a person), and we never talk over ourselves.
         self._queues: dict[Answering, asyncio.Lock] = {
@@ -141,6 +146,8 @@ class Mouth:
             await asyncio.sleep(self.poll_seconds)
         if stop.stopped:
             self._clear_audio()
+        elif not first:
+            await asyncio.sleep(self.playout_tail)
 
     async def _people_done(self, deadline: float | None) -> bool:
         give_up = self._clock() + self.people_first_seconds

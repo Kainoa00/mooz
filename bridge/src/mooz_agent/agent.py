@@ -27,7 +27,7 @@ from .room import (
     TrackEndedHandler,
     TrackHandler,
 )
-from .speaking import Mouth
+from .speaking import PLAYOUT_TAIL_SECONDS, Mouth
 from .tasks import (
     Task,
     TaskCommand,
@@ -137,6 +137,8 @@ class Agent:
             people_talking=room.humans_speaking,
             queued_audio=lambda: float(getattr(voice, "queued_duration", 0.0)),
             clear_audio=getattr(voice, "clear_queue", lambda: None),
+            # A real audio source sends what it plays over the network: let it arrive.
+            playout_tail=PLAYOUT_TAIL_SECONDS if hasattr(voice, "queued_duration") else 0.0,
         )
         self._clock = clock
         self._follow_up: dict[str, float] = {}

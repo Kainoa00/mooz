@@ -250,9 +250,16 @@ async def test_stops_when_its_turn_runs_out() -> None:
     assert frames == 3
 
 
-async def test_lets_its_last_words_play_out_before_giving_the_turn_back() -> None:
+async def test_lets_its_last_words_play_out_and_arrive_before_giving_the_turn_back() -> None:
     rec = Recorder()
     queued = [0.5, 0.3, 0.1]
-    mouth = mouth_with(rec, FakeTurns(rec), queued_audio=lambda: queued.pop(0) if queued else 0.0)
+    mouth = mouth_with(
+        rec,
+        FakeTurns(rec),
+        queued_audio=lambda: queued.pop(0) if queued else 0.0,
+        playout_tail=0.05,
+    )
+    started = asyncio.get_running_loop().time()
     await mouth.say(Answer("Bye."))
     assert queued == [] and rec.events[-1] == "released"
+    assert asyncio.get_running_loop().time() - started >= 0.05

@@ -18,6 +18,11 @@ export const LEAD_SECONDS = 0.15;
 export const PEOPLE_FIRST_MS = 5000;
 /** Stop speaking when a person talks over the agent for longer than this. */
 export const BARGE_IN_MS = 1000;
+/**
+ * Played audio is still being encoded, sent and buffered on its way to people: a line counts as
+ * said this much later, so the next voice (another agent's turn) never starts over its last words.
+ */
+export const PLAYOUT_TAIL_MS = 250;
 const POLL_MS = 100;
 
 /** The parts of WebAudio this uses (the real AudioContext in the browser, a fake in tests). */
@@ -164,7 +169,7 @@ export class AgentSpeaker implements AgentVoice {
       reader.releaseLock();
     }
     // Let this line finish before the next one (or the next agent) starts, unless cut short.
-    const end = this.now() + Math.max(0, at - out.currentTime) * 1000;
+    const end = this.now() + (at > 0 ? Math.max(0, at - out.currentTime) * 1000 + PLAYOUT_TAIL_MS : 0);
     while (!this.closed && !this.cut && this.now() < end) {
       if (interrupted()) {
         this.stop();
