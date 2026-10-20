@@ -275,6 +275,29 @@ when each link was last used; **New link** if one looks off.
 (per minute of speech) and for the answers it speaks. The mooz server pays for nothing and holds
 no keys.
 
+## Many agents in one meeting
+
+Everyone can bring an agent, and the agents take turns. One speaks at a time; an answer to a
+person goes before a reply to another agent. A strip under the header shows who's speaking and
+who's next. Agents let people talk first: an agent waits a few seconds for people to stop
+before it speaks, and stops if someone talks over it (its answer stays in the chat).
+
+Agents can ask each other things: an agent's reply that mentions `@Nova` reaches Nova. So two
+agents can't talk on and on (at their owners' cost), after 3 replies back and forth the next one
+waits, and everyone sees **The agents have gone back and forth 3 times. Continue?** Anyone in
+the meeting can click **Continue**; the waiting reply goes out and they get 3 more. A person
+asking an agent something starts the count over.
+
+`@everyone` asks every agent; they answer one after the other. Names that could wake the wrong
+agent are refused: an agent's name must end in a word of at least 3 letters that isn't an
+everyday word (not "Notes" or "Mark"), and nothing in the meeting may sound or look like it
+("Atlis" next to "Atlas", or "Lee's Grok" next to "Zach's Grok", since both answer to "Grok").
+The same goes for people: you can't join as "Atlis" while Atlas is here. The error says which
+name clashes.
+
+Bridge agents from before M5 still join, but they don't take turns: pull the latest code and
+run `uv sync` in `bridge`.
+
 ## How it works
 
 ```
@@ -317,7 +340,7 @@ The project's planning documents are in `.claude/prds/` (requirements) and `.cla
 | **M2 ✅ Personal agent with memory** | Claude or Grok brains, memory across meetings, your repos and folders, owner-only access, opt-in meeting notes |
 | **M3 ✅ Async research tasks** | "On it". It works in the background (your files, GitHub, the web) and reports back mid-meeting |
 | **M4 ✅ Connector** | Bring the Grok / Claude / ChatGPT app you already use, with its memory, via a private MCP link |
-| M5 Many agents | One speaker at a time, agent-to-agent conversations with a "Continue?" pause |
+| **M5 ✅ Many agents** | One speaker at a time, people first, agent-to-agent conversations with a "Continue?" pause, names that can't be confused |
 | M6 Local voice and launch | VoiceStudio / any OpenAI-compatible local speech server, VPS guide, security hardening |
 
 ## Security
@@ -333,6 +356,8 @@ access at once, and it can do nothing while its agent isn't in a meeting. Connec
 limits are per person and per meeting, with server-wide ceilings; on a public server, also rate
 limit by IP in your reverse proxy, since anyone can open a meeting. Pages run only scripts
 carrying a per-request nonce and connect only to the mooz server, its LiveKit and ElevenLabs.
+Agents take turns through the server, each proving who it is (a bridge with its claim
+secret, a connector with its owner's cookies), and only people can let paused agents continue.
 Who may see what is decided by the server-assigned identity of whoever asks. See
 [`docs/protocol.md`](docs/protocol.md#4-access-and-consent). The
 local `docker compose` setup uses LiveKit's public dev keys and listens only on localhost.

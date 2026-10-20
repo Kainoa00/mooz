@@ -124,8 +124,9 @@ people choose freely. The reference bridge renders one escaped line per message,
 ### Speaking
 
 Publish one microphone track (48 kHz mono) and play your synthesized speech into it.
-Post the full answer to chat first, then speak the short version. Only one answer at a
-time per agent.
+Post the full answer to chat first, then speak the short version, all within a turn from
+the meeting's floor (see [Taking turns](#taking-turns)). Only one answer at a time per
+agent.
 
 ### Being addressed
 
@@ -138,10 +139,76 @@ An agent answers only when addressed:
 - "Hey agents, ..." (set off by a comma) addresses every agent by voice.
 - Saying the name alone ("Hey Atlas.") opens an 8-second window. In it, the same
   person's next sentence counts as the question.
-- An agent should stop answering other agents after 3 turns in a row with no human
-  speaking.
 
-Being mentioned ("I asked Atlas yesterday") is not being addressed.
+A multi-word name wakes on its last word ("Grok" for "Zach's Grok"). Being mentioned ("I
+asked Atlas yesterday") is not being addressed. Only the first of several names said in
+one breath is heard ("Atlas and Nova, …" reaches Atlas); `@Atlas @Nova` or `@everyone`
+reaches both.
+
+Names that this detection could confuse are refused when an agent claims one or a person
+joins: see `name` under [`POST /api/agent/claim`](#post-apiagentclaim). The test is the
+detector's own, so what it refuses is exactly what it would mix up.
+
+### Taking turns
+
+Several agents can be in one meeting, and they answer one at a time, people first. Before
+an agent posts or speaks an answer, it asks the server for a turn, and gives it back when
+done.
+
+| Call | What it does |
+|---|---|
+| `POST /api/agent/claim/{requestId}/turns` | Ask for a turn: `{"answering": "person" \| "agent", "speak": true \| false}` |
+| `GET /api/agent/claim/{requestId}/turns/{turnId}` | Where it stands; waits up to 25 s for it to change while it's waiting or held |
+| `POST /api/agent/claim/{requestId}/turns/{turnId}/done` | Finished (or no longer wanted) |
+
+Each call carries `Authorization: Bearer {claimSecret}`, and works only while the agent is
+in the meeting. Each answers `{"turn": {"id", "status", "endsInMs"?, "reason"?}}`:
+
+- `status` is `waiting`, `held`, `granted` or `ended`. `endsInMs` is the time a granted turn
+  has left. `reason` says why one ended: `done`, `timeout`, `expired`, `left`, `replaced` or
+  `meeting_ended`.
+- Asking returns at once. If the turn isn't `granted`, check it until it is (or ends).
+
+How the server decides:
+
+- **One turn at a time** in a meeting. Answers to people (`answering: "person"`, which
+  includes `@everyone`) go ahead of replies to agents, then first come, first served.
+- **Turns are short.** A turn with speech lasts at most 45 s, a chat-only turn 10 s; then
+  it ends (`timeout`) and the next one starts. A waiting or held turn that isn't checked for
+  10 s goes away (`expired`).
+- **One open turn of each kind per agent.** Asking again replaces the last one of that kind.
+  So a held reply to an agent doesn't stop the agent answering a person.
+- **Agents pause.** After 3 agent-to-agent turns in a row, the next reply to an agent is
+  `held`, not dropped. The meeting shows "The agents have gone back and forth 3 times.
+  Continue?", and any person in the meeting can click it
+  (`POST /api/rooms/{slug}/agents/continue`, with their participant cookie; agents have
+  none). The held reply then goes out, and the count starts over. A turn that answers a
+  person also starts the count over.
+- An agent that leaves or is removed gives up its turns. When the meeting ends, the floor
+  is forgotten.
+
+What the agent must do:
+
+- Post and speak only within a granted turn, and stop at its end.
+- **People first.** Wait up to 5 s for people to stop talking before speaking (LiveKit's
+  active speakers). After that, leave the answer in the chat. Stop speaking if a person talks
+  over it for more than a second; the chat answer stays.
+- Give the turn back only after its last audio has played out, so voices never overlap.
+
+The meeting sees the floor in the room metadata:
+`{"floor": {"speaking": identity | null, "next": identity | null, "paused": bool}}`, next
+to `notes_allowed`.
+
+Errors: `404 request_not_found` (wrong id or secret) or `turn_not_found`;
+`409 not_in_meeting`; `400 invalid_body`; `413` for a body over 1 KB; `429 rate_limited` (more
+than 30 turns or 120 checks a minute) or `floor_busy` (20 turns waiting).
+
+A server older than M5 answers `404` with no JSON body. There is no floor then: answer
+anyway, and stop answering other agents after 3 turns in a row with no person speaking.
+
+`answering` is the agent's own word: the server can't check it. The pause keeps well-behaved
+agents from looping and running up their owners' bills. An agent that lies about it can talk
+more, at its owner's cost, but can't make other agents talk, and the host can remove it.
 
 ## 3. Leaving
 
@@ -359,6 +426,12 @@ only for a question it knows of, then posts
 `spoken`. If a packet is missed, the tab picks the answer up from `GET …/questions`. The owner
 can choose to review each answer before it's posted.
 
+The tab takes turns like a bridge (see [Taking turns](#taking-turns)), with the owner's cookies
+instead of a claim secret: `POST /api/rooms/{slug}/connector-requests/{id}/turns`,
+`GET …/turns/{turnId}` and `POST …/turns/{turnId}/done`. It takes one for each answer, for
+"Yes?", and for "One sec, checking." (only for a person, and only if the floor is free right
+then).
+
 ## Changelog
 
 - **v0** (M1): bridge door, single-use tokens, host approval and removal, `lk.chat`.
@@ -373,3 +446,7 @@ can choose to review each answer before it's posted.
 - **v0** (M4): the connector door: connector links, `connector-requests`, the `/mcp/{secret}`
   endpoint, `mooz.connector` answer packets, and the `door = connector` and `connector_app`
   attributes. All additive; bridge agents are unchanged.
+- **v0** (M5): taking turns (`…/turns` for both doors, `agents/continue`, and `floor` in the
+  room metadata), and stricter names: 3 or more characters, a last word of 3 or more letters
+  that isn't a common word, and nothing the detector would confuse with someone already
+  here. Agents from M4 still join; without taking turns they talk over others, so update.

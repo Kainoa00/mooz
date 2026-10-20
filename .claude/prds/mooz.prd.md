@@ -65,7 +65,7 @@ We'll know we're right when **people who complete setup use an agent in at least
 | 2 | Personal agent with memory | The ready-made agent has Claude or Grok brains, persistent memory, local repo and folder access, and owner-only tasks with public-data rules, plus opt-in meeting notes (live Claude/Grok checks pending keys) | complete | `.claude/plans/m2-personal-agent-with-memory.plan.md` |
 | 3 | Async research tasks | "On it" with background work, spoken and chat progress, and a task panel; GitHub issues, PRs and CI; web search; private answers (live Claude/Grok/GitHub checks pending keys) | complete | `.claude/plans/m3-async-research-tasks.plan.md` |
 | 4 | Connector door | Grok, Claude or ChatGPT joins via a private MCP link: queued question, one-tap prefill, browser-side voice | complete | `.claude/plans/m4-connector-door.plan.md` |
-| 5 | Many agents, one floor | Multiple agents, one speaker at a time, agent-to-agent with the 3-turn pause, naming rules hardened | in-progress | `.claude/plans/m5-many-agents-one-floor.plan.md` |
+| 5 | Many agents, one floor | Multiple agents, one speaker at a time (people first), agent-to-agent with the 3-turn pause and Continue, names the detector could confuse refused (live two-agent check pending keys) | complete | `.claude/plans/m5-many-agents-one-floor.plan.md` |
 | 6 | Local voice and launch | OpenAI-compatible local voice (VoiceStudio), VPS guide, meeting summary export, security hardening backlog (below), README and demo, v0.1 release | pending | — |
 
 ## Open Questions
@@ -73,7 +73,7 @@ We'll know we're right when **people who complete setup use an agent in at least
 - [ ] Can an HTTPS meeting page call a local speech server at `http://localhost:3900` (mixed content and Private Network Access rules) in Chrome, Safari and Firefox? Verify before M6.
 - [ ] Does ElevenLabs realtime speech-to-text allow enough concurrent streams per key for a 6-person meeting? Verify in M1.
 - [ ] Does Muse's custom connector builder work against mooz's API, or does Muse need a cataloged connector? Revisit in v0.2.
-- [ ] How should "addressed vs merely mentioned" be judged: fuzzy name match only, or name match plus a cheap LLM check? Measure false wakes in M1 and M5.
+- [x] How should "addressed vs merely mentioned" be judged: fuzzy name match only, or name match plus a cheap LLM check? Fuzzy rules only (decided in M5): no extra model call, cost or latency per utterance. Instead, names the detector could confuse are refused (for agents and people), and the rules are measured on the shared corpus in `bridge/tests/addressing_cases.json`, which both detectors run.
 
 ## Security hardening backlog (from the M1 security review; scheduled for M6)
 - [ ] Rate limits on room creation, joins, code minting and claims, plus cleanup of old rows (review L5)
@@ -95,6 +95,12 @@ We'll know we're right when **people who complete setup use an agent in at least
 - Privacy is recognised from phrases ("privately", "just for me", "DM me", "as a private task"…); an unrecognised phrasing gets a public answer.
 - The web search cap is about 5 per task: Claude must keep the tool on a paused turn's continuation, so a step that pauses mid-search can run a few more; Grok can run a few more within one step.
 - Live Claude and Grok research, web search and GitHub have only been tested against recorded request shapes until the opt-in live tests run with real keys.
+
+## Known limits after M5 (documented in `docs/protocol.md`)
+- What an answer is for (`answering: person` or `agent`) is the agent's own word. An agent that lies skips the pause and talks more, at its owner's cost, but can't make other agents talk; the host can remove it.
+- People first relies on LiveKit's active speakers: noise or a loud room can delay an agent (up to 5 s, then chat only) or cut it off; the chat answer always stays.
+- Only the first of several names said aloud is heard ("Atlas and Nova, …" reaches Atlas); `@Atlas @Nova` and `@everyone` reach both.
+- Bridges from before M5 don't take turns (they keep their own 3-in-a-row limit); the floor is in this server's memory, so a server restart forgets it (and the answers waiting for a turn just then are dropped).
 
 ## Risks
 | Risk | Likelihood | Impact | Mitigation |
