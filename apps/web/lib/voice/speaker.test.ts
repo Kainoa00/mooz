@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { TTS_RATE, VoiceError } from "./elevenlabs";
-import { AgentSpeaker, LEAD_SECONDS, MAX_WAITING, type AudioOut } from "./speaker";
+import { AgentSpeaker, BARGE_IN_MS, LEAD_SECONDS, MAX_WAITING, PEOPLE_FIRST_MS, type AudioOut } from "./speaker";
 
 function fakeOut() {
   const started: { at: number; samples: number }[] = [];
@@ -34,23 +34,34 @@ function pcmStream(chunks: number[][], release?: Promise<void>) {
 
 const second = (n: number) => Array.from({ length: n * 2 }, () => 0); // n samples of silence
 
+/** A clock that moves only when the speaker waits. */
+function clock(start = 1_000_000) {
+  let t = start;
+  return {
+    now: () => t,
+    wait: async (ms: number) => {
+      t += ms;
+    },
+    waited: () => t - start,
+  };
+}
+
 describe("AgentSpeaker", () => {
-  it("plays each chunk right after the one before, a moment from now", async () => {
+  it("plays each chunk right after the one before, a moment from now, and waits for it to end", async () => {
     const { out, started } = fakeOut();
-    const waits: number[] = [];
+    const time = clock();
     const speaker = new AgentSpeaker({
       out,
       destination: {},
       synthesize: async () => pcmStream([second(2400), [0], [0, 0, 0], []]),
       onError: () => undefined,
-      wait: async (ms) => void waits.push(ms),
+      ...time,
     });
-    speaker.speak("March 30th.");
-    await vi.waitFor(() => expect(waits).toHaveLength(1));
+    await speaker.speak("March 30th.");
     expect(started[0]).toEqual({ at: 10 + LEAD_SECONDS, samples: 2400 });
     expect(started[1].at).toBeCloseTo(10 + LEAD_SECONDS + 2400 / TTS_RATE, 9);
     expect(started[1].samples).toBe(2); // the split sample was put back together
-    expect(waits[0]).toBeCloseTo((LEAD_SECONDS + 2402 / TTS_RATE) * 1000, 6);
+    expect(time.waited()).toBeCloseTo((LEAD_SECONDS + 2402 / TTS_RATE) * 1000, 6);
   });
 
   it("never leaves a gap when the next chunk arrives just before the last one ends", async () => {
@@ -149,5 +160,90 @@ describe("AgentSpeaker", () => {
     release();
     await new Promise((r) => setTimeout(r, 10));
     expect(errors).toEqual([]);
+  });
+
+  it("resolves each line once it has been said, and at once for one it drops", async () => {
+    const { out } = fakeOut();
+    const speaker = new AgentSpeaker({ out, destination: {}, synthesize: async () => pcmStream([second(10)]), onError: () => undefined, ...clock() });
+    await expect(speaker.speak("one")).resolves.toBeUndefined();
+    await expect(speaker.speak("   ")).resolves.toBeUndefined();
+    speaker.close();
+    await expect(speaker.speak("after")).resolves.toBeUndefined();
+  });
+
+  it("waits for people to stop talking first, and skips the voice if they keep on", async () => {
+    const { out, started } = fakeOut();
+    let talking = true;
+    const time = clock();
+    const speaker = new AgentSpeaker({
+      out,
+      destination: {},
+      synthesize: async () => pcmStream([second(10)]),
+      onError: () => undefined,
+      peopleTalking: () => talking,
+      ...time,
+    });
+    await speaker.speak("they kept on");
+    expect(started).toEqual([]);
+    expect(time.waited()).toBeGreaterThanOrEqual(PEOPLE_FIRST_MS);
+
+    const going = speaker.speak("now");
+    talking = false;
+    await going;
+    expect(started).toHaveLength(1);
+  });
+
+  it("stops when a person talks over it for more than a moment", async () => {
+    const { out, stopped } = fakeOut();
+    const time = clock();
+    let talking = false;
+    const speaker = new AgentSpeaker({
+      out,
+      destination: {},
+      synthesize: async () => pcmStream([second(24_000 * 3)]), // three seconds
+      onError: () => undefined,
+      peopleTalking: () => talking,
+      now: time.now,
+      wait: async (ms) => {
+        await time.wait(ms);
+        if (time.waited() > 500) talking = true;
+      },
+    });
+    await speaker.speak("a long answer");
+    expect(stopped).toHaveLength(1);
+    expect(time.waited()).toBeLessThanOrEqual(600 + BARGE_IN_MS + 100); // talking from 600 ms, polled every 100
+  });
+
+  it("stops when its turn runs out", async () => {
+    const { out, stopped } = fakeOut();
+    const time = clock();
+    const speaker = new AgentSpeaker({ out, destination: {}, synthesize: async () => pcmStream([second(24_000 * 3)]), onError: () => undefined, ...time });
+    await speaker.speak("a long answer", { until: time.now() + 1000 });
+    expect(stopped).toHaveLength(1);
+    expect(time.waited()).toBeLessThanOrEqual(1000);
+  });
+
+  it("can stop the line it is saying and go on to the next", async () => {
+    const { out } = fakeOut();
+    const asked: string[] = [];
+    let release!: () => void;
+    const speaker = new AgentSpeaker({
+      out,
+      destination: {},
+      synthesize: async (text) => {
+        asked.push(text);
+        return pcmStream([second(10)], text === "first" ? new Promise<void>((r) => (release = r)) : undefined);
+      },
+      onError: () => undefined,
+      ...clock(),
+    });
+    const first = speaker.speak("first");
+    const next = speaker.speak("next");
+    await vi.waitFor(() => expect(release).toBeDefined());
+    speaker.stop();
+    release();
+    await first;
+    await next;
+    expect(asked).toEqual(["first", "next"]);
   });
 });

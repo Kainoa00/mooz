@@ -142,7 +142,11 @@ export function VoiceSettingsForm() {
 }
 
 /** The agent's voice: speech scheduled into a WebAudio track that the agent publishes as its mic. */
-export function openSpeaker(settings: VoiceSettings, onError: (error: VoiceError) => void) {
+export function openSpeaker(
+  settings: VoiceSettings,
+  onError: (error: VoiceError) => void,
+  peopleTalking: () => boolean = () => false,
+) {
   const ctx = new AudioContext();
   void ctx.resume().catch(() => undefined);
   const destination = ctx.createMediaStreamDestination();
@@ -151,6 +155,7 @@ export function openSpeaker(settings: VoiceSettings, onError: (error: VoiceError
     destination,
     synthesize: (text, signal) => synthesize(settings, text, signal),
     onError,
+    peopleTalking,
   });
   return {
     speaker,

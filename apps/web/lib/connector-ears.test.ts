@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ASK_COOLDOWN_MS, ConnectorEars, FOLLOW_UP_MS, MAX_AGENT_STREAK, type HeardLine } from "./connector-ears";
+import { ASK_COOLDOWN_MS, ConnectorEars, FOLLOW_UP_MS, type HeardLine } from "./connector-ears";
 
 const ME = "a_grok";
 let clock = 1_000_000;
@@ -57,17 +57,13 @@ describe("ConnectorEars", () => {
     expect(e.hear(human("p_zach", "never mind then"))).toBeNull();
   });
 
-  it("never answers itself, and stops answering agents after a few turns in a row", () => {
+  it("never answers itself, and leaves pausing a run of agent replies to the meeting's floor", () => {
     const e = ears();
     expect(e.hear(agent(ME, "p_kai", "@Grok echo"))).toBeNull();
-    for (let i = 0; i < MAX_AGENT_STREAK; i++) {
+    for (let i = 0; i < 5; i++) {
       clock += ASK_COOLDOWN_MS;
       expect(e.hear(agent("a_atlas", "p_zach", `@Grok question ${i}`))).toMatchObject({ kind: "question", replyTo: "p_zach" });
     }
-    clock += ASK_COOLDOWN_MS;
-    expect(e.hear(agent("a_atlas", "p_zach", "@Grok one more"))).toBeNull();
-    e.hear(human("p_zach", "ok, back to us"));
-    expect(e.hear(agent("a_atlas", "p_zach", "@Grok again"))).not.toBeNull();
   });
 
   it("keeps the last 10 minutes of the meeting to send with a question", () => {

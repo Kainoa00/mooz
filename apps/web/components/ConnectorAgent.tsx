@@ -1,8 +1,10 @@
 "use client";
 
+import { useMaybeRoomContext } from "@livekit/components-react";
 import { DisconnectReason, Room, RoomEvent, Track, type LocalTrackPublication, type TextStreamReader } from "livekit-client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ConnectorEars, type HeardLine } from "@/lib/connector-ears";
+import { TurnQueues, takeTurn, type Answering } from "@/lib/connector-turns";
 import {
   APP_LABEL,
   CONNECTOR_TOPIC,
@@ -78,7 +80,8 @@ function readReviewSetting(): boolean {
  * The connector agent, run from its owner's tab: a second LiveKit connection as the agent
  * once the host approves it. It listens to the chat (and, with the owner's ElevenLabs key,
  * to what people say), queues questions for the owner's assistant app, shows the owner a
- * one-tap prompt for each, and posts (and speaks) the answers the server hands it.
+ * one-tap prompt for each, and posts (and speaks) the answers the server hands it, each in a
+ * turn from the meeting's floor (one agent at a time, people first).
  */
 export function ConnectorAgent({
   slug,
@@ -111,6 +114,10 @@ export function ConnectorAgent({
   // Bumped whenever this tab changes its card list, so an older poll response can't undo it.
   const changes = useRef(0);
   const voiceRef = useRef<AgentVoice | null>(null);
+  const queues = useRef(new TurnQueues());
+  // Whom each question's answer goes to: a person, or another agent (whose replies may be held).
+  const answering = useRef(new Map<string, Answering>());
+  const meeting = useMaybeRoomContext();
   const settings = useVoiceSettings();
   // A voice problem belongs to the key it happened with; a new key gets a fresh try.
   const [problem, setProblem] = useState<{ key: string; message: string } | null>(null);
@@ -129,12 +136,37 @@ export function ConnectorAgent({
     earsRef.current?.said(text, replyTo, sources);
   }, []);
 
+  /**
+   * Post `text` (and speak `voice`, if this tab has a voice) in a turn: answers of one kind go
+   * one at a time, and a turn ends once the voice is done. False: no turn came, so nothing went out.
+   */
+  const inTurn = useCallback(
+    (text: string, replyTo: string, kind: Answering, voice: string | null, opts: { sources?: string[]; maxWaitMs?: number } = {}) =>
+      queues.current.run(kind, async () => {
+        const speak = voice !== null && voiceRef.current !== null;
+        const turn = await takeTurn(base, { answering: kind, speak, maxWaitMs: opts.maxWaitMs });
+        if (!turn || withdrawn.current) {
+          await turn?.release();
+          return false;
+        }
+        try {
+          await say(text, replyTo, opts.sources);
+          if (speak) await voiceRef.current?.speak(voice, { until: turn.until });
+        } finally {
+          await turn.release();
+        }
+        return true;
+      }),
+    [base, say],
+  );
+
   const post = useCallback(
     async (packet: AnswerPacket) => {
-      await say(packet.details ? `${packet.spoken}\n\n${packet.details}` : packet.spoken, packet.reply_to, packet.sources);
-      voiceRef.current?.speak(packet.spoken);
+      const text = packet.details ? `${packet.spoken}\n\n${packet.details}` : packet.spoken;
+      const kind = answering.current.get(packet.id) ?? "person";
+      await inTurn(text, packet.reply_to, kind, packet.spoken, { sources: packet.sources });
     },
-    [say],
+    [inTurn],
   );
 
   const receive = useCallback(
@@ -158,12 +190,10 @@ export function ConnectorAgent({
       if (withdrawn.current || !roomRef.current) return;
       const heard = ears?.hear(line);
       if (!ears || !heard) return;
-      const reply = async (text: string) => {
-        await say(text, heard.replyTo);
-        if (line.via === "voice") voiceRef.current?.speak(text);
-      };
+      const kind: Answering = line.kind === "agent" ? "agent" : "person";
+      const voice = (text: string) => (line.via === "voice" ? text : null);
       if (heard.kind === "wake") {
-        await reply("Yes?");
+        void inTurn("Yes?", heard.replyTo, kind, voice("Yes?"));
         return;
       }
       const res = await fetch(`${base}/questions`, {
@@ -174,8 +204,10 @@ export function ConnectorAgent({
       const body = res ? await readBody(res) : null;
       const question = body?.question as { id: string; text: string; asker: { name: string } } | undefined;
       if (res?.ok && question) {
-        // "On it" only once it really is: a refused question gets no filler left hanging.
-        await reply(FILLER);
+        // "On it" only once it really is (a refused question gets no filler left hanging), only
+        // for people, and only if the floor is free right now: it's a courtesy, not an answer.
+        if (kind === "person") void inTurn(FILLER, heard.replyTo, kind, voice(FILLER), { maxWaitMs: 0 });
+        answering.current.set(question.id, kind);
         known.current.add(question.id);
         askedBy.current.set(question.id, { identity: heard.asker, at: heard.at });
         changes.current += 1;
@@ -189,7 +221,7 @@ export function ConnectorAgent({
         setError(errorMessage(body, "Could not pass a question to your assistant."));
       }
     },
-    [base, say],
+    [base, inTurn],
   );
 
   const hearSpeech = useCallback(
@@ -300,9 +332,14 @@ export function ConnectorAgent({
   useEffect(() => {
     const room = roomRef.current;
     if (phase !== "in" || !settings || !room) return;
-    const voice = openSpeaker(settings, (e) => {
-      if (e.fatal) setProblem({ key: settings.apiKey, message: e.message });
-    });
+    const voice = openSpeaker(
+      settings,
+      (e) => {
+        if (e.fatal) setProblem({ key: settings.apiKey, message: e.message });
+      },
+      // People first: anyone but an agent talking in the meeting (this tab hears it as its owner).
+      () => (meeting?.activeSpeakers ?? []).some((p) => !isAgent(p)),
+    );
     voiceRef.current = voice.speaker;
     let publication: LocalTrackPublication | undefined;
     let gone = false;
@@ -319,7 +356,7 @@ export function ConnectorAgent({
       voice.close();
       if (publication?.track && room.state === "connected") void room.localParticipant.unpublishTrack(publication.track);
     };
-  }, [phase, settings]);
+  }, [phase, settings, meeting]);
 
   // 3. The server's list is the truth: waiting questions (also after a reload) and answers
   //    whose packet never arrived.
@@ -342,10 +379,13 @@ export function ConnectorAgent({
         id: string;
         text: string;
         status: string;
-        asker: { name: string };
+        asker: { name: string; kind: "human" | "agent" };
         answer?: AnswerPacket;
       }[];
-      for (const q of questions) known.current.add(q.id);
+      for (const q of questions) {
+        known.current.add(q.id);
+        answering.current.set(q.id, q.asker.kind === "agent" ? "agent" : "person");
+      }
       if (changes.current === before) setAsked(
         questions
           .filter((q) => q.status === "waiting")

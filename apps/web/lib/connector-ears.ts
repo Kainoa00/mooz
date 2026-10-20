@@ -4,11 +4,11 @@ import { AddressDetector, type Via } from "./addressing";
  * A connector agent's ears, in its owner's tab: what it heard lately (to send along with
  * a question) and whether a line addresses it, with the bridge's rules: `@Name` or its
  * name opening or closing what's said; its name alone opens a few seconds for that
- * person's next sentence; other agents get only a few turns in a row.
+ * person's next sentence. (The meeting's floor, not the ears, pauses agents that keep replying
+ * to each other: see lib/floor.ts.)
  */
 
 export const FOLLOW_UP_MS = 8000;
-export const MAX_AGENT_STREAK = 3;
 export const WINDOW_MS = 10 * 60 * 1000;
 export const MAX_LINES = 500;
 /** What the tab sends with a question, as JSON bytes (well under the server's 256 KB cap). */
@@ -46,7 +46,6 @@ export class ConnectorEars {
   private readonly log: SnapshotLine[] = [];
   private readonly followUp = new Map<string, number>();
   private readonly lastAsked = new Map<string, number>();
-  private agentStreak = 0;
 
   constructor(
     name: string,
@@ -68,7 +67,6 @@ export class ConnectorEars {
       ...(line.replyTo ? { reply_to: line.replyTo } : {}),
       ...(line.sources?.length ? { sources: line.sources } : {}),
     });
-    if (line.kind === "human") this.agentStreak = 0;
 
     // Anything this person says closes their follow-up window.
     const deadline = this.followUp.get(line.identity);
@@ -89,10 +87,6 @@ export class ConnectorEars {
       // Too soon; but if they were mid-ask ("Hey Grok." … "Grok?"), their next sentence still counts.
       if (deadline !== undefined && at <= deadline) this.followUp.set(line.identity, deadline);
       return null;
-    }
-    if (line.kind === "agent") {
-      if (this.agentStreak >= MAX_AGENT_STREAK) return null;
-      this.agentStreak += 1;
     }
     this.lastAsked.set(line.identity, at);
     if (!text) {
