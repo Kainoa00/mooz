@@ -103,6 +103,10 @@ _PHRASES: list[tuple[str, re.Pattern[str]]] = [
     ("forget", re.compile(r"^forget (?P<id>m_\w+)$", re.I)),
     ("recall", re.compile(r"^what do you remember about (?P<query>.+)$", re.I)),
 ]
+# Agents talking to each other: "ping NAME" pings NAME; a bare "ping" pings back whoever
+# asked; "ask NAME X" passes X on to NAME. Mentions use the wake word (a name's last word).
+_PING = re.compile(r"^ping(?: (?P<name>[A-Za-z][\w' -]*))?$", re.I)
+_ASK = re.compile(r"^ask (?P<name>[A-Za-z][\w'-]*) (?P<what>.+)$", re.I)
 _REPLIES = {
     "remember": "Got it, I'll remember that.",
     "forget": "Done, I've forgotten it.",
@@ -115,7 +119,8 @@ class OfflineModel:
     "read FILE [from SOURCE]", "search for X [in SOURCE]", "remember [publicly] that X",
     "forget ID", "what do you remember [about X]" and "what can you read" become real tool
     calls (or answers from the real system prompt), so the offline demo and the end-to-end
-    tests exercise the real ToolBox, memory and scope rules. Anything else is echoed back.
+    tests exercise the real ToolBox, memory and scope rules. "ping [NAME]" and "ask NAME X"
+    @-mention another agent (for tests of agents taking turns). Anything else is echoed back.
     """
 
     def conversation(
@@ -162,6 +167,12 @@ class OfflineConversation:
         if lowered in ("what can you read", "what sources do you have"):
             match = SOURCES_LINE.search(self._system)
             return ModelTurn(answer=Answer(match.group(0) if match else "I can't read any files."))
+        if m := _PING.match(phrase):
+            asker = user.rsplit(ASKED, 1)[0].splitlines()[-1].split(" (", 1)[0]
+            target = m.group("name") or asker
+            return ModelTurn(answer=Answer(f"@{target.split()[-1]} ping"))
+        if m := _ASK.match(phrase):
+            return ModelTurn(answer=Answer(f"@{m.group('name')} {m.group('what')}"))
         for name, pattern in _PHRASES:
             if m := pattern.match(phrase):
                 return self._call(name, {k: v for k, v in m.groupdict().items() if v is not None})

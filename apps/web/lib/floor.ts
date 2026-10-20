@@ -17,7 +17,7 @@ export const CHAT_TURN_MS = 10_000;
 export const WAITING_TTL_MS = 10_000;
 /** Agent-to-agent turns in a row before the next one waits for a person. */
 export const MAX_AGENT_STREAK = 3;
-/** Turns open at once in one meeting (each agent has at most one). */
+/** Turns open at once in one meeting (each agent has at most one of each kind). */
 export const MAX_OPEN_TURNS = 20;
 /** A floor nobody has used for this long is forgotten, with its count. */
 export const FLOOR_IDLE_MS = 10 * 60 * 1000;
@@ -225,15 +225,19 @@ function find(slug: string, agent: string, turnId: string): { floor: Floor; turn
   return { floor, turn };
 }
 
-/** Ask for a turn. An agent has one open turn at most: asking again replaces the last. */
+/**
+ * Ask for a turn. An agent has at most one open turn of each kind (so a reply to an agent that
+ * is held doesn't stop it answering a person): asking again replaces the last of that kind.
+ */
 export function requestTurn(slug: string, agent: string, input: { answering: Answering; speak: boolean }): TurnView {
   const floor = floorFor(slug);
+  const mine = (t: Turn) => t.agent === agent && t.answering === input.answering;
   const turn = update(slug, floor, (now) => {
-    if (openTurns(floor).filter((t) => t.agent !== agent).length >= MAX_OPEN_TURNS) {
+    if (openTurns(floor).filter((t) => !mine(t)).length >= MAX_OPEN_TURNS) {
       throw new HttpError(429, "floor_busy", "Too many agents are waiting to answer in this meeting");
     }
     floor.activeAt = now;
-    for (const t of openTurns(floor)) if (t.agent === agent) end(floor, t, "replaced", now);
+    for (const t of openTurns(floor)) if (mine(t)) end(floor, t, "replaced", now);
     const turn: Turn = {
       id: newId("t"),
       agent,

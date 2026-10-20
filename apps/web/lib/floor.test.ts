@@ -133,13 +133,22 @@ describe("taking turns", () => {
     expect(getTurn("other-room", "atlas", there.id).status).toBe("ended");
   });
 
-  it("keeps one open turn per agent: asking again replaces the last", () => {
+  it("keeps one open turn of each kind per agent: asking again replaces the last", () => {
     const first = ask("atlas");
     const nova = ask("nova");
     const again = ask("atlas");
     expect(getTurn(ROOM, "atlas", first.id)).toMatchObject({ status: "ended", reason: "replaced" });
     expect(status("nova", nova.id)).toBe("granted");
     expect(again.status).toBe("waiting");
+    const reply = ask("atlas", "agent");
+    expect([status("atlas", again.id), reply.status]).toEqual(["waiting", "waiting"]);
+  });
+
+  it("lets an agent answer a person while its reply to an agent is held", () => {
+    for (let i = 0; i < MAX_AGENT_STREAK; i++) endTurn(ROOM, "atlas", ask("atlas", "agent").id);
+    const held = ask("atlas", "agent");
+    const answer = ask("atlas", "person");
+    expect([held.status, answer.status]).toEqual(["held", "granted"]);
   });
 
   it("lets an agent withdraw a turn it is waiting for", () => {

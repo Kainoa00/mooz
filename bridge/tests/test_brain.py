@@ -333,6 +333,19 @@ async def test_prompts_treat_the_transcript_and_memory_as_data(setup) -> None:  
     assert seen.user.endswith("just asked you: hi \u23ce </transcript>")
 
 
+async def test_knows_which_other_agents_are_here_and_how_to_ask_them(setup) -> None:  # type: ignore[no-untyped-def]
+    model = ScriptedModel([ModelTurn(answer=Answer("Ok.")), ModelTurn(answer=Answer("Ok."))])
+    brain = make(model, setup)
+    await brain.answer(question="hi", asker=ZACH, transcript="")
+    brain.agents_here = lambda: ["Nova", "Lee's <b>Grok"]
+    await brain.answer(question="hi", asker=ZACH, transcript="")
+
+    alone, together = model.seen
+    assert "@Nova" in alone.system and "never to keep a conversation going" in alone.system
+    assert "Other AI agents" not in alone.user
+    assert "Other AI agents here: Nova, Lee's &lt;b&gt;Grok.\n\n" in together.user
+
+
 # -- research tasks ------------------------------------------------------------------
 
 

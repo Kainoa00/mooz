@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 import re
 import time
@@ -38,13 +39,15 @@ from .tasks import (
     without_private,
 )
 from .transcript import TranscriptBuffer, Utterance, render_line
+from .turns import Answering, Turns, TurnTaker
 
 log = logging.getLogger(__name__)
 
 # After "Hey Atlas." on its own, the same person's next sentence is the question.
 FOLLOW_UP_SECONDS = 8.0
-# Answer other agents at most this many times in a row before a person speaks again,
-# so two agents cannot talk to each other forever (the host-facing pause comes in M5).
+# Without a meeting floor (an older server), answer other agents at most this many times in
+# a row before a person speaks again, so two agents can't talk to each other forever. With
+# one, the server holds the reply instead, until a person lets the agents continue.
 MAX_AGENT_STREAK = 3
 APOLOGY = Answer("Sorry, I couldn't think that through just now. Please try again.")
 # Said out loud (not posted to chat) when an answer needs tools, so the room isn't left in silence.
@@ -65,6 +68,8 @@ OVERFLOWED = "This needs more digging. I'll keep at it and report back."
 _TASK_VERB = re.compile(
     r"^(?:look into|research|dig into|investigate|find out|figure out)\s+", re.I
 )
+# Who the answer being worked out (in this task) is for: the filler only plays for people.
+_ASKER: contextvars.ContextVar[Speaker | None] = contextvars.ContextVar("asker", default=None)
 
 
 class AgentRoom(Protocol):
@@ -112,6 +117,7 @@ class Agent:
         tts: TextToSpeech,
         brain: Brain,
         clock: Callable[[], float] = time.monotonic,
+        turns: TurnTaker | None = None,
     ) -> None:
         self.room = room
         self.me = room.me
@@ -121,8 +127,16 @@ class Agent:
         self.brain = brain
         if isinstance(brain, ToolLoopBrain):
             brain.on_working = lambda: self._spawn(self._filler())
+            brain.agents_here = self._other_agents
+        voice = room.voice
         self.mouth = Mouth(
-            send_chat=room.send_chat, capture_frame=room.voice.capture_frame, tts=tts
+            send_chat=room.send_chat,
+            capture_frame=voice.capture_frame,
+            tts=tts,
+            turns=turns,
+            people_talking=room.humans_speaking,
+            queued_audio=lambda: float(getattr(voice, "queued_duration", 0.0)),
+            clear_audio=getattr(voice, "clear_queue", lambda: None),
         )
         self._clock = clock
         self._follow_up: dict[str, float] = {}
@@ -222,11 +236,18 @@ class Agent:
     def _allowed(self, asker: Speaker) -> bool:
         if asker.kind != "agent":
             return True
-        if self._agent_streak >= MAX_AGENT_STREAK:
+        if not self.mouth.turns.shared and self._agent_streak >= MAX_AGENT_STREAK:
             log.info("not answering %s: %d agent turns in a row", asker.name, MAX_AGENT_STREAK)
             return False
         self._agent_streak += 1
         return True
+
+    def _other_agents(self) -> list[str]:
+        return [
+            p.name
+            for p in self.room.participants()
+            if p.kind == "agent" and p.identity != self.me.identity
+        ]
 
     async def _acknowledge(self, asker: Speaker, heard_at: float) -> None:
         # Open the window now (a question asked while "Yes?" plays still counts), and
@@ -252,6 +273,7 @@ class Agent:
             reply = self._task_command(asker, task, private=private)
         else:
             transcript, sources = self._snapshot()
+            _ASKER.set(asker)
             try:
                 reply = await self.brain.answer(
                     question=question, asker=asker, transcript=transcript
@@ -264,8 +286,12 @@ class Agent:
             await self._say(reply, heard_at, asker, sources)
 
     async def _filler(self) -> None:
+        asker = _ASKER.get()
+        if asker is not None and asker.kind == "agent":
+            return  # another agent doesn't need to be told to hold on
         try:
-            await self.mouth.say(FILLER, chat=False)
+            # Only if the floor is free right now: it's a courtesy, not an answer.
+            await self.mouth.say(FILLER, chat=False, max_wait=0)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -306,20 +332,27 @@ class Agent:
             log.info("latency heard→voice %.0f ms", latency_ms)
 
         about = self._person(asker)
+        answering: Answering = "agent" if asker is not None and asker.kind == "agent" else "person"
+        went_out = True
         try:
-            await self.mouth.say(
-                answer, on_first_frame=first_frame, reply_to=about, sources=sources
+            went_out = await self.mouth.say(
+                answer,
+                on_first_frame=first_frame,
+                reply_to=about,
+                sources=sources,
+                answering=answering,
             )
         except asyncio.CancelledError:
             raise
         except Exception:
             log.exception("could not say the answer (it may have reached chat only)")
         finally:
-            said = Utterance(
-                self.me, answer.spoken, time.time(), "chat", about=about, sources=sources
-            )
-            self.transcript.add(said)
-            self._note(said)
+            if went_out:
+                said = Utterance(
+                    self.me, answer.spoken, time.time(), "chat", about=about, sources=sources
+                )
+                self.transcript.add(said)
+                self._note(said)
 
     async def _say_privately(self, answer: Answer, asker: Speaker) -> None:
         """A direct chat message to the asker: never spoken, never in the transcript or notes."""
@@ -655,7 +688,12 @@ class Agent:
         while await self._wait_for_quiet(deadline):
             try:
                 # Quiet again by the time it's our turn (we may have been answering someone)?
-                if await self.mouth.say(Answer(spoken), chat=False, only_if=self._quiet):
+                if await self.mouth.say(
+                    Answer(spoken),
+                    chat=False,
+                    only_if=self._quiet,
+                    max_wait=max(0.0, deadline - self._clock()),
+                ):
                     return
             except asyncio.CancelledError:
                 raise
@@ -733,6 +771,7 @@ class Agent:
 async def run(grant: AgentGrant, config: AgentConfig) -> None:
     """Join the meeting from an approved grant and run until the meeting ends for us."""
     import aiohttp
+    import httpx
 
     from .providers import build_providers
     from .room import MeetingRoom
@@ -740,7 +779,17 @@ async def run(grant: AgentGrant, config: AgentConfig) -> None:
     room = MeetingRoom()
     agent: Agent | None = None
     ended = False
-    async with aiohttp.ClientSession() as http:
+    async with aiohttp.ClientSession() as http, httpx.AsyncClient() as mooz:
+        turns = (
+            Turns(
+                mooz,
+                grant.server,
+                request_id=grant.ticket.request_id,
+                claim_secret=grant.ticket.claim_secret,
+            )
+            if grant.server and grant.ticket
+            else None
+        )
         try:
             try:
                 await room.connect(grant.url, grant.token)
@@ -749,7 +798,7 @@ async def run(grant: AgentGrant, config: AgentConfig) -> None:
                     "connect_failed", f"Could not join the meeting's media server: {err}"
                 ) from err
             stt, tts, brain = build_providers(http=http, me=room.me, config=config)
-            agent = Agent(room=room, stt=stt, tts=tts, brain=brain)
+            agent = Agent(room=room, stt=stt, tts=tts, brain=brain, turns=turns)
             agent.wire()
             await room.wait_closed()
             log.info("left the meeting")

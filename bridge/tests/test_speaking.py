@@ -1,4 +1,6 @@
 import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 import pytest
 from livekit import rtc
@@ -6,6 +8,7 @@ from livekit import rtc
 from mooz_agent.providers.base import Answer
 from mooz_agent.providers.fakes import FakeTTS
 from mooz_agent.speaking import Mouth
+from mooz_agent.turns import Answering, Granted
 
 pytestmark = pytest.mark.unit
 
@@ -83,3 +86,173 @@ async def test_resamples_frames_that_are_not_48k() -> None:
     await Mouth(send_chat=chat, capture_frame=capture, tts=Tts24k()).say(Answer("hi", ""))
 
     assert frames and all(f.sample_rate == 48_000 for f in frames)
+
+
+# -- taking turns, people first ----------------------------------------------------------
+
+
+GO = Granted()
+
+
+class FakeTurns:
+    shared = True
+
+    def __init__(self, rec: Recorder, grant: Granted | None = GO) -> None:
+        self.rec = rec
+        self.grant = grant
+        self.calls: list[tuple[str, bool, float | None]] = []
+        self.gates: dict[str, asyncio.Event] = {}
+
+    @asynccontextmanager
+    async def turn(
+        self, *, answering: Answering, speak: bool, max_wait: float | None = None
+    ) -> AsyncIterator[Granted | None]:
+        self.calls.append((answering, speak, max_wait))
+        if answering in self.gates:
+            await self.gates[answering].wait()
+        self.rec.events.append(f"turn:{answering}")
+        try:
+            yield self.grant
+        finally:
+            self.rec.events.append("released")
+
+
+class Clock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def mouth_with(rec: Recorder, turns: FakeTurns, **kw: object) -> Mouth:
+    mouth = Mouth(
+        send_chat=rec.send_chat, capture_frame=rec.capture_frame, tts=FakeTTS(), turns=turns, **kw
+    )  # type: ignore[arg-type]
+    mouth.poll_seconds = 0.001
+    return mouth
+
+
+async def test_takes_a_turn_before_posting_and_gives_it_back_after_speaking() -> None:
+    rec = Recorder()
+    turns = FakeTurns(rec)
+    assert await mouth_with(rec, turns).say(Answer("Hi there."), answering="agent", max_wait=0)
+    assert rec.events == ["turn:agent", "chat:Hi there.", "audio", "audio", "released"]
+    assert turns.calls == [("agent", True, 0)]
+
+
+async def test_says_nothing_without_a_turn() -> None:
+    rec = Recorder()
+    assert await mouth_with(rec, FakeTurns(rec, grant=None)).say(Answer("Hi.")) is False
+    assert rec.events == ["turn:person", "released"]
+
+
+async def test_a_held_reply_to_an_agent_does_not_hold_up_an_answer_to_a_person() -> None:
+    rec = Recorder()
+    turns = FakeTurns(rec)
+    turns.gates["agent"] = asyncio.Event()
+    mouth = mouth_with(rec, turns)
+    reply = asyncio.ensure_future(mouth.say(Answer("to the agent"), answering="agent"))
+    await asyncio.sleep(0)
+    assert await mouth.say(Answer("to the person"))
+    assert "chat:to the person" in rec.events and "chat:to the agent" not in rec.events
+    turns.gates["agent"].set()
+    assert await reply
+
+
+async def test_waits_for_people_to_finish_before_speaking() -> None:
+    rec = Recorder()
+    talking = [True, True, True]
+    mouth = mouth_with(rec, FakeTurns(rec), people_talking=lambda: bool(talking and talking.pop()))
+    await mouth.say(Answer("Go ahead."))
+    assert rec.events == ["turn:person", "chat:Go ahead.", "audio", "audio", "released"]
+
+
+async def test_leaves_the_answer_in_chat_when_people_keep_talking() -> None:
+    rec = Recorder()
+    clock = Clock()
+
+    def talking() -> bool:
+        clock.now += 1
+        return True
+
+    mouth = mouth_with(rec, FakeTurns(rec), people_talking=talking, clock=clock)
+    assert await mouth.say(Answer("Later then."))
+    assert rec.events == ["turn:person", "chat:Later then.", "released"]
+
+
+async def test_stops_when_a_person_talks_over_it_and_drops_what_is_queued() -> None:
+    rec = Recorder()
+    clock = Clock()
+    cleared: list[bool] = []
+    frames = 0
+
+    async def capture(frame: rtc.AudioFrame) -> None:
+        nonlocal frames
+        frames += 1
+        clock.now += 0.4  # each frame plays for a while
+
+    mouth = Mouth(
+        send_chat=rec.send_chat,
+        capture_frame=capture,
+        tts=FakeTTS(),
+        turns=FakeTurns(rec),
+        people_talking=lambda: frames >= 2,
+        clear_audio=lambda: cleared.append(True),
+        clock=clock,
+    )
+    await mouth.say(Answer("one two three four five six seven eight"))
+    assert 2 <= frames < 8
+    assert cleared == [True]
+    assert rec.events[:2] == ["turn:person", "chat:one two three four five six seven eight"]
+
+
+async def test_a_short_noise_does_not_stop_it() -> None:
+    rec = Recorder()
+    clock = Clock()
+    frames = 0
+
+    async def capture(frame: rtc.AudioFrame) -> None:
+        nonlocal frames
+        frames += 1
+        clock.now += 0.4
+
+    mouth = Mouth(
+        send_chat=rec.send_chat,
+        capture_frame=capture,
+        tts=FakeTTS(),
+        turns=FakeTurns(rec),
+        people_talking=lambda: frames in (2, 3),  # under a second
+        clock=clock,
+    )
+    await mouth.say(Answer("one two three four five six"))
+    assert frames == 6
+
+
+async def test_stops_when_its_turn_runs_out() -> None:
+    rec = Recorder()
+    clock = Clock()
+    frames = 0
+
+    async def capture(frame: rtc.AudioFrame) -> None:
+        nonlocal frames
+        frames += 1
+        clock.now += 1
+
+    mouth = Mouth(
+        send_chat=rec.send_chat,
+        capture_frame=capture,
+        tts=FakeTTS(),
+        turns=FakeTurns(rec, grant=Granted(deadline=3)),
+        clock=clock,
+    )
+    await mouth.say(Answer("one two three four five six"))
+    assert frames == 3
+
+
+async def test_lets_its_last_words_play_out_before_giving_the_turn_back() -> None:
+    rec = Recorder()
+    queued = [0.5, 0.3, 0.1]
+    mouth = mouth_with(rec, FakeTurns(rec), queued_audio=lambda: queued.pop(0) if queued else 0.0)
+    await mouth.say(Answer("Bye."))
+    assert queued == [] and rec.events[-1] == "released"

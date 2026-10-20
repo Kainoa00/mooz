@@ -134,6 +134,7 @@ async def test_it_keeps_answering_while_a_task_runs(setup) -> None:  # type: ign
 
 async def test_the_spoken_report_waits_while_someone_is_talking(setup) -> None:  # type: ignore[no-untyped-def]
     room, agent, tts, _ = setup
+    agent.mouth.people_first_seconds = 0  # the "on it" reply goes to chat only, at once
     room.speaking = True  # someone is mid-sentence (no transcript line yet)
     hear(agent, KAI, "Atlas, look into the launch")
     await agent.idle()

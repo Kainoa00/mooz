@@ -74,6 +74,9 @@ async def test_wait_for_approval_polls_until_approved() -> None:
     assert grant == AgentGrant(
         token="jwt", url="ws://lk:7880", room="abc", identity="a_1", name="Atlas"
     )
+    assert grant.server == SERVER and grant.ticket is not None
+    assert (grant.ticket.request_id, grant.ticket.claim_secret) == ("r_1", "s3cret")
+    assert "s3cret" not in repr(grant)
     assert route.call_count == 3
     assert waits == ["pending"]  # announced once, not on every poll
     assert route.calls.last.request.headers["authorization"] == "Bearer s3cret"

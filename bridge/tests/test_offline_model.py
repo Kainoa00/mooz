@@ -114,3 +114,17 @@ async def test_offline_research_searches_and_reports(monkeypatch: pytest.MonkeyP
     nothing = await slow.send("Task from Kai: Look into the launch slowly")
     assert nothing.calls[0].name == "report_findings"
     assert "couldn't find" in str(nothing.calls[0].args["spoken"])
+
+
+@pytest.mark.parametrize(
+    ("question", "reply"),
+    [
+        ("ping Nova", "@Nova ping"),
+        ("ping Zach's Grok", "@Grok ping"),
+        ("ping", "@Kai ping"),  # back to whoever asked
+        ("ask Nova what she thinks", "@Nova what she thinks"),
+    ],
+)
+async def test_agents_ping_and_ask_each_other(question: str, reply: str) -> None:
+    turn = await OfflineModel().conversation(system="", tools=[]).send(asked(question))
+    assert turn.answer is not None and turn.answer.spoken == reply

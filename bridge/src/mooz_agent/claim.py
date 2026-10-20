@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -22,7 +22,7 @@ class ClaimError(Exception):
 @dataclass(frozen=True)
 class ClaimTicket:
     request_id: str
-    claim_secret: str
+    claim_secret: str = field(repr=False)
 
 
 @dataclass(frozen=True)
@@ -32,6 +32,9 @@ class AgentGrant:
     room: str
     identity: str
     name: str
+    # Where the agent takes turns during the meeting: the mooz server, with this claim.
+    server: str = field(default="", compare=False)
+    ticket: ClaimTicket | None = field(default=None, repr=False, compare=False)
 
 
 def _base(server: str) -> str:
@@ -83,6 +86,8 @@ async def wait_for_approval(
                 room=body["room"],
                 identity=body["identity"],
                 name=body["name"],
+                server=server,
+                ticket=ClaimTicket(request_id, claim_secret),
             )
         if status == "denied":
             raise ClaimError("denied", "The host declined your agent.")
