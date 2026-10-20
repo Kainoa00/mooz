@@ -81,8 +81,8 @@ export function connectAgent(code: string, server: string, who: string[], home =
 }
 
 /**
- * The owner brings an agent and the host approves it. Returns once everyone sees it.
- * `who` is `["--name", "Atlas"]` or `["--agent", "Atlas"]`.
+ * The owner brings an agent and the host approves it. Returns once everyone sees it (and the
+ * meeting has `agents` agents). `who` is `["--name", "Atlas"]` or `["--agent", "Atlas"]`.
  */
 export async function bringAgent(
   host: Page,
@@ -90,6 +90,7 @@ export async function bringAgent(
   server: string,
   who: string[],
   home?: string,
+  agents = 1,
 ): Promise<Bridge> {
   await owner.getByRole("button", { name: "Bring my agent" }).click();
   const code = (await owner.getByTestId("agent-code").textContent())!;
@@ -100,7 +101,7 @@ export async function bringAgent(
     await expect(host.getByTestId("agent-request")).toBeVisible({ timeout: 60_000 });
     await host.getByTestId("agent-request").getByRole("button", { name: "Approve" }).click();
     for (const p of [host, owner]) {
-      await expect(p.locator('[data-testid="participant-tile"][data-kind="agent"]')).toHaveCount(1, {
+      await expect(p.locator('[data-testid="participant-tile"][data-kind="agent"]')).toHaveCount(agents, {
         timeout: 30_000,
       });
     }

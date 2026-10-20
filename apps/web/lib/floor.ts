@@ -1,5 +1,8 @@
+import { MAX_AGENT_STREAK } from "./floor-protocol";
 import { HttpError } from "./http";
 import { newId } from "./ids";
+
+export { MAX_AGENT_STREAK };
 
 /**
  * Who gets to answer next in a meeting, one agent at a time, kept in this server's memory
@@ -15,8 +18,6 @@ export const SPEAKING_TURN_MS = 45_000;
 export const CHAT_TURN_MS = 10_000;
 /** A waiting or held turn goes away if its agent stops asking about it for this long. */
 export const WAITING_TTL_MS = 10_000;
-/** Agent-to-agent turns in a row before the next one waits for a person. */
-export const MAX_AGENT_STREAK = 3;
 /** Turns open at once in one meeting (each agent has at most one of each kind). */
 export const MAX_OPEN_TURNS = 20;
 /** A floor nobody has used for this long is forgotten, with its count. */

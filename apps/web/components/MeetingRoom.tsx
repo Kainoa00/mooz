@@ -13,9 +13,11 @@ import { useCallback, useState } from "react";
 import { isAgent } from "@/lib/labels";
 import { AgentCard } from "./AgentCard";
 import { AgentRequestsTray } from "./AgentRequestsTray";
+import { AgentsPausedBanner } from "./AgentsPausedBanner";
 import { BringAgentDialog } from "./BringAgentDialog";
 import { ChatPanel } from "./ChatPanel";
 import { ConnectorAgent, type BroughtConnector } from "./ConnectorAgent";
+import { FloorStrip } from "./FloorStrip";
 import { JoinForm, type JoinResult } from "./JoinForm";
 import { MeetingContext } from "./MeetingContext";
 import { MoozTile } from "./MoozTile";
@@ -109,6 +111,8 @@ export function MeetingRoom({ slug }: { slug: string }) {
             </span>
           </header>
           <NotesBanner slug={slug} />
+          <AgentsPausedBanner slug={slug} />
+          <FloorStrip />
           {session.isHost && <AgentRequestsTray slug={slug} />}
           <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(0,1fr)_minmax(0,40%)] md:grid-cols-[1fr_320px] md:grid-rows-1">
             <div className="flex min-h-0 flex-col">
