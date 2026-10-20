@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { getDb } from "./db";
-import { getNotesOptOut, getNotesPolicy, notesMetadata, setNotesOptOut, setNotesPolicy } from "./notes";
+import { getNotesOptOut, getNotesPolicy, setNotesOptOut, setNotesPolicy } from "./notes";
 import { addParticipant, createRoom } from "./rooms";
 import { useTestEnv } from "@/test/helpers";
 
@@ -33,10 +33,5 @@ describe("meeting notes consent", () => {
     expect(getNotesOptOut(db, kai.identity)).toBe(false);
     setNotesOptOut(db, zach.identity, false);
     expect(getNotesOptOut(db, zach.identity)).toBe(false);
-  });
-
-  it("describes the policy as LiveKit room metadata", () => {
-    expect(JSON.parse(notesMetadata(true))).toEqual({ notes_allowed: true });
-    expect(JSON.parse(notesMetadata(false))).toEqual({ notes_allowed: false });
   });
 });

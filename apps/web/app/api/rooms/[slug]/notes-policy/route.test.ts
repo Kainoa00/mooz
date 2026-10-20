@@ -30,7 +30,9 @@ describe("POST /api/rooms/[slug]/notes-policy", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ allowed: true });
     expect(getNotesPolicy(db, slug)).toBe(true);
-    expect(setRoomMetadata).toHaveBeenCalledWith(getRoom(db, slug)!.livekitRoom, '{"notes_allowed":true}');
+    const [[room, doc]] = setRoomMetadata.mock.calls;
+    expect(room).toBe(getRoom(db, slug)!.livekitRoom);
+    expect(JSON.parse(doc)).toMatchObject({ notes_allowed: true });
   });
 
   it("is host-only", async () => {

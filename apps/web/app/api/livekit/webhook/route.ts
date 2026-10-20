@@ -4,8 +4,9 @@ import { endRoomConnectors, noteConnectorPresence } from "@/lib/connector-agents
 import { forgetAgent } from "@/lib/connector-queue";
 import { getDb } from "@/lib/db";
 import { errorResponse, HttpError, readCapped } from "@/lib/http";
-import { livekitConfig, removeFromRoom, setRoomMetadata } from "@/lib/livekit";
-import { getNotesPolicy, notesMetadata } from "@/lib/notes";
+import { livekitConfig, removeFromRoom } from "@/lib/livekit";
+import { getNotesPolicy } from "@/lib/notes";
+import { publishRoomState } from "@/lib/room-state";
 import { getRoomByLivekitName } from "@/lib/rooms";
 
 /**
@@ -45,7 +46,7 @@ export async function POST(req: Request): Promise<Response> {
     }
     if (event.event === "room_started" && room) {
       const meeting = getRoomByLivekitName(db, room);
-      if (meeting && getNotesPolicy(db, meeting.slug)) await setRoomMetadata(room, notesMetadata(true));
+      if (meeting && getNotesPolicy(db, meeting.slug)) await publishRoomState(db, meeting.slug);
     }
     return Response.json({ ok: true });
   } catch (err) {

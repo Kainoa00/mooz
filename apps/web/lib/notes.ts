@@ -28,10 +28,5 @@ export function setNotesOptOut(db: Db, identity: string, optOut: boolean): void 
   db.prepare("UPDATE participants SET notes_opt_out = ? WHERE identity = ?").run(optOut ? 1 : 0, identity);
 }
 
-/** The LiveKit room metadata agents read to learn whether notes are allowed. */
-export function notesMetadata(allowed: boolean): string {
-  return JSON.stringify({ notes_allowed: allowed });
-}
-
 /** The participant attribute agents read: "1" means leave this person out. */
 export { NOTES_OPT_OUT_ATTRIBUTE } from "./notes-protocol";

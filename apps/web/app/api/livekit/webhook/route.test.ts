@@ -94,7 +94,9 @@ describe("POST /api/livekit/webhook", () => {
     await POST(await signed(started(getRoom(db, notAllowed.slug)!.livekitRoom)));
     await POST(await signed(started("lk_unknown")));
 
-    expect(setRoomMetadata.mock.calls).toEqual([[getRoom(db, allowed.slug)!.livekitRoom, '{"notes_allowed":true}']]);
+    expect(setRoomMetadata.mock.calls.map(([room, doc]) => [room, JSON.parse(doc)])).toEqual([
+      [getRoom(db, allowed.slug)!.livekitRoom, { notes_allowed: true, floor: { speaking: null, next: null, paused: false } }],
+    ]);
   });
 
   it("lets a connector agent's tab step out for a couple of minutes, then takes it out with its questions", async () => {
