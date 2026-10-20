@@ -252,3 +252,70 @@ export function getClaimStatus(db: Db, requestId: string, claimSecret: string | 
     },
   };
 }
+
+/** The claim secret a bridge sends as `authorization: Bearer <secret>`. */
+export function bearer(req: Request): string | undefined {
+  const header = req.headers.get("authorization");
+  return header?.startsWith("Bearer ") ? header.slice("Bearer ".length) : undefined;
+}
+
+/**
+ * The bridge agent behind a request, for its own calls during the meeting (taking turns).
+ * It must hold the claim secret, be approved with its token handed out, and still be in the
+ * meeting as far as LiveKit has said.
+ */
+export function requireBridgeAgent(db: Db, requestId: string, claimSecret: string | undefined): AgentIdentity {
+  const row = claimSecret
+    ? (db
+        .prepare(
+          `SELECT r.status, r.token_issued_at, r.left_at, r.room_slug, rm.livekit_room, r.agent_name,
+                  r.agent_identity, r.owner_identity, p.name AS owner_name
+           FROM agent_requests r
+           JOIN participants p ON p.identity = r.owner_identity
+           JOIN rooms rm ON rm.slug = r.room_slug
+           WHERE r.id = ? AND r.claim_secret_hash = ? AND r.door = 'bridge'`,
+        )
+        .get(requestId, hashSecret(claimSecret)) as
+        | {
+            status: string;
+            token_issued_at: number | null;
+            left_at: number | null;
+            room_slug: string;
+            livekit_room: string;
+            agent_name: string;
+            agent_identity: string;
+            owner_identity: string;
+            owner_name: string;
+          }
+        | undefined)
+    : undefined;
+  if (!row) throw new HttpError(404, "request_not_found", "No such agent request");
+  if (row.status !== "approved" || row.token_issued_at === null || row.left_at !== null) {
+    throw new HttpError(409, "not_in_meeting", "This agent is not in the meeting");
+  }
+  return {
+    identity: row.agent_identity,
+    slug: row.room_slug,
+    livekitRoom: row.livekit_room,
+    name: row.agent_name,
+    ownerIdentity: row.owner_identity,
+    ownerName: row.owner_name,
+  };
+}
+
+/**
+ * LiveKit says a bridge agent joined (as session `sid`) or left. A "left" counts only for the
+ * session that last joined, so a late one from a replaced connection changes nothing.
+ */
+export function noteBridgePresence(db: Db, agentIdentity: string, sid: string | undefined, here: boolean): void {
+  const live = "agent_identity = ? AND door = 'bridge' AND status = 'approved'";
+  if (here) {
+    db.prepare(`UPDATE agent_requests SET left_at = NULL, session_sid = ? WHERE ${live}`).run(sid ?? null, agentIdentity);
+  } else {
+    db.prepare(`UPDATE agent_requests SET left_at = ? WHERE ${live} AND (session_sid IS NULL OR session_sid = ?)`).run(
+      Date.now(),
+      agentIdentity,
+      sid ?? null,
+    );
+  }
+}

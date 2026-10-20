@@ -8,6 +8,7 @@ import {
   floorView,
   getTurn,
   leaveFloor,
+  leaveFloors,
   MAX_AGENT_STREAK,
   MAX_OPEN_TURNS,
   requestTurn,
@@ -122,6 +123,14 @@ describe("taking turns", () => {
     expect(status("nova", nova.id)).toBe("ended");
     expect(status("grok", grok.id)).toBe("granted");
     leaveFloor("no-such-room", "atlas");
+  });
+
+  it("frees every floor an agent was on when it's taken out", () => {
+    const here = ask("atlas");
+    const there = requestTurn("other-room", "atlas", { answering: "person", speak: true });
+    leaveFloors("atlas");
+    expect(status("atlas", here.id)).toBe("ended");
+    expect(getTurn("other-room", "atlas", there.id).status).toBe("ended");
   });
 
   it("keeps one open turn per agent: asking again replaces the last", () => {

@@ -6,8 +6,9 @@ import { LEFT_GRACE_MS, attachedConnectorAgent, connectorAgentFor, connectorJoin
 import { enqueueQuestion, listQuestions, resetQueueForTests } from "@/lib/connector-queue";
 import { createConnector } from "@/lib/connectors";
 import { getDb } from "@/lib/db";
+import { floorView, requestTurn, resetFloorsForTests } from "@/lib/floor";
 import { setNotesPolicy } from "@/lib/notes";
-import { addParticipant, createRoom, getRoom } from "@/lib/rooms";
+import { addParticipant, createRoom, getRoom, getRoomByLivekitName } from "@/lib/rooms";
 import { LK_KEY, LK_SECRET, useTestEnv } from "@/test/helpers";
 
 const removeFromRoom = vi.fn<(room: string, identity: string) => Promise<void>>(async () => {});
@@ -23,6 +24,7 @@ const { POST } = await import("./route");
 beforeEach(() => {
   useTestEnv();
   resetQueueForTests();
+  resetFloorsForTests();
   removeFromRoom.mockClear();
   setRoomMetadata.mockClear();
 });
@@ -169,6 +171,28 @@ describe("POST /api/livekit/webhook", () => {
 
     expect(removeFromRoom).toHaveBeenCalledWith(grok.livekitRoom, grok.identity);
     expect(connectorJoinStatus(db, kai, "kai-key", requestId)).toBe("revoked");
+  });
+
+  it("frees the floor when an agent leaves, and forgets a meeting's floor when it ends", async () => {
+    const a = agent(false);
+    const db = getDb();
+    const meeting = getRoomByLivekitName(db, a.livekitRoom)!;
+    requestTurn(meeting.slug, a.identity, { answering: "person", speak: true });
+    requestTurn(meeting.slug, "agent-other", { answering: "person", speak: true });
+    const ev = (event: string, sid: string) =>
+      JSON.stringify({ event, room: { name: a.livekitRoom }, participant: { identity: a.identity, sid } });
+
+    await POST(await signed(ev("participant_joined", "PA_1")));
+    await POST(await signed(ev("participant_left", "PA_1")));
+    expect(floorView(meeting.slug).speaking).toBe("agent-other");
+    expect(db.prepare("SELECT left_at FROM agent_requests WHERE agent_identity = ?").get(a.identity)).toEqual({
+      left_at: expect.any(Number),
+    });
+    await POST(await signed(ev("participant_joined", "PA_2")));
+    expect(db.prepare("SELECT left_at FROM agent_requests WHERE agent_identity = ?").get(a.identity)).toEqual({ left_at: null });
+
+    await POST(await signed(JSON.stringify({ event: "room_finished", room: { name: a.livekitRoom } })));
+    expect(floorView(meeting.slug).speaking).toBeNull();
   });
 
   it("refuses an oversized body before checking it", async () => {

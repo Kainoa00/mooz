@@ -13,6 +13,8 @@ import {
   decideAgentRequest,
   getClaimStatus,
   listPendingRequests,
+  noteBridgePresence,
+  requireBridgeAgent,
 } from "./agents";
 import { getDb } from "./db";
 import { addParticipant, createRoom } from "./rooms";
@@ -265,6 +267,58 @@ describe("security hardening", () => {
 
     expect(() => revokeAgent(db, { slug: other.slug, agentIdentity: identity })).toThrowError(
       expect.objectContaining({ status: 404 }),
+    );
+  });
+});
+
+describe("requireBridgeAgent", () => {
+  function approved() {
+    const m = meeting();
+    const claim = claimAgentCode(m.db, { code: createAgentCode(m.db, m.guest).code, name: "Grok" });
+    decideAgentRequest(m.db, { slug: m.slug, requestId: claim.requestId, approve: true });
+    const status = getClaimStatus(m.db, claim.requestId, claim.claimSecret);
+    const identity = status.status === "approved" ? status.agent.identity : "";
+    return { ...m, ...claim, identity };
+  }
+
+  it("is the agent in the meeting, once it has its token", () => {
+    const { db, slug, requestId, claimSecret, identity } = approved();
+    expect(() => requireBridgeAgent(db, requestId, claimSecret)).toThrowError(
+      expect.objectContaining({ status: 409, code: "not_in_meeting" }),
+    );
+    markTokenIssued(db, requestId);
+    expect(requireBridgeAgent(db, requestId, claimSecret)).toMatchObject({ identity, slug, name: "Grok" });
+  });
+
+  it("needs the claim secret", () => {
+    const { db, requestId, claimSecret } = approved();
+    markTokenIssued(db, requestId);
+    for (const [id, secret] of [
+      [requestId, undefined],
+      [requestId, "wrong"],
+      ["r_nope", claimSecret],
+    ] as const) {
+      expect(() => requireBridgeAgent(db, id, secret)).toThrowError(
+        expect.objectContaining({ status: 404, code: "request_not_found" }),
+      );
+    }
+  });
+
+  it("is gone once removed, or once it left the meeting (until LiveKit says it's back)", () => {
+    const { db, slug, requestId, claimSecret, identity } = approved();
+    markTokenIssued(db, requestId);
+    noteBridgePresence(db, identity, "PA_1", true);
+    noteBridgePresence(db, identity, "PA_old", false); // a late "left" for an older connection
+    expect(() => requireBridgeAgent(db, requestId, claimSecret)).not.toThrow();
+    noteBridgePresence(db, identity, "PA_1", false);
+    expect(() => requireBridgeAgent(db, requestId, claimSecret)).toThrowError(
+      expect.objectContaining({ code: "not_in_meeting" }),
+    );
+    noteBridgePresence(db, identity, "PA_2", true);
+    expect(() => requireBridgeAgent(db, requestId, claimSecret)).not.toThrow();
+    revokeAgent(db, { slug, agentIdentity: identity });
+    expect(() => requireBridgeAgent(db, requestId, claimSecret)).toThrowError(
+      expect.objectContaining({ code: "not_in_meeting" }),
     );
   });
 });

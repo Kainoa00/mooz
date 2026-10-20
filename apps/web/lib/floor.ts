@@ -319,6 +319,11 @@ export function leaveFloor(slug: string, agent: string): void {
   });
 }
 
+/** An agent was taken out (or its connection is gone): its turns in any meeting are over. */
+export function leaveFloors(agent: string): void {
+  for (const slug of [...store().floors.keys()]) leaveFloor(slug, agent);
+}
+
 /** A person lets the agents go on: held replies go out, and the count starts over. */
 export function continueAgents(slug: string): boolean {
   const floor = store().floors.get(slug);

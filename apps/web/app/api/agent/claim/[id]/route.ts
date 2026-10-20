@@ -1,14 +1,9 @@
-import { getClaimStatus, markTokenIssued } from "@/lib/agents";
+import { bearer, getClaimStatus, markTokenIssued } from "@/lib/agents";
 import { getDb } from "@/lib/db";
 import { errorResponse } from "@/lib/http";
 import { livekitConfig, mintAgentToken } from "@/lib/livekit";
 
 export const dynamic = "force-dynamic";
-
-function bearer(req: Request): string | undefined {
-  const header = req.headers.get("authorization");
-  return header?.startsWith("Bearer ") ? header.slice("Bearer ".length) : undefined;
-}
 
 /** Polled by the bridge until the host decides; returns the agent's token once approved. */
 export async function GET(

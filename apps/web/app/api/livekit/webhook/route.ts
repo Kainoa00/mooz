@@ -1,8 +1,9 @@
 import { WebhookReceiver } from "livekit-server-sdk";
-import { isRevokedAgent } from "@/lib/agents";
+import { isRevokedAgent, noteBridgePresence } from "@/lib/agents";
 import { endRoomConnectors, noteConnectorPresence } from "@/lib/connector-agents";
 import { forgetAgent } from "@/lib/connector-queue";
 import { getDb } from "@/lib/db";
+import { endFloor, leaveFloors } from "@/lib/floor";
 import { errorResponse, HttpError, readCapped } from "@/lib/http";
 import { livekitConfig, removeFromRoom } from "@/lib/livekit";
 import { getNotesPolicy } from "@/lib/notes";
@@ -14,8 +15,9 @@ import { getRoomByLivekitName } from "@/lib/rooms";
  * that reconnects with a token it still holds is kicked the moment it joins, and a
  * room LiveKit starts again (after everyone left) gets its notes policy back. A
  * connector agent whose tab leaves may come back for a couple of minutes (a reload);
- * after that it's out, with its questions. When the meeting ends, its connector agents
- * are done.
+ * after that it's out, with its questions. An agent that leaves gives up its turns (a bridge
+ * agent can't take more until it's back). When the meeting ends, its connector agents are
+ * done and its floor is forgotten.
  */
 export async function POST(req: Request): Promise<Response> {
   try {
@@ -33,16 +35,24 @@ export async function POST(req: Request): Promise<Response> {
     const room = event.room?.name;
     const db = getDb();
     if (event.event === "participant_joined" && identity && room) {
+      noteBridgePresence(db, identity, sid, true);
       if (isRevokedAgent(db, identity)) await removeFromRoom(room, identity);
       else if (noteConnectorPresence(db, identity, sid, true) === "expired") {
         forgetAgent(identity);
         await removeFromRoom(room, identity);
       }
     }
-    if (event.event === "participant_left" && identity) noteConnectorPresence(db, identity, sid, false);
+    if (event.event === "participant_left" && identity) {
+      noteConnectorPresence(db, identity, sid, false);
+      noteBridgePresence(db, identity, sid, false);
+      leaveFloors(identity);
+    }
     if (event.event === "room_finished" && room) {
       const meeting = getRoomByLivekitName(db, room);
-      if (meeting) for (const agent of endRoomConnectors(db, meeting.slug)) forgetAgent(agent);
+      if (meeting) {
+        for (const agent of endRoomConnectors(db, meeting.slug)) forgetAgent(agent);
+        endFloor(meeting.slug);
+      }
     }
     if (event.event === "room_started" && room) {
       const meeting = getRoomByLivekitName(db, room);

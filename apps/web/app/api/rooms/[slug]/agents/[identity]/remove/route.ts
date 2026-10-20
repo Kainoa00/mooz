@@ -1,8 +1,10 @@
 import { revokeAgent } from "@/lib/agents";
 import { forgetAgent } from "@/lib/connector-queue";
 import { getDb } from "@/lib/db";
+import { leaveFloor } from "@/lib/floor";
 import { errorResponse } from "@/lib/http";
 import { removeFromRoom } from "@/lib/livekit";
+import "@/lib/room-state"; // tells the meeting when the floor changes
 import { assertSameOrigin, requireHost } from "@/lib/session";
 
 /** Host-only: remove an agent from the meeting and make sure it cannot rejoin. */
@@ -17,6 +19,7 @@ export async function POST(
     const room = requireHost(db, req, slug);
     revokeAgent(db, { slug, agentIdentity: identity });
     forgetAgent(identity);
+    leaveFloor(slug, identity);
     await removeFromRoom(room.livekitRoom, identity);
     return Response.json({ ok: true });
   } catch (err) {
