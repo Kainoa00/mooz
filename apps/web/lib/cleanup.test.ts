@@ -6,7 +6,10 @@ import {
   claimAgentCode,
   createAgentCode,
   decideAgentRequest,
+  MAX_UNSEEN_NAMES,
   markTokenIssued,
+  meetingsTooBusyForTests,
+  namesForNewAgent,
   noteBridgePresence,
   requireBridgeAgent,
 } from "./agents";
@@ -99,6 +102,18 @@ describe("sessions expire", () => {
   });
 });
 
+/** Fills a meeting with joins nobody can vouch for, and finds it too busy to check names. */
+function makeTooBusy(db: Db, slug: string) {
+  const insert = db.prepare(
+    "INSERT INTO participants (identity, room_slug, name, is_host, secret_hash, created_at, expires_at) VALUES (?, ?, ?, 0, 's', ?, ?)",
+  );
+  db.exec("BEGIN");
+  for (let i = 0; i <= MAX_UNSEEN_NAMES; i++) insert.run(`p_${slug}_${i}`, slug, `Ghost ${i}`, Date.now(), Date.now() + SESSION_TTL_MS);
+  db.exec("COMMIT");
+  expect(() => namesForNewAgent(db, slug)).toThrow("too busy");
+  expect(meetingsTooBusyForTests()).toContain(slug);
+}
+
 describe("endMeeting", () => {
   it("deletes a meeting's people, codes and requests in an order the foreign keys allow, and keeps the room", () => {
     const db = getDb();
@@ -125,6 +140,14 @@ describe("endMeeting", () => {
     expect(namesInMemoryForTests()).toBe(0);
   });
 
+  it("forgets that the meeting was too busy to check agents' names", () => {
+    const db = getDb();
+    const { slug } = createRoom(db);
+    makeTooBusy(db, slug);
+    endMeeting(db, slug);
+    expect(meetingsTooBusyForTests()).not.toContain(slug);
+  });
+
   it("forgets when the webhook last spoke of the meeting", () => {
     const db = getDb();
     const { slug } = createRoom(db);
@@ -146,6 +169,16 @@ describe("sweep", () => {
     expect(namesInMemoryForTests()).toBeGreaterThan(0); // nothing went, so nothing to forget
     expect(sweep(db, Date.now() + SESSION_TTL_MS + 1)).toBeGreaterThan(0);
     expect(namesInMemoryForTests()).toBe(0);
+  });
+
+  it("forgets meetings found too busy to check names once that has run out, though nothing else went", () => {
+    const db = getDb();
+    const { slug } = createRoom(db);
+    makeTooBusy(db, slug);
+    expect(sweep(db)).toBe(0);
+    expect(meetingsTooBusyForTests()).toContain(slug); // not yet: claims are still refused without looking
+    expect(sweep(db, Date.now() + 11_000)).toBe(0);
+    expect(meetingsTooBusyForTests()).not.toContain(slug);
   });
 
   it("forgets when the webhook last spoke of a meeting nobody is left in, though LiveKit never said it ended", () => {

@@ -162,7 +162,8 @@ const holdsName = (db: Db, slug: string, now: number) =>
  * Joins nobody has reported coming in that a name check counts at most, of those the webhook
  * vouches for and again of those it can't (participantNames). Every agent's name is checked
  * against each, so a meeting stuffed with joins that never come in can't make that slow. No
- * person is turned away for it; past it, a new agent's name is refused for now (names_busy).
+ * person is turned away for it. Past it, the oldest the webhook vouches for just aren't
+ * counted, and past it of those it can't, a new agent's name is refused for now (names_busy).
  */
 export const MAX_UNSEEN_NAMES = 2_000;
 /** After a meeting is found too busy to check names, claims are refused this long without looking. */
@@ -172,6 +173,11 @@ const BUSY = Symbol.for("mooz.namesBusy");
 function busyUntil(): Map<string, number> {
   const g = globalThis as unknown as Record<symbol, Map<string, number> | undefined>;
   return (g[BUSY] ??= new Map());
+}
+
+/** The meetings now remembered as too busy to check names, for tests. */
+export function meetingsTooBusyForTests(): string[] {
+  return [...busyUntil().keys()];
 }
 
 const namesBusy = () =>
@@ -185,9 +191,34 @@ export function namesForNewAgent(db: Db, slug: string, now = Date.now()): string
   try {
     return participantNames(db, slug, now);
   } catch (err) {
-    if (err instanceof HttpError && err.code === "names_busy") busyUntil().set(slug, now + BUSY_RECHECK_MS);
+    if (err instanceof HttpError && err.code === "names_busy") {
+      pruneNamesBusy(now);
+      busyUntil().set(slug, now + BUSY_RECHECK_MS);
+    }
     throw err;
   }
+}
+
+/** Forgets that a meeting was too busy to check names (it has ended). */
+export function forgetNamesBusy(slug: string): void {
+  busyUntil().delete(slug);
+}
+
+/** Forgets the meetings whose finding has run out, so only the last few seconds' are kept. */
+export function pruneNamesBusy(now = Date.now()): void {
+  for (const [slug, until] of busyUntil()) if (until <= now) busyUntil().delete(slug);
+}
+
+/**
+ * Whether reloading this session would make its name one the webhook can't vouch for: it never
+ * came into the call, and the webhook has spoken of the meeting since its last join. A reload
+ * of a session already past vouching for (in an outage, or without the webhook) changes nothing.
+ */
+export function reloadUnvouches(db: Db, slug: string, identity: string, now = Date.now()): boolean {
+  const row = db
+    .prepare("SELECT session_sid, expires_at FROM participants WHERE identity = ? AND room_slug = ?")
+    .get(identity, slug) as { session_sid: string | null; expires_at: number } | undefined;
+  return row !== undefined && row.session_sid === null && meetingHeardAt(db, slug, now) > row.expires_at - SESSION_TTL_MS;
 }
 
 export function transaction<T>(db: Db, fn: () => T): T {

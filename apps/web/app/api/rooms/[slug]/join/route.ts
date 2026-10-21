@@ -4,17 +4,16 @@ import { getDb } from "@/lib/db";
 import { HttpError, errorResponse, readJson, SMALL_JSON_BYTES } from "@/lib/http";
 import { livekitConfig, mintHumanToken } from "@/lib/livekit";
 import { parseDisplayName } from "@/lib/names";
-import { activeAgentNames } from "@/lib/agents";
+import { activeAgentNames, reloadUnvouches } from "@/lib/agents";
 import { getNotesOptOut } from "@/lib/notes";
 import { allow } from "@/lib/rate-limit";
-import { addParticipant, cameIntoCall, findParticipant, isHost, renameParticipant, touchRoom } from "@/lib/rooms";
+import { addParticipant, findParticipant, isHost, renameParticipant, touchRoom } from "@/lib/rooms";
 import { assertSameOrigin, requireRoom } from "@/lib/session";
-import { webhookArrives } from "@/lib/webhook-seen";
 
 /**
  * Joins a minute per meeting, counted apart for the host and for each person coming back (a
- * reload), so a stranger with the link who joins over and over can't keep them out. Where the
- * webhook arrives, a reload of a session that never came into the call counts with new joins.
+ * reload), so a stranger with the link who joins over and over can't keep them out. A reload
+ * that would make a name the webhook vouched for one it can't counts with new joins.
  */
 export const JOINS_PER_MINUTE = 30;
 
@@ -38,10 +37,9 @@ export async function POST(
     const secret = readCookie(req, participantCookie(slug));
     const cookieParticipant = typeof body.rejoin === "string" ? findParticipant(db, slug, secret) : undefined;
     const returning = cookieParticipant?.identity === body.rejoin ? cookieParticipant : undefined;
-    // A reload of a session nobody saw come into the call (where the webhook would have said)
-    // counts with new joins: a reload makes its name one the webhook can't vouch for, and a link
-    // holder reloading thousands at once could keep new agents refused (names_busy).
-    const ownLimit = returning !== undefined && !(webhookArrives(db) && !cameIntoCall(db, returning.identity));
+    // A reload that makes a name the webhook vouched for one it can't counts with new joins: a
+    // link holder reloading thousands at once could keep new agents refused (names_busy).
+    const ownLimit = returning !== undefined && !reloadUnvouches(db, slug, returning.identity);
     const key = ownLimit ? `rejoins:${returning.identity}` : host ? `joins-host:${slug}` : `joins:${slug}`;
     if (!allow(key, JOINS_PER_MINUTE, 60_000)) {
       throw new HttpError(429, "rate_limited", "Lots of people are joining this meeting just now. Try again in a minute.");

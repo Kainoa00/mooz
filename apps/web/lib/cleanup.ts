@@ -1,4 +1,4 @@
-import { transaction } from "./agents";
+import { forgetNamesBusy, pruneNamesBusy, transaction } from "./agents";
 import type { Db } from "./db";
 import { forgetNames } from "./names";
 import { pruneExpiredWindows } from "./rate-limit";
@@ -37,6 +37,7 @@ function checkpoint(db: Db): void {
 /** LiveKit says the meeting ended (everyone left): forget who was there. The room stays. */
 export function endMeeting(db: Db, slug: string): number {
   forgetNames();
+  forgetNamesBusy(slug);
   const changes = transaction(db, () => {
     db.prepare("UPDATE rooms SET webhook_at = NULL WHERE slug = ?").run(slug);
     return forgetRooms(db, "?", [slug]);
@@ -80,6 +81,7 @@ export function sweep(db: Db, now = Date.now()): number {
   }
   // Rate-limit counts name meetings and people too: they go once their window is over.
   pruneExpiredWindows(now);
+  pruneNamesBusy(now);
   return changes;
 }
 

@@ -220,7 +220,7 @@ describe("rate limits", () => {
     expect((await claim(jsonRequest("http://localhost/api/agent/claim", { code: real, name: "Nova" }))).status).toBe(201);
   });
 
-  it("counts a reload of a session nobody saw come in with new joins, where the webhook would say", async () => {
+  it("counts a reload with new joins when it would make a name the webhook vouched for one it can't", async () => {
     const db = getDb();
     const { slug } = createRoom(db);
     const url = `http://localhost:3000/api/rooms/${slug}/join`;
@@ -231,12 +231,33 @@ describe("rate limits", () => {
       const { identity } = (await res.json()) as { identity: string };
       joined.push({ name, identity, secret: setCookies(res)[`mooz_p_${slug}`] });
     }
+    noteRoomWebhook(db, getRoom(db, slug)!.livekitRoom, Date.now() + 1); // spoken of since they joined
     notePersonPresence(db, joined[1].identity, "PA_mia", true); // Mia came in; Zach never did
     for (let i = 2; i < JOINS_PER_MINUTE; i++) await join(jsonRequest(url, { name: `Stranger ${i}` }), params({ slug }));
     const back = (p: (typeof joined)[number]) =>
       join(jsonRequest(url, { name: p.name, rejoin: p.identity }, { cookie: `mooz_p_${slug}=${p.secret}` }), params({ slug }));
     expect((await back(joined[0])).status).toBe(429);
     expect((await back(joined[1])).status).toBe(200);
+  });
+
+  it("keeps a reload on its own limit when the webhook hasn't spoken of the meeting since that join", async () => {
+    const db = getDb();
+    const hourAgo = Date.now() - 60 * 60 * 1000;
+    noteWebhook(db, hourAgo); // still counts as arriving, but has gone quiet (an outage, say)
+    for (const heard of [true, false]) {
+      const { slug } = createRoom(db);
+      if (heard) noteRoomWebhook(db, getRoom(db, slug)!.livekitRoom, hourAgo);
+      const url = `http://localhost:3000/api/rooms/${slug}/join`;
+      const res = await join(jsonRequest(url, { name: "Zach" }), params({ slug }));
+      const { identity } = (await res.json()) as { identity: string };
+      const secret = setCookies(res)[`mooz_p_${slug}`];
+      for (let i = 1; i < JOINS_PER_MINUTE; i++) await join(jsonRequest(url, { name: `Stranger ${i}` }), params({ slug }));
+      const back = await join(
+        jsonRequest(url, { name: "Zach", rejoin: identity }, { cookie: `mooz_p_${slug}=${secret}` }),
+        params({ slug }),
+      );
+      expect(back.status).toBe(200); // his name was one it couldn't vouch for already
+    }
   });
 
   it("lets the host past a full meeting, though not without end", () => {
