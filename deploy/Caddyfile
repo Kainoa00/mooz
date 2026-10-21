@@ -1,0 +1,15 @@
+# HTTPS for mooz (certificates from Let's Encrypt). No `log` directive on purpose: connector
+# links carry their secret in the path (/mcp/<secret>), and access logs would keep them.
+
+{$MOOZ_DOMAIN} {
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	reverse_proxy 127.0.0.1:3000
+}
+
+{$LIVEKIT_DOMAIN} {
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	reverse_proxy 127.0.0.1:7880 {
+		# Keep meetings' WebSockets open across a Caddy reload.
+		stream_close_delay 5m
+	}
+}

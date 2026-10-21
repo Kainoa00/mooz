@@ -22,6 +22,16 @@ import { getRoomByLivekitName, notePersonPresence } from "@/lib/rooms";
  * changes nothing. When the meeting ends, its connector agents are
  * done, its floor is forgotten, and so is everyone who was in it (lib/cleanup.ts).
  */
+const FIRST_WEBHOOK = Symbol.for("mooz.firstWebhook");
+
+/** One line in the logs when LiveKit's webhook first gets through (the deploy guide checks for it). */
+function noteFirstWebhook(): void {
+  const g = globalThis as unknown as Record<symbol, boolean | undefined>;
+  if (g[FIRST_WEBHOOK]) return;
+  g[FIRST_WEBHOOK] = true;
+  console.log("LiveKit webhooks are reaching mooz.");
+}
+
 export async function POST(req: Request): Promise<Response> {
   try {
     const { apiKey, apiSecret } = livekitConfig();
@@ -33,6 +43,7 @@ export async function POST(req: Request): Promise<Response> {
       .catch(() => {
         throw new HttpError(401, "invalid_signature", "Webhook signature did not verify");
       });
+    noteFirstWebhook();
     const identity = event.participant?.identity;
     const sid = event.participant?.sid;
     const room = event.room?.name;

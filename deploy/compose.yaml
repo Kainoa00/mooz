@@ -1,0 +1,68 @@
+# mooz on one server: Caddy (HTTPS), LiveKit (media) and the web app, all on the host's
+# network. See docs/deploy-vps.md. Settings come from deploy/.env (copy .env.example).
+# Run from this folder: docker compose up -d
+# Only Caddy (80, 443) and LiveKit's media ports (7881/tcp, 7882/udp, 3478/udp) face the
+# internet; the web app (3000) and LiveKit's API (7880) listen on 127.0.0.1 only.
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
+services:
+  caddy:
+    image: caddy:2.11.7
+    network_mode: host
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      MOOZ_DOMAIN: ${MOOZ_DOMAIN:?Set MOOZ_DOMAIN in deploy/.env}
+      LIVEKIT_DOMAIN: ${LIVEKIT_DOMAIN:?Set LIVEKIT_DOMAIN in deploy/.env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+  livekit:
+    image: livekit/livekit-server:v1.13.10
+    network_mode: host
+    restart: unless-stopped
+    logging: *logging
+    # No --dev: that would serve LiveKit's debug pages and skip its secret check.
+    command: ["--config", "/etc/livekit.yaml"]
+    environment:
+      LIVEKIT_KEYS: "mooz: ${LIVEKIT_API_SECRET:?Set LIVEKIT_API_SECRET in deploy/.env (openssl rand -base64 48)}"
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+
+  web:
+    image: ghcr.io/kainoa00/mooz-web:${MOOZ_VERSION:-0.1.0}
+    # Builds here if the image can't be pulled.
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile
+    network_mode: host
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      HOSTNAME: 127.0.0.1
+      PORT: "3000"
+      MOOZ_PUBLIC_URL: ${MOOZ_PUBLIC_URL:?Set MOOZ_PUBLIC_URL in deploy/.env}
+      LIVEKIT_URL: ${LIVEKIT_URL:?Set LIVEKIT_URL in deploy/.env}
+      LIVEKIT_API_URL: http://127.0.0.1:7880
+      LIVEKIT_API_KEY: mooz
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?Set LIVEKIT_API_SECRET in deploy/.env}
+      MOOZ_DB_PATH: /data/mooz.db
+      MOOZ_ROOMS_PER_MINUTE: ${MOOZ_ROOMS_PER_MINUTE:-}
+      MOOZ_MAX_CONNECTORS: ${MOOZ_MAX_CONNECTORS:-}
+      MOOZ_CONNECTORS_PER_MINUTE: ${MOOZ_CONNECTORS_PER_MINUTE:-}
+    volumes:
+      - mooz-data:/data
+    depends_on:
+      - livekit
+
+volumes:
+  caddy-data:
+  caddy-config:
+  mooz-data:

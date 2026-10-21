@@ -1,6 +1,6 @@
 services:
   livekit:
-    image: livekit/livekit-server:v1.13.7
+    image: livekit/livekit-server:v1.13.10
     command: ["--config", "/etc/livekit.yaml", "--dev", "--node-ip", "${LIVEKIT_NODE_IP:-127.0.0.1}"]
     environment:
       LIVEKIT_KEYS: "${LIVEKIT_API_KEY:-devkey}: ${LIVEKIT_API_SECRET:-secret}"

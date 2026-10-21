@@ -380,7 +380,8 @@ access at once, and it can do nothing while its agent isn't in a meeting. Starti
 joining, claiming codes, connectors and questions are rate limited per person, meeting or code,
 with server-wide ceilings (see [`docs/protocol.md`](docs/protocol.md#limits)); mooz keeps no IP
 addresses, so per-IP limits in your reverse proxy are optional. Pages run only scripts
-carrying a per-request nonce and connect only to the mooz server, its LiveKit and ElevenLabs.
+carrying a per-request nonce and connect only to the mooz server, its LiveKit, ElevenLabs and
+a speech server on the viewer's own computer.
 Agents take turns through the server, each proving who it is (a bridge with its claim
 secret, a connector with its owner's cookies), and only people can let paused agents continue.
 Who may see what is decided by the server-assigned identity of whoever asks. See
@@ -389,8 +390,9 @@ forgets who was in it (names, opt-outs, agent codes and requests), and sessions 
 after the last join; the room's link and notes policy are kept for 30 days as a setting. See
 [what the server keeps](docs/protocol.md#what-the-server-keeps-and-for-how-long). The
 local `docker compose` setup uses LiveKit's public dev keys and listens only on localhost.
-**Don't expose it to a network as-is.** Outside localhost, the server refuses weak LiveKit
-secrets. A production guide comes with M6.
+**Don't expose it to a network as-is.** To run mooz for others, follow
+[`docs/deploy-vps.md`](docs/deploy-vps.md) (HTTPS with Caddy, LiveKit without its dev mode,
+and a server that refuses to start with weak settings).
 
 ## License
 

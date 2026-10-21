@@ -23,7 +23,7 @@ def test_missing_keys_fail_before_joining(
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("ELEVEN_API_KEY", raising=False)
 
-    assert cli.main(["connect", "X", "--server", "http://s", "--name", "Atlas"]) == 2
+    assert cli.main(["connect", "X", "--server", "https://s", "--name", "Atlas"]) == 2
     assert "ANTHROPIC_API_KEY and ELEVEN_API_KEY" in capsys.readouterr().err
 
 
@@ -41,7 +41,7 @@ def test_parse_connect_arguments() -> None:
 def test_name_defaults_to_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MOOZ_AGENT_NAME", "Nova")
 
-    args = cli.parse_args(["connect", "X", "--server", "http://s"])
+    args = cli.parse_args(["connect", "X", "--server", "https://s"])
 
     assert args.name == "Nova"
 
@@ -51,7 +51,7 @@ def test_connect_requires_a_name(
 ) -> None:
     monkeypatch.delenv("MOOZ_AGENT_NAME", raising=False)
 
-    code = cli.main(["connect", "X", "--server", "http://s"])
+    code = cli.main(["connect", "X", "--server", "https://s"])
 
     assert code == 2
     assert "--agent" in capsys.readouterr().err
@@ -65,7 +65,7 @@ def test_claim_errors_exit_cleanly(
 
     monkeypatch.setattr(cli, "obtain_grant", refuse)
 
-    code = cli.main(["connect", "X", "--server", "http://s", "--name", "Atlas"])
+    code = cli.main(["connect", "X", "--server", "https://s", "--name", "Atlas"])
 
     assert code == 1
     assert "The host declined your agent." in capsys.readouterr().err
@@ -85,7 +85,7 @@ def test_connect_runs_the_agent_with_the_grant(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(cli, "obtain_grant", approve)
     monkeypatch.setattr(cli, "run_agent", run)
 
-    assert cli.main(["connect", "X", "--server", "http://s", "--name", "Atlas"]) == 0
+    assert cli.main(["connect", "X", "--server", "https://s", "--name", "Atlas"]) == 0
     assert ran == [grant]
 
 
@@ -99,8 +99,37 @@ def test_network_errors_become_a_clear_message(
 
     monkeypatch.setattr(cli, "claim_code", unreachable)
 
-    assert cli.main(["connect", "X", "--server", "http://nowhere", "--name", "Atlas"]) == 1
-    assert "Could not reach http://nowhere" in capsys.readouterr().err
+    assert cli.main(["connect", "X", "--server", "https://nowhere", "--name", "Atlas"]) == 1
+    assert "Could not reach https://nowhere" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("server", "allow_http", "ok"),
+    [
+        ("https://meet.example.com", False, True),
+        ("http://localhost:3000", False, True),
+        ("http://127.0.0.1:3000", False, True),
+        ("http://[::1]:3000", False, True),
+        ("http://meet.example.com", False, False),
+        ("http://192.168.1.5:3000", False, False),
+        ("http://192.168.1.5:3000", True, True),
+        ("meet.example.com", True, False),
+        ("ftp://meet.example.com", True, False),
+    ],
+)
+def test_the_server_must_be_https_off_this_machine(server: str, allow_http: bool, ok: bool) -> None:
+    assert (cli.server_problem(server, allow_http=allow_http) is None) is ok
+
+
+def test_connect_refuses_plain_http_to_another_machine(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    async def never(**_: object) -> AgentGrant:
+        raise AssertionError("the secret must not be sent")
+
+    monkeypatch.setattr(cli, "obtain_grant", never)
+    assert cli.main(["connect", "X", "--server", "http://meet.example.com", "--name", "Atlas"]) == 2
+    assert "--allow-http" in capsys.readouterr().err
 
 
 def test_init_creates_an_agent_with_sources(
@@ -153,7 +182,7 @@ def test_sources_add_list_remove(tmp_path: Path, capsys: pytest.CaptureFixture[s
 def test_connect_with_an_unknown_agent_says_how_to_create_it(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    assert cli.main(["connect", "X", "--server", "http://s", "--agent", "Nova"]) == 2
+    assert cli.main(["connect", "X", "--server", "https://s", "--agent", "Nova"]) == 2
     assert "mooz-agent init Nova" in capsys.readouterr().err
 
 
@@ -171,7 +200,7 @@ def test_connect_uses_the_saved_agent(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cli, "obtain_grant", approve)
     monkeypatch.setattr(cli, "run_agent", run)
 
-    assert cli.main(["connect", "X", "--server", "http://s", "--agent", "Atlas"]) == 0
+    assert cli.main(["connect", "X", "--server", "https://s", "--agent", "Atlas"]) == 0
     assert seen["name"] == "Atlas"
     assert seen["brain"] == "grok"
 
@@ -200,7 +229,7 @@ def test_local_voice_is_checked_before_joining(
 
     monkeypatch.setattr("mooz_agent.providers.local.check_speech_server", down)
     monkeypatch.setattr(cli, "obtain_grant", approve)
-    assert cli.main(["connect", "X", "--server", "http://s", "--agent", "Atlas"]) == 2
+    assert cli.main(["connect", "X", "--server", "https://s", "--agent", "Atlas"]) == 2
     err = capsys.readouterr().err
     assert "unencrypted" in err and "Is it running?" in err and joined == []
 
@@ -213,7 +242,7 @@ def test_grok_needs_an_xai_key(
     monkeypatch.delenv("XAI_API_KEY", raising=False)
     monkeypatch.setenv("ELEVEN_API_KEY", "x")
 
-    assert cli.main(["connect", "X", "--server", "http://s", "--agent", "Atlas"]) == 2
+    assert cli.main(["connect", "X", "--server", "https://s", "--agent", "Atlas"]) == 2
     assert "XAI_API_KEY" in capsys.readouterr().err
 
 

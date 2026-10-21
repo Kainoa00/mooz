@@ -9,6 +9,7 @@ import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
 from dotenv import load_dotenv
@@ -33,6 +34,11 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     connect = sub.add_parser("connect", help="join a meeting with a one-time code")
     connect.add_argument("code", help="the code shown under 'Bring my agent'")
     connect.add_argument("--server", required=True, help="the meeting's web address")
+    connect.add_argument(
+        "--allow-http",
+        action="store_true",
+        help="allow an http:// --server on another machine (a test on your own network)",
+    )
     agent_option(connect)
     connect.add_argument(
         "--name",
@@ -231,9 +237,34 @@ async def check_local_voice(config: AgentConfig) -> None:
         raise ProviderConfigError(str(err)) from err
 
 
+def _on_this_machine(host: str) -> bool:
+    return host in ("localhost", "::1") or host.startswith("127.")
+
+
+def server_problem(server: str, *, allow_http: bool = False) -> str | None:
+    """Why `--server` won't do. The claim secret goes to it as a Bearer token: over the network,
+    only encrypted."""
+    parts = urlsplit(server)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        return (
+            "--server must be the meeting's web address, like https://meet.example.com "
+            f"(not {server!r})."
+        )
+    if parts.scheme == "http" and not allow_http and not _on_this_machine(parts.hostname.lower()):
+        return (
+            f"{server} is http://, so your agent's secret would cross the network unencrypted. "
+            "Use its https:// address, or add --allow-http for a test on your own network."
+        )
+    return None
+
+
 def cmd_connect(args: argparse.Namespace) -> int:
     from .providers import ProviderConfigError, check_environment, voice_provider
 
+    problem = server_problem(args.server, allow_http=args.allow_http)
+    if problem:
+        print(f"mooz-agent: {problem}", file=sys.stderr)
+        return 2
     if args.agent:
         config = AgentConfig.load(args.agent)
     elif args.name:

@@ -1,0 +1,23 @@
+# LiveKit for a mooz server (deploy/compose.yaml). The key is "mooz"; its secret comes from
+# LIVEKIT_KEYS, set from deploy/.env.
+port: 7880
+# Signalling and the API stay on this machine; Caddy serves them as wss://LIVEKIT_DOMAIN.
+bind_addresses:
+  - 127.0.0.1
+rtc:
+  # ICE over TCP for networks that block UDP, and one UDP port for media.
+  tcp_port: 7881
+  udp_port: 7882
+  use_external_ip: true
+turn:
+  enabled: true
+  udp_port: 3478
+room:
+  max_participants: 20
+logging:
+  level: info
+# How mooz knows who's in a meeting, kicks removed agents and forgets meetings that end.
+webhook:
+  api_key: mooz
+  urls:
+    - http://127.0.0.1:3000/api/livekit/webhook

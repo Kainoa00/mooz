@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   web:
     runs-on: ubuntu-latest
@@ -58,3 +61,33 @@ jobs:
       - run: pnpm -C apps/web test:e2e
         env:
           MOOZ_BRIDGE_DIR: ${{ github.workspace }}/bridge
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the web image
+        run: docker build -f apps/web/Dockerfile -t mooz-web:ci .
+      - name: The production kit's settings are complete
+        run: docker compose -f deploy/compose.yaml --env-file deploy/.env.example config --quiet
+      - name: Runs with a strong secret
+        run: |
+          docker run -d --name web -p 127.0.0.1:3000:3000 \
+            -e LIVEKIT_URL=wss://livekit.example.com -e LIVEKIT_API_KEY=mooz \
+            -e LIVEKIT_API_SECRET="$(openssl rand -base64 48)" \
+            -e MOOZ_PUBLIC_URL=https://meet.example.com -e MOOZ_DB_PATH=/data/mooz.db mooz-web:ci
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:3000/api/ready && break; sleep 1; done
+          curl -sf http://127.0.0.1:3000/api/ready | grep -q '"ok":true'
+          curl -sf -o /dev/null http://127.0.0.1:3000/mooz-pcm-worklet.js
+          curl -sfI http://127.0.0.1:3000/ | grep -qi '^content-security-policy:'
+      - name: Show its logs
+        if: failure()
+        run: docker logs web
+      - name: Refuses to start with a weak secret
+        run: |
+          status=0
+          timeout 60 docker run --rm \
+            -e LIVEKIT_URL=wss://livekit.example.com -e LIVEKIT_API_KEY=mooz -e LIVEKIT_API_SECRET=secret \
+            -e MOOZ_PUBLIC_URL=https://meet.example.com mooz-web:ci || status=$?
+          # 124 is the timeout: it kept running, which is the failure.
+          if [ "$status" -eq 0 ] || [ "$status" -eq 124 ]; then echo "it started with a weak secret"; exit 1; fi

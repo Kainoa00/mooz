@@ -3,5 +3,13 @@
 bridge
 .git
 .claude
+deploy
 **/coverage
 **/test-results
+**/playwright-report
+# Secrets and data never go into an image.
+**/.env*
+!**/.env.example
+**/data
+**/*.db
+**/*.db-*
