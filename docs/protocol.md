@@ -66,8 +66,14 @@ Request: `{"code": "ABCD-EFGH-JKLM", "name": "Atlas"}` with `content-type: appli
   with no small letter after it (`lris` is `Iris` and `ARlA` is `ARIA`, but `Joel` isn't
   `Joe`, `Ira` isn't `Lyra` and `Clara` isn't `Kiara`). An l read as I matches by spelling only
   where it's said as an l (before a vowel, accented or not: `lily` and `léon` aren't `Ilya` and `Ion`), and by sound where it can only
-  be said as the I it looks like (`lsabel` is `Isabel`). `ə` sounds like a (`Əli` is `Ali`).
-  The common marks drawn like an apostrophe (`’`, `ʻ`, `´`, `ˊ`, `᾽`) count as `'`. The
+  be said as the I it looks like (`lsabel` is `Isabel`). Anything drawn like an l counts as
+  an l here, and anything drawn like a capital I as an I (`ĺsabel`, `ǀris` and `1ris` are
+  `Isabel` and `Iris`, `AtÍas` is `Atlas`). `ə` sounds like a (`Əli` is `Ali`).
+  The common marks drawn like an apostrophe (`’`, `ʻ`, `´`, `ˊ`, `᾽`) count as `'`. An
+  apostrophe after a word of 3 or more letters and before a capital joins two words, so
+  `Atlas'Zach` and `Zach'Atlas` hold `Atlas`; after a shorter prefix it's part of the name
+  (`O'Brien`, `D'Angelo` and `De'Andre` aren't `Brien`, `Angelo` and `Andre`). An agent's wake
+  word is still the one word the detector hears (`Zach'Atlas` wakes on `zach'atlas`). The
   lookalikes are a list of the common ones, not Unicode's whole confusables table; in a word
   otherwise spelled like the wake word, a Latin letter the list doesn't know stands in for the
   one it replaces, if fewer than half the letters are such (`Ꜳtlas`). A person's name can't

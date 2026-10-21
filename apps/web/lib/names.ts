@@ -124,37 +124,39 @@ export function foldName(name: string): string {
   return plain(name).replace(/[^\x00-\x7f]/gu, (c) => TRANSLIT[c] ?? LATIN[c] ?? SOUNDS[c] ?? c);
 }
 
+const looksLike = (c: string) =>
+  CAPITALS[c] ?? LOOKS[c] ?? LOOKS[c.toUpperCase()] ?? LOOKS[c.toLowerCase()] ?? c.toLowerCase();
+
 /** A name as it looks in plain Latin letters (what someone reading it would say). */
 export function foldNameByLook(name: string): string {
-  return [...bare(name)]
-    .map((c) => CAPITALS[c] ?? LOOKS[c] ?? LOOKS[c.toUpperCase()] ?? LOOKS[c.toLowerCase()] ?? c.toLowerCase())
-    .join("");
+  return [...bare(name)].map(looksLike).join("");
 }
 
+/** The same with each letter's case kept, which telling a capital I from an l takes. */
+const drawn = (name: string) =>
+  [...bare(name)].map((c) => (c === c.toLowerCase() ? looksLike(c) : looksLike(c).toUpperCase())).join("");
+
 /**
- * The ways a name can be read: as it sounds, as it looks, and with a capital I read as l (and l
- * as I), which many fonts draw alike. Only where they would pass for each other: an I after a
- * small letter, or before one inside a word ("AtIas", "KaI"), and an l that starts a word, or
- * follows a capital with no small letter after it ("lris", "ARlA", "NovaAl"). A capital I that
- * starts a word (Ira, Ilham) and an l among small letters (Joel, Clara) are just themselves.
- * An l read as I is said as an I only where it can't be said as an l: before a consonant
- * ("lsabel" is said Isabel) or among capitals, not before a vowel ("lily" is said lily).
+ * The ways a name can be read, before folding: as it sounds, as it looks, and with a capital I
+ * read as l (and l as I), which many fonts draw alike. Those go by the name as it looks, so
+ * anything drawn like an l is one ("ĺsabel", "ǀris", "1ris") and anything drawn like a capital
+ * I is one ("AtÍas", "AtƖas"). Only where they would pass for each other: an I after a small
+ * letter, or before one inside a word ("AtIas", "KaI"), and an l that starts a word, or follows
+ * a capital with no small letter after it ("lris", "ARlA", "NovaAl"). A capital I that starts a
+ * word (Ira, Ilham) and an l among small letters (Joel, Clara) are just themselves. An l read
+ * as I is said as an I only where it can't be said as an l: before a consonant ("lsabel" is
+ * said Isabel) or among capitals, not before a vowel ("lily" is said lily).
  */
 function readings(name: string): string[] {
-  const iAsL = name.replace(/(?<=\p{Ll})I|(?<=\p{L})I(?=\p{Ll})/gu, "l");
-  const lAsI = name.replace(/(?<![\p{L}\p{N}])l|(?<=\p{Lu})l(?!\p{Ll})/gu, "I");
+  const looks = drawn(name);
+  const iAsL = looks.replace(/(?<=\p{Ll})I|(?<=\p{L})I(?=\p{Ll})/gu, "l");
+  const lAsI = looks.replace(/(?<![\p{L}\p{N}])l|(?<=\p{Lu})l(?!\p{Ll})/gu, "I");
   // The letter after the l as it sounds: léon, like leon, has an l before a vowel, and so do
   // ləman, løna and lærke.
-  const lSaidAsI = name.replace(/(?<![\p{L}\p{N}])l(?=(\P{M}?\p{M}*))|(?<=\p{Lu})l(?!\p{Ll})/gu, (l, next?: string) =>
+  const lSaidAsI = looks.replace(/(?<![\p{L}\p{N}])l(?=(.?))|(?<=\p{Lu})l(?!\p{Ll})/gu, (l, next?: string) =>
     next !== undefined && /^[aeiouy]/i.test(foldName(next)) ? l : "I",
   );
-  return [
-    foldName(name),
-    foldNameByLook(name),
-    foldNameByLook(iAsL),
-    foldNameByLook(lAsI),
-    foldNameByLook(lSaidAsI),
-  ];
+  return [bare(name), looks, iAsL, lAsI, lSaidAsI];
 }
 
 interface Reading {
@@ -168,8 +170,9 @@ interface Reading {
   bySpelling: boolean;
 }
 
-function readingsOf(name: string): Reading[] {
-  const [sound, look, iAsL, lAsI, lSaidAsI] = readings(name);
+function readingsOf([said, ...looks]: string[]): Reading[] {
+  const sound = foldName(said);
+  const [look, iAsL, lAsI, lSaidAsI] = looks.map(foldNameByLook);
   return [
     { folded: sound, byLook: false, bySpelling: false },
     { folded: look, byLook: true, bySpelling: false },
@@ -212,18 +215,29 @@ function distinct(words: { text: string; bySpelling: boolean }[]): Word[] {
   return out;
 }
 
+// An apostrophe after a word and before a capital joins two words, said apart: "Atlas'Zach" is
+// said Atlas Zach. After a prefix shorter than a wake word can be, it's part of the name, said
+// and written with it (O'Brien, D'Angelo, De'Andre).
+const JOINED = /(?<=\p{L}{3})'(?=\p{Lu})/gu;
+
 function viewOf(name: string): NameView {
-  const all = readingsOf(name);
+  const forms = readings(name);
+  const all = readingsOf(forms);
+  // The words an apostrophe joins are words of the name too, but its wake word is the one word
+  // the detector hears ("Zach'Atlas" holds Atlas, and wakes on zach'atlas).
+  const apart = readingsOf(forms.map((f) => f.replace(JOINED, " ")));
   return {
     readings: all.map((r) => r.folded),
-    words: distinct(all.flatMap((r) => nameWords(r.folded).map((text) => ({ text, bySpelling: r.bySpelling })))),
+    words: distinct(
+      [...all, ...apart].flatMap((r) => nameWords(r.folded).map((text) => ({ text, bySpelling: r.bySpelling }))),
+    ),
     wakes: distinct(
       all.flatMap((r) => {
         const text = wakeWord(r.folded);
         return text === undefined ? [] : [{ text, bySpelling: r.bySpelling }];
       }),
     ),
-    unknown: [...new Set(all.filter((r) => r.byLook).flatMap((r) => unknownWords(r.folded)))],
+    unknown: [...new Set([...all, ...apart].filter((r) => r.byLook).flatMap((r) => unknownWords(r.folded)))],
   };
 }
 

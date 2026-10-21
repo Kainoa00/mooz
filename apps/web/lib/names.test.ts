@@ -85,6 +85,7 @@ describe("parseAgentName", () => {
   it.each([
     ["Grok Prime", "Grok"], // saying "Grok Prime" would wake Grok too
     ["Nova Atlas", "Zach's Atlas"],
+    ["Zach'Atlas", "Atlas"], // said Zach Atlas
   ])("rejects %j next to the agent %j, whose wake word it holds", (name, agent) => {
     expect(() => parseAgentName(name, [], [agent])).toThrowError(expect.objectContaining({ status: 409, code: "name_taken" }));
   });
@@ -97,6 +98,7 @@ describe("parseAgentName", () => {
     ["Zach's Grok", "Zach"], // its owner: "Zach" alone doesn't wake "Zach's Grok"
     ["Nova", "Atlas"],
     ["Atlas", "Alice"],
+    ["Zach'Atlas", "Atlas"], // its wake word is the one word the detector hears, zach'atlas
   ])("accepts %j next to %j", (name, taken) => {
     expect(parseAgentName(name, [taken])).toBe(name);
   });
@@ -222,6 +224,20 @@ describe("names that look like an agent's", () => {
     ["At՚las", "Atlas"],
     ["At׳las", "Atlas"],
     ["lśabel", "Isabelle"], // an accented consonant is still one
+    ["ĺsabel", "Isabel"], // anything drawn like an l passes for an I as an l does: an accented l
+    ["ǀsabel", "Isabel"], // a click letter
+    ["ǀris", "Iris"],
+    ["ARǀA", "ARIA"],
+    ["ARĺA", "ARIA"],
+    ["1ris", "Iris"], // a one
+    ["ｌris", "Iris"], // fullwidth
+    ["AtÍas", "Atlas"], // and anything drawn like a capital I passes for an l
+    ["AtƖas", "Atlas"], // a Latin capital iota
+    ["Atlas'Zach", "Atlas"], // an apostrophe before a capital, after a word, joins two words
+    ["Zach'Atlas", "Atlas"],
+    ["Atlas’Zach", "Atlas"],
+    ["ATLAS'ZACH", "Atlas"],
+    ["Zach'lsabel", "Isabel"], // Zach'Isabel, as it looks
   ])("refuses %j while %j is here, and the agent while they are", (name, agent) => {
     expect(() => parseDisplayName(name, [agent])).toThrowError(expect.objectContaining({ status: 409, code: "name_taken" }));
     expect(() => parseAgentName(agent, [name])).toThrowError(expect.objectContaining({ status: 409, code: "name_taken" }));
@@ -270,6 +286,13 @@ describe("names that look like an agent's", () => {
     ["Sevinc Həsənova", "Nova"], // ə doesn't split a word in two
     ["Cəlil", "Leila"],
     ["O’Brien", "Brien"], // ’ is an apostrophe, as ' is
+    ["D'Angelo", "Angelo"], // and a prefix shorter than a word is part of the name
+    ["De'Andre", "Andre"],
+    ["ĺily", "Ilya"], // anything drawn like an l is one, and so are these
+    ["ĺéon", "Ion"],
+    ["Joeĺ", "Joe"],
+    ["Cĺara", "Kiara"],
+    ["Íra", "Lyra"],
   ])("keeps %j next to an agent called %j, either way round", (name, agent) => {
     expect(parseDisplayName(name, [agent])).toBe(name);
     expect(parseAgentName(agent, [name])).toBe(agent);
