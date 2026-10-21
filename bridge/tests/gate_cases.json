@@ -1,0 +1,65 @@
+{
+ "about": "The speech gate: when a track's audio is sent to be transcribed. Shared by the bridge (pytest) and the web app (Vitest) so the two gates never drift. Frames are 100 ms at 16 kHz; q is quiet (every sample 20), l is loud (every sample 3000). input is runs of [level, frames]; events lists every frame that sends something (at is a frame index, or an inclusive [from, to] range, each frame sending `sent` frames); every other frame sends nothing. commit marks the end of an utterance, and keep says whether it had enough speech to transcribe.",
+ "frame_ms": 100,
+ "cases": [
+  {
+   "name": "silence sends nothing",
+   "gate": "scribe",
+   "input": [["q", 50]],
+   "events": []
+  },
+  {
+   "name": "speech opens the gate with the 600 ms before it",
+   "gate": "scribe",
+   "input": [["q", 20], ["l", 2]],
+   "events": [{"at": 20, "sent": 7}, {"at": 21, "sent": 1}]
+  },
+  {
+   "name": "the gate closes after 1.5 s of quiet",
+   "gate": "scribe",
+   "input": [["l", 1], ["q", 15], ["q", 3]],
+   "events": [{"at": [0, 14], "sent": 1}, {"at": 15, "sent": 1, "commit": true, "keep": true}]
+  },
+  {
+   "name": "a short pause doesn't close it",
+   "gate": "scribe",
+   "input": [["l", 1], ["q", 13], ["l", 1], ["q", 15]],
+   "events": [{"at": [0, 28], "sent": 1}, {"at": 29, "sent": 1, "commit": true, "keep": true}]
+  },
+  {
+   "name": "local: an utterance ends after 0.7 s of quiet, and a cough is too short to keep",
+   "gate": "local",
+   "input": [["q", 10], ["l", 2], ["q", 7]],
+   "events": [{"at": 10, "sent": 7}, {"at": [11, 17], "sent": 1}, {"at": 18, "sent": 1, "commit": true, "keep": false}]
+  },
+  {
+   "name": "local: 0.4 s of speech is kept",
+   "gate": "local",
+   "input": [["l", 4], ["q", 7]],
+   "events": [{"at": [0, 9], "sent": 1}, {"at": 10, "sent": 1, "commit": true, "keep": true}]
+  },
+  {
+   "name": "local: only loud frames count as speech, and 0.3 s is enough",
+   "gate": "local",
+   "input": [["l", 2], ["q", 5], ["l", 1], ["q", 7]],
+   "events": [{"at": [0, 13], "sent": 1}, {"at": 14, "sent": 1, "commit": true, "keep": true}]
+  },
+  {
+   "name": "local: a long speech is cut every 15 s and goes on as a new utterance",
+   "gate": "local",
+   "input": [["l", 152], ["q", 7]],
+   "events": [
+    {"at": [0, 148], "sent": 1},
+    {"at": 149, "sent": 1, "commit": true, "keep": true},
+    {"at": [150, 157], "sent": 1},
+    {"at": 158, "sent": 1, "commit": true, "keep": false}
+   ]
+  },
+  {
+   "name": "local: after an utterance, quiet is buffered again for the next one",
+   "gate": "local",
+   "input": [["l", 3], ["q", 7], ["q", 10], ["l", 1]],
+   "events": [{"at": [0, 8], "sent": 1}, {"at": 9, "sent": 1, "commit": true, "keep": true}, {"at": 20, "sent": 7}]
+  }
+ ]
+}
