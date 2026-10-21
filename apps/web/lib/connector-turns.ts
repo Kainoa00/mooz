@@ -79,17 +79,24 @@ export async function takeTurn(
   };
   const giveUp = deps.now() + (options.maxWaitMs ?? MAX_WAIT_MS);
   while (turn.status === "waiting" || turn.status === "held") {
-    if (deps.now() >= giveUp) {
+    const left = giveUp - deps.now();
+    if (left <= 0) {
       await release();
       return null;
     }
+    // The server holds a check open for up to 25 s: never past the time left.
+    const check = new AbortController();
+    const timer = setTimeout(() => check.abort(), left);
     try {
-      const next = await call(deps, `${base}/turns/${turn.id}`);
+      const next = await call(deps, `${base}/turns/${turn.id}`, { signal: check.signal });
       if ("refused" in next) return null;
       if ("turn" in next) turn = next.turn;
       else await deps.sleep(RETRY_MS);
     } catch {
+      if (check.signal.aborted) continue; // out of time: the next pass gives it back
       await deps.sleep(RETRY_MS);
+    } finally {
+      clearTimeout(timer);
     }
   }
   if (turn.status !== "granted") return null;
@@ -98,16 +105,28 @@ export async function takeTurn(
 
 /**
  * The tab's answers of each kind go one at a time (the server keeps one open turn of each
- * kind per agent), and a held reply to an agent doesn't hold up an answer to a person.
+ * kind per agent), and a held reply to an agent doesn't hold up an answer to a person. A job
+ * learns how long it waited behind earlier ones (0 when it didn't have to), since that counts
+ * against how long it may wait for its turn.
  */
 export class TurnQueues {
   private readonly tails: Record<Answering, Promise<unknown>> = {
     person: Promise.resolve(),
     agent: Promise.resolve(),
   };
+  private readonly busy: Record<Answering, number> = { person: 0, agent: 0 };
 
-  run<T>(kind: Answering, job: () => Promise<T>): Promise<T> {
-    const next = this.tails[kind].then(job);
+  constructor(private readonly now: () => number = Date.now) {}
+
+  run<T>(kind: Answering, job: (waitedMs: number) => Promise<T>): Promise<T> {
+    const queued = this.busy[kind] > 0;
+    const at = this.now();
+    this.busy[kind] += 1;
+    const next = this.tails[kind]
+      .then(() => job(queued ? this.now() - at : 0))
+      .finally(() => {
+        this.busy[kind] -= 1;
+      });
     this.tails[kind] = next.catch(() => undefined);
     return next;
   }

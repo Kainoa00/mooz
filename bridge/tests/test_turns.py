@@ -216,3 +216,46 @@ async def test_no_floor_always_goes_ahead() -> None:
     floor = NoFloor()
     async with floor.turn(answering="agent", speak=True) as granted:
         assert granted is LOCAL and granted.deadline is None
+
+
+@respx.mock
+async def test_a_check_left_open_past_max_wait_gives_up_and_withdraws() -> None:
+    respx.post(BASE).respond(201, json={"turn": {"id": "t_1", "status": "waiting"}})
+
+    async def slow(_request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(2)  # the server holds the check open; the floor frees up late
+        return turn("granted", endsInMs=45000)
+
+    respx.get(f"{BASE}/t_1").mock(side_effect=slow)
+    done = respx.post(f"{BASE}/t_1/done").mock(return_value=turn("ended", reason="done"))
+    async with httpx.AsyncClient() as http:
+        floor = Turns(http, SERVER, request_id="r_1", claim_secret="s3cret", retry_seconds=0)
+        started = asyncio.get_running_loop().time()
+        async with floor.turn(answering="person", speak=True, max_wait=0.2) as granted:
+            assert granted is None
+        assert asyncio.get_running_loop().time() - started < 1
+    assert done.called
+
+
+@respx.mock
+async def test_a_stray_404_page_after_turns_worked_is_the_floor_out_of_reach_not_gone() -> None:
+    respx.post(BASE).mock(
+        side_effect=[
+            httpx.Response(201, json={"turn": {"id": "t_1", "status": "granted"}}),
+            httpx.Response(404, text="<html>tunnel offline</html>"),
+            httpx.Response(404, text="404 page not found"),
+            httpx.Response(201, json={"turn": {"id": "t_2", "status": "granted"}}),
+        ]
+    )
+    respx.post(url__regex=rf"{BASE}/t_\d/done").mock(return_value=turn("ended", reason="done"))
+    async with httpx.AsyncClient() as http:
+        floor = turns(http)
+        async with floor.turn(answering="agent", speak=False) as granted:
+            assert granted is not None
+        async with floor.turn(answering="agent", speak=False) as granted:
+            assert granted is None  # not a free pass to talk over other agents
+        async with floor.turn(answering="person", speak=False) as granted:
+            assert granted is LOCAL
+        assert floor.supported is True
+        async with floor.turn(answering="agent", speak=False) as granted:
+            assert granted is not None and granted is not LOCAL

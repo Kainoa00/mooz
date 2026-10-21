@@ -35,7 +35,7 @@ describe("room state", () => {
     requestTurn(slug, "agent-nova", { answering: "person", speak: true });
     expect(JSON.parse(roomMetadata(db, slug))).toEqual({
       notes_allowed: true,
-      floor: { speaking: "agent-atlas", next: "agent-nova", paused: false },
+      floor: { speaking: "agent-atlas", next: "agent-nova", paused: false, continued: 0 },
     });
   });
 
@@ -49,7 +49,7 @@ describe("room state", () => {
     expect(setRoomMetadata).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(PUBLISH_DELAY_MS);
     expect(sent()).toEqual([
-      [getRoom(db, slug)!.livekitRoom, { notes_allowed: false, floor: { speaking: "agent-nova", next: null, paused: false } }],
+      [getRoom(db, slug)!.livekitRoom, { notes_allowed: false, floor: { speaking: "agent-nova", next: null, paused: false, continued: 0 } }],
     ]);
   });
 

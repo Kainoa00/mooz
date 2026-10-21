@@ -81,10 +81,32 @@ class Mouth:
         stops if a person talks over it or the turn runs out; the chat answer stays.
         """
         speak = bool(answer.spoken.strip())
-        async with (
-            self._queues[answering],
-            self.turns.turn(answering=answering, speak=speak, max_wait=max_wait) as granted,
-        ):
+        started = self._clock()
+        queue = self._queues[answering]
+        # Our earlier answer of this kind goes first; that wait counts against `max_wait` too.
+        if not await _take(queue, max_wait):
+            return False
+        try:
+            left = None if max_wait is None else max(0.0, max_wait - (self._clock() - started))
+            return await self._say_in_turn(
+                answer, on_first_frame, chat, reply_to, sources, only_if, answering, speak, left
+            )
+        finally:
+            queue.release()
+
+    async def _say_in_turn(
+        self,
+        answer: Answer,
+        on_first_frame: Callable[[], None] | None,
+        chat: bool,
+        reply_to: str | None,
+        sources: frozenset[str],
+        only_if: Callable[[], bool] | None,
+        answering: Answering,
+        speak: bool,
+        max_wait: float | None,
+    ) -> bool:
+        async with self.turns.turn(answering=answering, speak=speak, max_wait=max_wait) as granted:
             if granted is None:
                 return False
             async with self._voice:
@@ -135,6 +157,11 @@ class Mouth:
                 if resampler:
                     for out in resampler.flush():
                         await emit(out)
+        except Exception:
+            # The voice failed partway: what's queued would go on playing after the turn ends,
+            # under whoever speaks next.
+            self._clear_audio()
+            raise
         finally:
             aclose = getattr(frames, "aclose", None)
             if aclose is not None:
@@ -185,3 +212,15 @@ class _Interruptions:
         else:
             self._talking_since = None
         return self.stopped
+
+
+async def _take(lock: asyncio.Lock, at_most: float | None) -> bool:
+    """Take `lock`, waiting at most `at_most` seconds (None: as long as it takes)."""
+    if at_most is None or not lock.locked():
+        await lock.acquire()
+        return True
+    try:
+        await asyncio.wait_for(lock.acquire(), at_most)
+    except TimeoutError:
+        return False
+    return True

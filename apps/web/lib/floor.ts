@@ -45,7 +45,13 @@ export interface TurnView {
 export interface FloorView {
   speaking: string | null;
   next: string | null;
+  /** A reply between agents is held right now (it goes away when that reply does). */
   paused: boolean;
+  /**
+   * When a person last let the agents continue (ms since the epoch; 0: not since this server
+   * started). Only Continue changes it, so an agent can trust it to start its own count over.
+   */
+  continued: number;
 }
 
 interface Turn {
@@ -79,6 +85,8 @@ interface Floor {
   last?: string;
   /** Replies to agents are held until someone lets the agents continue. */
   paused: boolean;
+  /** When someone last did (0: never). */
+  continuedAt: number;
   activeAt: number;
   timer?: ReturnType<typeof setTimeout>;
   listeners: Map<string, Set<() => void>>;
@@ -136,14 +144,15 @@ function mustWait(floor: Floor, reply: Turn): boolean {
 /**
  * The turn that would be granted next: answers to people first, then replies to agents, unless
  * the agents have had their run of turns. First come, first served, except that an agent doesn't
- * get two turns in a row while another agent's turn is waiting.
+ * get two turns in a row while another agent's turn is waiting. That comes first: what a turn
+ * answers is the agent's own word, so an agent that keeps saying it answers people can't keep
+ * another agent waiting.
  */
 function nextUp(floor: Floor, open: Turn[]): Turn | undefined {
   const waiting = open.filter((t) => t.status === "waiting");
-  const reply = waiting.find((t) => t.answering === "agent");
   const candidates = [
     ...waiting.filter((t) => t.answering === "person"),
-    ...(reply && !mustWait(floor, reply) ? [reply] : []),
+    ...waiting.filter((t) => t.answering === "agent" && !mustWait(floor, t)),
   ];
   return candidates.find((t) => t.agent !== floor.last) ?? candidates[0];
 }
@@ -178,12 +187,13 @@ function sweep(floor: Floor, now: number): void {
 }
 
 function floorView_(floor: Floor | undefined): FloorView {
-  if (!floor) return { speaking: null, next: null, paused: false };
+  if (!floor) return { speaking: null, next: null, paused: false, continued: 0 };
   const open = openTurns(floor);
   return {
     speaking: open.find((t) => t.status === "granted")?.agent ?? null,
     next: nextUp(floor, open)?.agent ?? null,
     paused: floor.paused && open.some((t) => t.status === "held"),
+    continued: floor.continuedAt,
   };
 }
 
@@ -241,6 +251,7 @@ function floorFor(slug: string): Floor {
       turns: new Map(),
       seq: 0,
       streak: 0,
+      continuedAt: 0,
       replies: new Map(),
       paused: false,
       activeAt: Date.now(),
@@ -374,6 +385,7 @@ export function continueAgents(slug: string): boolean {
     floor.paused = false;
     floor.streak = 0;
     floor.replies.clear();
+    floor.continuedAt = Math.max(now, floor.continuedAt + 1);
     floor.activeAt = now;
     for (const t of held) {
       t.seenAt = now;

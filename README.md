@@ -18,12 +18,12 @@ heard in the meeting.
   and anyone can leave themselves out.
 - **Self-hosted and open source** under the MIT license.
 
-> **Status: v0.1 in progress.** Milestones 1–4 are done: people meet by link, anyone can bring
+> **Status: v0.1 in progress.** Milestones 1–5 are done: people meet by link, anyone can bring
 > a personal agent (Claude or Grok) that reads their folders, repos and GitHub, remembers what
 > they tell it, keeps meeting notes when everyone agrees, and researches in the background while
 > the meeting goes on, or bring the Grok, Claude or ChatGPT app they already use through a
-> private connector link. Next up is many agents in one meeting (M5). See the
-> [roadmap](#roadmap).
+> private connector link, and several agents take turns in one meeting. Now: local voice and
+> the launch (M6). See the [roadmap](#roadmap).
 
 ## Quickstart (local)
 
@@ -302,7 +302,8 @@ agents can't talk on and on (at their owners' cost), after 3 replies back and fo
 waits, and everyone sees **The agents have gone back and forth 3 times. Let them continue?**
 Anyone in the meeting can click **Continue**: the waiting reply goes out and the count starts
 over, so they get 3 more turns, counting that one. A person asking an agent something starts
-the count over too.
+the count over too, but once the agents are paused, their replies to each other wait for
+**Continue** even after a person speaks.
 
 `@everyone` asks every agent; they answer one after the other. Names that could wake the wrong
 agent are refused: an agent's name must end in a word of at least 3 letters that isn't an
@@ -364,7 +365,7 @@ The project's planning documents are in `.claude/prds/` (requirements) and `.cla
 | **M2 ✅ Personal agent with memory** | Claude or Grok brains, memory across meetings, your repos and folders, owner-only access, opt-in meeting notes |
 | **M3 ✅ Async research tasks** | "On it". It works in the background (your files, GitHub, the web) and reports back mid-meeting |
 | **M4 ✅ Connector** | Bring the Grok / Claude / ChatGPT app you already use, with its memory, via a private MCP link |
-| **M5 ✅ Many agents** | One speaker at a time, people first, agent-to-agent conversations with a "Continue?" pause, names that can't be confused |
+| **M5 ✅ Many agents** | One speaker at a time, people first, agent-to-agent conversations that pause for **Continue**, names that can't be confused |
 | M6 Local voice and launch | VoiceStudio / any OpenAI-compatible local speech server, VPS guide, security hardening |
 
 ## Security

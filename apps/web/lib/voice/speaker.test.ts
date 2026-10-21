@@ -247,4 +247,55 @@ describe("AgentSpeaker", () => {
     await next;
     expect(asked).toEqual(["first", "next"]);
   });
+
+  it("gives up on a voice that stops coming, so the answers after it aren't stuck", async () => {
+    const { out } = fakeOut();
+    const errors: VoiceError[] = [];
+    let cancelled = false;
+    const stuck = () =>
+      new ReadableStream<Uint8Array>({
+        start: (c) => c.enqueue(new Uint8Array(second(240))),
+        cancel: () => void (cancelled = true),
+      });
+    const speaker = new AgentSpeaker({
+      out,
+      destination: {},
+      synthesize: async (_text, signal) => {
+        const stream = stuck();
+        signal.addEventListener("abort", () => void stream.cancel().catch(() => undefined));
+        return stream;
+      },
+      onError: (e) => errors.push(e),
+      wait: async () => undefined,
+      stallMs: 30,
+    });
+    await speaker.speak("This stalls.");
+    await speaker.speak("And this goes next.");
+    expect(errors).toEqual([]); // a stall isn't the owner's problem to fix: the chat has it
+    expect(cancelled).toBe(true);
+  });
+
+  it("silences what it scheduled when the voice fails partway", async () => {
+    const { out, started, stopped } = fakeOut();
+    const errors: VoiceError[] = [];
+    const breaks = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(new Uint8Array(second(24_000))); // a second of speech, scheduled at once
+      },
+      pull(c) {
+        c.error(new TypeError("network error"));
+      },
+    });
+    const speaker = new AgentSpeaker({
+      out,
+      destination: {},
+      synthesize: async () => breaks,
+      onError: (e) => errors.push(e),
+      wait: async () => undefined,
+    });
+    await speaker.speak("This breaks halfway.");
+    expect(started).toHaveLength(1);
+    expect(stopped).toHaveLength(1);
+    expect(errors.map((e) => e.message)).toEqual(["Your agent's voice stopped partway."]);
+  });
 });

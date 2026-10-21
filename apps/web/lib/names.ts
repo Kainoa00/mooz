@@ -32,6 +32,9 @@ export function parseDisplayName(value: unknown, agentNames: readonly string[] =
       `"${name}" sounds like the name of an agent in this meeting: saying it would wake the agent. Pick another name.`,
     );
   }
+  if (mixesAlphabets(name)) {
+    throw new HttpError(400, "invalid_name", "Use one alphabet within each word of your name");
+  }
   return name;
 }
 
@@ -49,23 +52,63 @@ const TRANSLIT: Record<string, string> = {
   φ: "f", χ: "ch", ψ: "ps", ω: "o",
 };
 
+// Latin letters that don't break down into a plain one (and look and sound like it).
+const LATIN: Record<string, string> = {
+  ı: "i", ł: "l", ø: "o", đ: "d", ħ: "h", ŧ: "t", ß: "ss", æ: "ae", œ: "oe", þ: "th", ð: "d",
+  ŋ: "n", ĸ: "k", ſ: "s", ɑ: "a", ɡ: "g", ɢ: "g", ᴀ: "a", ʙ: "b", ᴄ: "c", ᴅ: "d", ᴇ: "e",
+  ʜ: "h", ɪ: "i", ᴊ: "j", ᴋ: "k", ʟ: "l", ᴍ: "m", ɴ: "n", ᴏ: "o", ᴘ: "p", ʀ: "r", ꜱ: "s",
+  ᴛ: "t", ᴜ: "u", ᴠ: "v", ᴡ: "w", ʏ: "y", ᴢ: "z",
+};
+
+// How letters of other alphabets look in Latin ones, whatever they sound like: Cyrillic "Сora"
+// reads as Cora, though С sounds like S. Read along with TRANSLIT: a name clashes if it would
+// be heard as an agent's either way.
+const LOOKS: Record<string, string> = {
+  ...LATIN,
+  а: "a", в: "b", г: "r", е: "e", ё: "e", к: "k", м: "m", н: "h", о: "o", п: "n", р: "p",
+  с: "c", т: "t", у: "y", х: "x", ш: "w", ѕ: "s", і: "i", ї: "i", ј: "j", ԁ: "d", ԛ: "q",
+  ԝ: "w", α: "a", β: "b", ε: "e", ζ: "z", η: "h", ι: "i", κ: "k", μ: "m", ν: "v", ο: "o",
+  ρ: "p", τ: "t", υ: "u", χ: "x", օ: "o", ս: "u", ց: "g", հ: "h", ո: "n",
+  // Cherokee capitals (and so their small forms) that look like Latin ones: ᎪᎢᏞᎪᏚ reads ATLAS.
+  Ꭺ: "a", Ᏼ: "b", Ꮯ: "c", Ꭰ: "d", Ꭼ: "e", Ꮐ: "g", Ꮋ: "h", Ꭵ: "i", Ꭻ: "j", Ꮶ: "k", Ꮮ: "l",
+  Ꮇ: "m", Ꮲ: "p", Ꭱ: "r", Ꮪ: "s", Ꭲ: "t", Ꮩ: "v", Ꮃ: "w", Ꮓ: "z",
+};
+
+/** Compatibility forms (fullwidth, circled…) and accents gone, joiners dropped, lowercase. */
+function plain(name: string): string {
+  return name.normalize("NFKC").normalize("NFKD").replace(/\p{M}/gu, "").replace(/[\u200c\u200d]/g, "").toLowerCase();
+}
+
 /**
  * A name as it sounds in plain Latin letters (what speech-to-text writes when it's said):
  * fullwidth and other lookalike forms, accents, and Cyrillic and Greek letters folded.
  */
 export function foldName(name: string): string {
-  return name
-    .normalize("NFKC")
-    .normalize("NFKD")
-    .replace(/\p{M}/gu, "")
-    .toLowerCase()
-    .replace(/[\u0370-\u03ff\u0400-\u04ff]/g, (c) => TRANSLIT[c] ?? c);
+  return plain(name).replace(/[^\x00-\x7f]/gu, (c) => TRANSLIT[c] ?? LATIN[c] ?? c);
 }
 
-/** Whether saying any word of `name` would be heard as `agent`'s wake word. */
+/** A name as it looks in plain Latin letters (what someone reading it would say). */
+export function foldNameByLook(name: string): string {
+  return plain(name).replace(/[^\x00-\x7f]/gu, (c) => LOOKS[c] ?? LOOKS[c.toUpperCase()] ?? c);
+}
+
+/**
+ * Whether a word mixes Latin letters with others that don't read as Latin ("Grօk", with an
+ * Armenian o): such a word can look like an agent's name and still not match it here.
+ */
+function mixesAlphabets(name: string): boolean {
+  const latin = (c: string) => /[a-z]/.test(c) || c in LATIN;
+  return (plain(name).match(/\p{L}+/gu) ?? []).some((word) => {
+    const letters = [...word];
+    return letters.some(latin) && !letters.every(latin);
+  });
+}
+
+/** Whether saying any word of `name` would be heard as `agent`'s wake word (read either way). */
 function heardAs(name: string, agent: string): boolean {
   const wake = wakeWord(foldName(agent));
-  return wake !== undefined && nameWords(foldName(name)).some((w) => alike(w, wake));
+  if (wake === undefined) return false;
+  return [foldName(name), foldNameByLook(name)].some((folded) => nameWords(folded).some((w) => alike(w, wake)));
 }
 
 // An agent wakes up when its name is said, so names that people say all the
@@ -101,10 +144,10 @@ export function parseAgentName(value: unknown, people: readonly string[], agents
   if (RESERVED.has(key) || RESERVED.has(wake) || COMMON_WORDS.has(wake)) {
     throw new HttpError(400, "reserved_name", `"${name}" is too common to use as an agent's wake name`);
   }
-  if (wake.length < 3) {
-    throw new HttpError(400, "invalid_agent_name", "An agent's name needs a last word of at least 3 letters");
+  if (wake.replace(/[^a-z]/g, "").length < 3) {
+    throw new HttpError(400, "invalid_agent_name", "An agent's name needs a last word with at least 3 letters");
   }
-  if (takenNames.some((taken) => foldName(taken.trim()) === key)) {
+  if (takenNames.some((taken) => foldName(taken.trim()) === key || foldNameByLook(taken.trim()) === key)) {
     throw new HttpError(409, "name_taken", `Someone in this meeting is already called "${name}"`);
   }
   // Which name it clashes with isn't said: the asker may not be able to see everyone who counts.

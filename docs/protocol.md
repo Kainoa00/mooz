@@ -39,14 +39,17 @@ Request: `{"code": "ABCD-EFGH-JKLM", "name": "Atlas"}` with `content-type: appli
   participant who created it, the agent's **owner**. Case and dashes are ignored.
 - `name` is the agent's display name. Its last word is its wake word. It must be 3–24
   characters (letters, digits, spaces, `'` or `-`), start with a letter, and end in a word
-  of at least 3 letters. It must not be a reserved word (`mooz`, `everyone`, `agents`,
-  `hey`, …) or end in a common English word (`notes`, `mark`, `can`, …). Its wake word
-  must not sound or look like any word in the name of a person or agent in the meeting now
-  (people who left, and agents gone for more than 2 minutes, don't count): the detector's
+  with at least 3 letters (`Unit 123` and `R2D2` don't). It must not be a reserved word
+  (`mooz`, `everyone`, `agents`, `hey`, …) or end in a common English word (`notes`, `mark`,
+  `can`, …). Its wake word must not sound or look like any word in the name of a person or
+  agent in the meeting now. People and agents gone for more than 2 minutes don't count, nor
+  do people whose session has ended or agents approved that never came in. The detector's
   own same-word test decides, so `Atlis` is refused next to `Atlas`, and `Lee's Grok` next
-  to `Zach's Grok`. People's names are compared as they sound in plain Latin letters
-  (`Атлас` and `Ａｔｌａｓ` count as `Atlas`). The error doesn't say whose name it clashes
-  with. A person can make 10 codes an hour.
+  to `Zach's Grok`. People's names are compared both as they sound and as they look in plain
+  Latin letters: `Атлас`, `Ａｔｌａｓ` and `Atłas` count as `Atlas`, and so does `Сora`
+  (a Cyrillic С) as `Cora`. A person's name can't mix alphabets within a word. The error
+  doesn't say whose name it clashes with. A person can make 10 codes an hour, and a meeting
+  50.
 
 Responses:
 - `201 {"requestId", "claimSecret", "status": "pending"}`. The response reveals nothing
@@ -236,8 +239,11 @@ How the server decides:
   (`POST /api/rooms/{slug}/agents/continue` with `{}`, their participant cookie and a
   same-origin request; agents have no cookie). The held reply then goes out, and the counts
   start over. A turn that answers a person starts the meeting's count, and that agent's,
-  over.
+  over. Once the agents are paused, though, replies to agents wait for Continue, even after a
+  person has spoken.
 - **Fair turns.** An agent doesn't get two turns in a row while another agent's turn is
+  waiting, whichever asked first. This comes before people first: what a turn answers is the
+  agent's own word, so an agent that keeps saying it answers people can't keep another one
   waiting.
 - An agent that leaves or is removed gives up its turns. When the meeting ends, the floor
   is forgotten.
@@ -245,11 +251,16 @@ How the server decides:
 What the agent must do:
 
 - Post and speak answers (and "Yes?", and fillers like "One sec") only within a granted
-  turn, and stop at its end. A finished background task may post its report to chat at
-  once; its spoken part takes a turn.
+  turn, and stop at its end. Two things may go to chat at once: a finished background task's
+  report (its spoken part takes a turn), and a private answer sent only to the person who
+  asked.
 - Keep its own limit too, since thinking costs its owner before the floor can hold
   anything: think about other agents' questions at most 3 times in a row, until a person
-  speaks or `floor.paused` goes back to `false` (someone clicked Continue).
+  speaks or `floor.continued` goes up (someone clicked Continue). Don't go by `floor.paused`
+  going back to `false`: it also does when a held reply just goes away.
+- Wait for a turn only as long as it's worth: the reference bridge waits 2 s for "Yes?", and
+  counts the time an earlier answer of its own made it wait. A check the server holds open
+  can last 25 s, so give up on it when the time is up, and give the turn back.
 - **People first.** Wait up to 5 s for people to stop talking before speaking (LiveKit's
   active speakers). After that, leave the answer in the chat. Stop speaking if a person talks
   over it for more than a second; the chat answer stays.
@@ -258,9 +269,11 @@ What the agent must do:
 - If the floor can't be reached (no answer, or not JSON), answer people anyway, but not
   other agents.
 
-The meeting sees the floor in the room metadata:
-`{"floor": {"speaking": identity | null, "next": identity | null, "paused": bool}}`, next
-to `notes_allowed`.
+The meeting sees the floor in the room metadata, next to `notes_allowed`:
+`{"floor": {"speaking": identity | null, "next": identity | null, "paused": bool, "continued": ms}}`.
+`paused` says a reply is held right now (the banner shows while it is); `continued` is when a
+person last clicked Continue (milliseconds on the server's clock; 0 for not since it
+started), and only Continue changes it.
 
 Errors: `404 request_not_found` (wrong id or secret) or `turn_not_found`;
 `409 not_in_meeting`; `400 invalid_body`; `413` for a body over 1 KB; `429 rate_limited` (more
@@ -269,6 +282,8 @@ than 30 turns, 120 checks or 60 dones a minute), `floor_busy` (20 turns waiting)
 
 A server older than M5 answers `404` with no JSON body. There is no floor then: answer
 anyway, and stop answering other agents after 3 turns in a row with no person speaking.
+Decide that only on the first turn request: a server that has given turns can't lose them, so
+a later 404 page (from a tunnel or proxy) means the floor is out of reach for now.
 
 `answering` is the agent's own word: the server can't check it. An agent that lies about it
 can talk more, at its owner's cost, and keep the meeting's count low; it can't keep another

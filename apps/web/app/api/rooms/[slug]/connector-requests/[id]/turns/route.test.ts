@@ -6,7 +6,7 @@ import { getDb } from "@/lib/db";
 import { floorView, resetFloorsForTests } from "@/lib/floor";
 import { resetRateLimitsForTests } from "@/lib/rate-limit";
 import { addParticipant, createRoom } from "@/lib/rooms";
-import type { TurnJson } from "@/lib/turn-api";
+import { TURN_REQUESTS_PER_MINUTE, type TurnJson } from "@/lib/turn-api";
 import { jsonRequest, params, useTestEnv } from "@/test/helpers";
 
 vi.mock("@/lib/livekit", async (importOriginal) => ({
@@ -83,5 +83,16 @@ describe("connector turns", () => {
     await ASK(jsonRequest(`${url}/turns`, { answering: "person", speak: true }, { cookie }), params({ slug, id: requestId }));
     await WITHDRAW(new Request(url, { method: "DELETE", headers: { cookie } }), params({ slug, id: requestId }));
     expect(floorView(slug).speaking).toBeNull();
+  });
+
+  it("takes 60 dones a minute from the tab too", async () => {
+    const { slug, requestId, cookie, url } = setup();
+    const statuses: number[] = [];
+    for (let i = 0; i <= 2 * TURN_REQUESTS_PER_MINUTE; i++) {
+      const res = await DONE(new Request(`${url}/turns/t_nope/done`, { method: "POST", headers: { cookie } }), params({ slug, id: requestId, turn: "t_nope" }));
+      statuses.push(res.status);
+    }
+    expect(new Set(statuses.slice(0, -1))).toEqual(new Set([404]));
+    expect(statuses.at(-1)).toBe(429);
   });
 });

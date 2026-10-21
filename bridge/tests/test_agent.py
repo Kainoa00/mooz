@@ -40,7 +40,7 @@ class FakeRoom:
         self.on_participant_joined = None
         self.on_notes_policy_changed = None
         self.on_floor_changed = None
-        self.paused = False
+        self.continued = 0
         self.on_signal = None
         self.replayed = False
         self.speaking = False
@@ -73,8 +73,8 @@ class FakeRoom:
     def notes_allowed(self) -> bool:
         return False
 
-    def floor_paused(self) -> bool:
-        return self.paused
+    def floor_continued(self) -> int:
+        return self.continued
 
     def is_opted_out(self, identity: str) -> bool:
         return False
@@ -340,8 +340,8 @@ class FakeFloor:
         yield self.grant
 
 
-def with_floor(floor: FakeFloor, brain=None):  # type: ignore[no-untyped-def]
-    room = FakeRoom()
+def with_floor(floor: FakeFloor, brain=None, room=None):  # type: ignore[no-untyped-def]
+    room = room or FakeRoom()
     agent = Agent(
         room=room,
         stt=FakeSTT({}),
@@ -376,18 +376,35 @@ async def test_keeps_its_own_limit_on_agents_with_a_floor_too_until_a_person_let
         await settle(agent)
     assert len(room.sent) == MAX_AGENT_STREAK
 
-    # The floor paused the agents, and then a person clicked Continue.
+    # The floor changes (a held reply comes and goes): that isn't anyone letting them go on.
     assert room.on_floor_changed is not None
-    room.paused = True
     room.on_floor_changed()
     hear(agent, GROK, "@Atlas still paused", via="chat")
     await settle(agent)
     assert len(room.sent) == MAX_AGENT_STREAK
-    room.paused = False
+    # A person clicks Continue.
+    room.continued = 1_792_000_000_000
     room.on_floor_changed()
     hear(agent, GROK, "@Atlas carry on", via="chat")
     await settle(agent)
     assert len(room.sent) == MAX_AGENT_STREAK + 1
+    # The same Continue seen again (another floor change) doesn't count twice.
+    for i in range(MAX_AGENT_STREAK):
+        room.on_floor_changed()
+        hear(agent, GROK, f"@Atlas more {i}", via="chat")
+        await settle(agent)
+    assert len(room.sent) == 2 * MAX_AGENT_STREAK
+
+
+async def test_a_continue_from_before_it_joined_isnt_news() -> None:
+    room = FakeRoom()
+    room.continued = 1_792_000_000_000
+    _, agent = with_floor(FakeFloor(), room=room)
+    for i in range(MAX_AGENT_STREAK + 1):
+        room.on_floor_changed()  # type: ignore[misc]
+        hear(agent, GROK, f"@Atlas ping {i}", via="chat")
+        await settle(agent)
+    assert len(room.sent) == MAX_AGENT_STREAK
 
 
 async def test_yes_waits_only_briefly_for_the_floor_and_the_follow_up_window_still_opens() -> None:
@@ -400,7 +417,8 @@ async def test_yes_waits_only_briefly_for_the_floor_and_the_follow_up_window_sti
     agent.wire()
     hear(agent, KAI, "Hey Atlas.")
     await settle(agent)
-    assert floor.asked == [("person", ACK_WAIT_SECONDS)] and room.sent == []
+    [(kind, wait)] = floor.asked
+    assert kind == "person" and wait == pytest.approx(ACK_WAIT_SECONDS, abs=0.1) and room.sent == []
     clock.now += FOLLOW_UP_SECONDS - 1
     hear(agent, KAI, "what is the plan")
     await settle(agent)

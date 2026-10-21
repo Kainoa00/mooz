@@ -151,3 +151,52 @@ describe("hidden text in names", () => {
     expect(parseDisplayName("👩\u200d💻 Lee")).toBe("👩\u200d💻 Lee");
   });
 });
+
+describe("names that look like an agent's", () => {
+  it.each([
+    ["Сora", "Cora"], // Cyrillic С sounds like S but looks like C
+    ["Рablo", "Pablo"],
+    ["Нugo", "Hugo"],
+    ["Вella", "Bella"],
+    ["Хena", "Xena"],
+    ["Maсy", "Macy"],
+    ["Ρablo", "Pablo"], // Greek
+    ["Ηugo", "Hugo"],
+    ["At‍las", "Atlas"], // a joiner inside the word
+    ["Atlaѕ", "Atlas"],
+    ["Grօk", "Grok"], // Armenian o
+    ["Atłas", "Atlas"],
+    ["Nøva", "Nova"],
+    ["ᴀtlas", "Atlas"],
+    ["Grᴏk", "Grok"],
+    ["ɢrok", "Grok"],
+    ["ɑtlas", "Atlas"],
+    ["Ꭺtlas", "Atlas"], // Cherokee
+    ["ᎪᎢᏞᎪᏚ", "Atlas"],
+    ["Straß", "Strass"],
+  ])("refuses %j while %j is here, and the agent while they are", (name, agent) => {
+    expect(() => parseDisplayName(name, [agent])).toThrowError(expect.objectContaining({ status: 409, code: "name_taken" }));
+    expect(() => parseAgentName(agent, [name])).toThrowError(expect.objectContaining({ status: 409, code: "name_taken" }));
+  });
+
+  it("keeps names written in one alphabet, Latin or not", () => {
+    for (const name of ["Michał", "Þóra", "Łukasz", "Søren", "Zoë", "Мария", "李华", "José García", "Ελένη"]) {
+      expect(parseDisplayName(name, ["Atlas"])).toBe(name);
+    }
+  });
+
+  it("refuses a word that mixes alphabets, which could look like a name it doesn't match", () => {
+    expect(() => parseDisplayName("Grօk")).toThrowError(expect.objectContaining({ status: 400, code: "invalid_name" }));
+    expect(() => parseDisplayName("Kaiнoa")).toThrowError(expect.objectContaining({ status: 400 }));
+  });
+});
+
+describe("an agent's wake word", () => {
+  it.each(["Unit 123", "Agent 007", "Zach's 999", "R2D2"])("needs 3 letters, not just numbers: %j", (name) => {
+    expect(() => parseAgentName(name, [])).toThrowError(expect.objectContaining({ status: 400, code: "invalid_agent_name" }));
+  });
+
+  it("may have numbers with its letters", () => {
+    expect(parseAgentName("Nova3000", [])).toBe("Nova3000");
+  });
+});

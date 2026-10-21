@@ -169,6 +169,24 @@ describe("POST /api/rooms/[slug]/join", () => {
     });
   });
 
+  it("lets someone back under their own name even if an agent that sounds like it came in meanwhile", async () => {
+    const db = getDb();
+    const { slug } = createRoom(db);
+    const first = await POST(jsonRequest(url(slug), { name: "Maya" }), params({ slug }));
+    const { identity } = (await first.json()) as { identity: string };
+    const secret = setCookies(first)[`mooz_p_${slug}`];
+    // Maya's tab reloads; meanwhile someone's agent "Maya" is waiting for the host.
+    const kai = addParticipant(db, { slug, name: "Kainoa", isHost: true });
+    db.prepare("UPDATE participants SET left_at = ? WHERE identity = ?").run(Date.now() - 10 * 60_000, identity);
+    claimAgentCode(db, { code: createAgentCode(db, kai).code, name: "Maya" });
+
+    const back = await POST(jsonRequest(url(slug), { name: "Maya", rejoin: identity }, { cookie: `mooz_p_${slug}=${secret}` }), params({ slug }));
+    expect(back.status).toBe(200);
+    // Someone new still can't take a name the agent would answer to.
+    const other = await POST(jsonRequest(url(slug), { name: "Maya" }), params({ slug }));
+    expect(other.status).toBe(409);
+  });
+
   describe("over time", () => {
     const T0 = new Date("2026-10-21T12:00:00Z").getTime();
     beforeEach(() => vi.useFakeTimers({ now: T0, toFake: ["Date"] }));

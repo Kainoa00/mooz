@@ -78,7 +78,7 @@ describe("bridge turns", () => {
 
     const second = await ask(nova);
     expect(second.turn).toMatchObject({ status: "waiting" });
-    expect(floorView(slug)).toEqual({ speaking: atlas.identity, next: nova.identity, paused: false });
+    expect(floorView(slug)).toEqual({ speaking: atlas.identity, next: nova.identity, paused: false, continued: 0 });
 
     const waiting = check(nova, second.turn!.id);
     expect(await json(await done(atlas, first.turn!.id))).toMatchObject({ status: "ended", reason: "done" });
@@ -189,6 +189,15 @@ describe("bridge turns", () => {
     const statuses: number[] = [];
     for (let i = 0; i <= TURN_REQUESTS_PER_MINUTE; i++) statuses.push((await ask(atlas)).res.status);
     expect(statuses.slice(0, -1).every((s) => s === 201)).toBe(true);
+    expect(statuses.at(-1)).toBe(429);
+  });
+
+  it("takes 60 dones a minute, counted before the turn is looked up", async () => {
+    const { agents } = meeting();
+    const [atlas] = agents;
+    const statuses: number[] = [];
+    for (let i = 0; i <= 2 * TURN_REQUESTS_PER_MINUTE; i++) statuses.push((await done(atlas, "t_nope")).status);
+    expect(new Set(statuses.slice(0, -1))).toEqual(new Set([404]));
     expect(statuses.at(-1)).toBe(429);
   });
 });

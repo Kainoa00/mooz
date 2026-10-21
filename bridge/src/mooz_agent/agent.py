@@ -107,7 +107,7 @@ class AgentRoom(Protocol):
     ) -> Awaitable[None]: ...
     def replay_tracks(self) -> None: ...
     def notes_allowed(self) -> bool: ...
-    def floor_paused(self) -> bool: ...
+    def floor_continued(self) -> int: ...
     def is_opted_out(self, identity: str) -> bool: ...
     def send_signal(
         self, message: dict[str, object], to: list[str] | None = None
@@ -151,7 +151,7 @@ class Agent:
         self._latencies: list[float] = []  # heard → first audio, ms
         self._follow_up: dict[str, float] = {}
         self._agent_streak = 0
-        self._paused = False  # the meeting's agents are waiting for a person
+        self._continued = 0  # when a person last let the meeting's agents continue
         self._tasks: set[asyncio.Task[None]] = set()
         # Meeting notes need a brain that can summarize and a memory to keep them in.
         self.notes: NotesKeeper | None = None
@@ -198,6 +198,7 @@ class Agent:
         self.room.on_participant_joined = self._on_joined
         self.room.on_notes_policy_changed = self._on_notes_policy_changed
         self.room.on_floor_changed = self._on_floor_changed
+        self._continued = self.room.floor_continued()
         self.room.on_signal = self._on_signal
         # People already in the room published before these handlers existed.
         self.room.replay_tracks()
@@ -256,10 +257,12 @@ class Agent:
         return True
 
     def _on_floor_changed(self) -> None:
-        paused = self.room.floor_paused()
-        if self._paused and not paused:
+        # Only a person's Continue moves this on. The floor's "paused" also clears when a held
+        # reply just goes away, so it can't be trusted to start the count over.
+        continued = self.room.floor_continued()
+        if continued > self._continued:
             self._agent_streak = 0  # a person let the agents continue
-        self._paused = paused
+            self._continued = continued
 
     def _other_agents(self) -> list[str]:
         return [

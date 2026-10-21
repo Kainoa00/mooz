@@ -35,8 +35,6 @@ class ToneTTS:
 class OneAtATime:
     """The server's floor in miniature: one turn at a time, shared by both agents."""
 
-    shared = True
-
     def __init__(self) -> None:
         self._lock = asyncio.Lock()
 

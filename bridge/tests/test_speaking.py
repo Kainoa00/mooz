@@ -261,3 +261,40 @@ async def test_lets_its_last_words_play_out_and_arrive_before_giving_the_turn_ba
     await mouth.say(Answer("Bye."))
     assert queued == [] and rec.events[-1] == "released"
     assert asyncio.get_running_loop().time() - started >= 0.05
+
+
+async def test_the_wait_behind_its_own_earlier_answer_counts_against_max_wait() -> None:
+    rec = Recorder()
+    floor = FakeTurns(rec)
+    floor.gates["person"] = asyncio.Event()  # the earlier answer to a person waits for the floor
+    mouth = mouth_with(rec, floor)
+    first = asyncio.create_task(mouth.say(Answer("The earlier answer.")))
+    await asyncio.sleep(0.01)
+
+    started = asyncio.get_running_loop().time()
+    went_out = await mouth.say(Answer("Yes?"), max_wait=0.1)
+    assert went_out is False
+    assert asyncio.get_running_loop().time() - started < 1
+    assert "chat:Yes?" not in rec.events
+    assert [kind for kind, _, _ in floor.calls] == ["person"]  # "Yes?" never asked for a turn
+    first.cancel()
+
+
+async def test_stops_queued_audio_when_the_voice_fails_partway() -> None:
+    rec = Recorder()
+    cleared: list[bool] = []
+
+    class Breaks:
+        async def synthesize(self, text: str) -> AsyncIterator[rtc.AudioFrame]:
+            yield rtc.AudioFrame.create(48_000, 1, 480)
+            raise RuntimeError("the connection dropped")
+
+    mouth = Mouth(
+        send_chat=rec.send_chat,
+        capture_frame=rec.capture_frame,
+        tts=Breaks(),  # type: ignore[arg-type]
+        clear_audio=lambda: cleared.append(True),
+    )
+    with pytest.raises(RuntimeError):
+        await mouth.say(Answer("This goes wrong halfway."))
+    assert cleared == [True]

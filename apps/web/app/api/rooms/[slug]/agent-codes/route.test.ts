@@ -3,7 +3,7 @@ import { getDb } from "@/lib/db";
 import { addParticipant, createRoom } from "@/lib/rooms";
 import { resetRateLimitsForTests } from "@/lib/rate-limit";
 import { params, useTestEnv } from "@/test/helpers";
-import { CODES_PER_PERSON_PER_HOUR, POST } from "./route";
+import { CODES_PER_MEETING_PER_HOUR, CODES_PER_PERSON_PER_HOUR, POST } from "./route";
 
 beforeEach(() => {
   useTestEnv();
@@ -58,5 +58,30 @@ describe("POST /api/rooms/[slug]/agent-codes", () => {
 
     expect(res.status).toBe(401);
     expect(await res.json()).toMatchObject({ error: { code: "not_joined" } });
+  });
+
+  it("gives one meeting only so many an hour, however many times people join", async () => {
+    const db = getDb();
+    const { slug } = createRoom(db);
+    const ask = (secret: string) =>
+      POST(
+        new Request(`https://mooz.example/api/rooms/${slug}/agent-codes`, { method: "POST", headers: { cookie: `mooz_p_${slug}=${secret}` } }),
+        params({ slug }),
+      );
+    const statuses: number[] = [];
+    for (let person = 0; person < 6; person++) {
+      const p = addParticipant(db, { slug, name: `Person ${person}`, isHost: false });
+      for (let i = 0; i < CODES_PER_PERSON_PER_HOUR; i++) statuses.push((await ask(p.secret)).status);
+    }
+    expect(statuses.filter((s) => s === 201)).toHaveLength(CODES_PER_MEETING_PER_HOUR);
+    expect(statuses.at(-1)).toBe(429);
+    // Another meeting is unaffected.
+    const other = createRoom(db).slug;
+    const lee = addParticipant(db, { slug: other, name: "Lee", isHost: false });
+    const res = await POST(
+      new Request(`https://mooz.example/api/rooms/${other}/agent-codes`, { method: "POST", headers: { cookie: `mooz_p_${other}=${lee.secret}` } }),
+      params({ slug: other }),
+    );
+    expect(res.status).toBe(201);
   });
 });

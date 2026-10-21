@@ -333,8 +333,30 @@ describe("who holds a name", () => {
     notePersonPresence(db, guest.identity, "PA_old", false); // a late "left" for an old connection
     expect(participantNames(db, slug)).toContain("Zach");
     notePersonPresence(db, guest.identity, "PA_1", false);
+    // Away for a moment (a reload), they keep their name, as an agent would.
+    expect(participantNames(db, slug).sort()).toEqual(["Kainoa", "Zach"]);
+    expect(() => claimAgentCode(db, { code: createAgentCode(db, meetingHost(db, slug)).code, name: "Zack" })).toThrow();
+    expect(participantNames(db, slug, Date.now() + LEFT_GRACE_MS + 1).sort()).toEqual(["Kainoa", "Lee"]); // Lee made the code
+  });
+
+  it("doesn't count someone whose session has ended (a row from before cleanup, say)", () => {
+    const { db, slug } = meeting();
+    db.prepare("UPDATE participants SET expires_at = ? WHERE name = 'Zach'").run(Date.now() - 1);
     expect(participantNames(db, slug)).toEqual(["Kainoa"]);
-    expect(() => claimAgentCode(db, { code: createAgentCode(db, meetingHost(db, slug)).code, name: "Zack" })).not.toThrow();
+  });
+
+  it("frees the name of an agent that was approved but never came in, once its approval lapses", () => {
+    const { db, slug, host } = meeting();
+    const claim = claimAgentCode(db, { code: createAgentCode(db, host).code, name: "Atlas" });
+    decideAgentRequest(db, { slug, requestId: claim.requestId, approve: true });
+    expect(activeAgentNames(db, slug)).toEqual(["Atlas"]);
+    expect(activeAgentNames(db, slug, Date.now() + APPROVAL_WINDOW_MS + 1)).toEqual([]);
+    // One that did come in keeps it while it's here.
+    const { agent_identity } = db.prepare("SELECT agent_identity FROM agent_requests WHERE id = ?").get(claim.requestId) as {
+      agent_identity: string;
+    };
+    noteBridgePresence(db, agent_identity, "PA_1", true);
+    expect(activeAgentNames(db, slug, Date.now() + APPROVAL_WINDOW_MS + 1)).toEqual(["Atlas"]);
   });
 
   it("is agents that are here, or away for a moment", () => {

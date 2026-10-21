@@ -112,7 +112,54 @@ describe("takeTurn", () => {
   });
 });
 
+describe("takeTurn's wait", () => {
+  it("never waits past its limit for a check the server holds open", async () => {
+    const calls: string[] = [];
+    const fetch = (async (url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      calls.push(`${method} ${url}`);
+      if (method === "POST" && url.endsWith("/turns")) return Response.json({ turn: { id: "t_1", status: "waiting" } });
+      if (method === "POST") return Response.json({ turn: { id: "t_1", status: "ended" } });
+      // The floor frees up only after 2 s, well past the limit; the check gives up when aborted.
+      return new Promise<Response>((resolve, reject) => {
+        const late = setTimeout(() => resolve(Response.json({ turn: { id: "t_1", status: "granted", endsInMs: 45_000 } })), 2000);
+        init?.signal?.addEventListener("abort", () => {
+          clearTimeout(late);
+          reject(new DOMException("aborted", "AbortError"));
+        });
+      });
+    }) as typeof globalThis.fetch;
+    const started = Date.now();
+    const held = await takeTurn(BASE, { answering: "person", speak: true, maxWaitMs: 200 }, {
+      fetch,
+      now: Date.now,
+      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    });
+    expect(held).toBeNull();
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(calls).toEqual([`POST ${BASE}/turns`, `GET ${BASE}/turns/t_1`, `POST ${BASE}/turns/t_1/done`]);
+  });
+});
+
 describe("TurnQueues", () => {
+  it("tells a job how long it waited behind earlier ones", async () => {
+    let t = 0;
+    const queues = new TurnQueues(() => t);
+    const waits: number[] = [];
+    let release!: () => void;
+    const first = queues.run("person", async (waited) => {
+      waits.push(waited);
+      await new Promise<void>((r) => (release = r));
+    });
+    const second = queues.run("person", async (waited) => void waits.push(waited));
+    await Promise.resolve();
+    t += 1500;
+    release();
+    await Promise.all([first, second]);
+    await queues.run("person", async (waited) => void waits.push(waited)); // nothing ahead of it
+    expect(waits).toEqual([0, 1500, 0]);
+  });
+
   it("runs one job of each kind at a time, the kinds side by side", async () => {
     const queues = new TurnQueues();
     const order: string[] = [];

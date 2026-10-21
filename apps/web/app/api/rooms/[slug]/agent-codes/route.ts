@@ -6,6 +6,8 @@ import { assertSameOrigin, publicOrigin, requireParticipant } from "@/lib/sessio
 
 /** Each code may try a few names; more codes than this an hour is someone probing who's here. */
 export const CODES_PER_PERSON_PER_HOUR = 10;
+/** And per meeting, since joining again makes a new person with a fresh count. */
+export const CODES_PER_MEETING_PER_HOUR = 50;
 
 export async function POST(
   req: Request,
@@ -16,7 +18,10 @@ export async function POST(
     const { slug } = await ctx.params;
     const db = getDb();
     const owner = requireParticipant(db, req, slug);
-    if (!allow(`agent-codes:${owner.identity}`, CODES_PER_PERSON_PER_HOUR, 60 * 60 * 1000)) {
+    if (
+      !allow(`agent-codes:${owner.identity}`, CODES_PER_PERSON_PER_HOUR, 60 * 60 * 1000) ||
+      !allow(`agent-codes-room:${slug}`, CODES_PER_MEETING_PER_HOUR, 60 * 60 * 1000)
+    ) {
       throw new HttpError(429, "rate_limited", "That's a lot of agent codes: try again in a while");
     }
     const { code, expiresAt } = createAgentCode(db, owner);

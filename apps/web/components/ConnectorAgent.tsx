@@ -141,13 +141,16 @@ export function ConnectorAgent({
 
   /**
    * Post `text` (and speak `voice`, if this tab has a voice) in a turn: answers of one kind go
-   * one at a time, and a turn ends once the voice is done. False: no turn came, so nothing went out.
+   * one at a time, and a turn ends once the voice is done. `maxWaitMs` counts the wait behind
+   * this tab's earlier answers too. False: nothing went out (no turn came, or the post failed).
    */
   const inTurn = useCallback(
     (text: string, replyTo: string, kind: Answering, voice: string | null, opts: { sources?: string[]; maxWaitMs?: number } = {}) =>
-      queues.current.run(kind, async () => {
+      queues.current.run(kind, async (waitedMs) => {
+        const maxWaitMs = opts.maxWaitMs === undefined ? undefined : opts.maxWaitMs - waitedMs;
+        if (maxWaitMs !== undefined && maxWaitMs < 0) return false; // too late to be any use
         const speak = voice !== null && voiceRef.current !== null;
-        const turn = await takeTurn(base, { answering: kind, speak, maxWaitMs: opts.maxWaitMs });
+        const turn = await takeTurn(base, { answering: kind, speak, maxWaitMs });
         if (!turn || withdrawn.current) {
           await turn?.release();
           return false;
@@ -155,10 +158,12 @@ export function ConnectorAgent({
         try {
           await say(text, replyTo, opts.sources);
           if (speak) await voiceRef.current?.speak(voice, { until: turn.until });
+          return true;
+        } catch {
+          return false; // the agent's connection is going: the turn goes back below
         } finally {
           await turn.release();
         }
-        return true;
       }),
     [base, say],
   );

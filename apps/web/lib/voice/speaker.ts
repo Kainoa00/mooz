@@ -23,7 +23,10 @@ export const BARGE_IN_MS = 1000;
  * said this much later, so the next voice (another agent's turn) never starts over its last words.
  */
 export const PLAYOUT_TAIL_MS = 250;
+/** No audio for this long means the voice has stalled (a dropped connection): give up on the line. */
+export const STALL_MS = 10_000;
 const POLL_MS = 100;
+const STALLED = Symbol("stalled");
 
 /** The parts of WebAudio this uses (the real AudioContext in the browser, a fake in tests). */
 export interface AudioOut {
@@ -47,6 +50,8 @@ export interface SpeakerOptions {
   peopleTalking?: () => boolean;
   wait?: (ms: number) => Promise<void>;
   now?: () => number;
+  /** No audio for this long gives up on the line (STALL_MS; tests make it short). */
+  stallMs?: number;
 }
 
 interface Line {
@@ -70,8 +75,10 @@ export class AgentSpeaker implements AgentVoice {
   private readonly wait: (ms: number) => Promise<void>;
   private readonly now: () => number;
   private readonly peopleTalking: () => boolean;
+  private readonly stallMs: number;
 
   constructor(private readonly options: SpeakerOptions) {
+    this.stallMs = options.stallMs ?? STALL_MS;
     this.wait = options.wait ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.now = options.now ?? Date.now;
     this.peopleTalking = options.peopleTalking ?? (() => false);
@@ -150,7 +157,18 @@ export class AgentSpeaker implements AgentVoice {
     let at = 0;
     try {
       for (;;) {
-        const { done, value } = await reader.read();
+        // A read that never ends (a stalled connection) must not keep the turn, or every answer
+        // after it: stop at the turn's end, or when nothing has come for a while.
+        const limit = Math.max(0, Math.min(this.stallMs, (line.until ?? Infinity) - this.now()));
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const stalled = new Promise<typeof STALLED>((resolve) => (timer = setTimeout(() => resolve(STALLED), limit)));
+        const next = await Promise.race([reader.read(), stalled]);
+        clearTimeout(timer);
+        if (next === STALLED) {
+          this.stop();
+          break;
+        }
+        const { done, value } = next;
         if (done || this.closed || this.cut || interrupted()) break;
         const samples = pcm.read(value);
         if (samples.length === 0) continue;
@@ -165,7 +183,13 @@ export class AgentSpeaker implements AgentVoice {
         this.playing.push(source);
         at += samples.length / TTS_RATE;
       }
+    } catch (err) {
+      // The voice failed partway: what's scheduled would play on after the turn is given back,
+      // under whoever speaks next.
+      this.silence();
+      throw err;
     } finally {
+      void reader.cancel().catch(() => undefined);
       reader.releaseLock();
     }
     // Let this line finish before the next one (or the next agent) starts, unless cut short.

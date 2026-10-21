@@ -97,7 +97,7 @@ describe("POST /api/livekit/webhook", () => {
     await POST(await signed(started("lk_unknown")));
 
     expect(setRoomMetadata.mock.calls.map(([room, doc]) => [room, JSON.parse(doc)])).toEqual([
-      [getRoom(db, allowed.slug)!.livekitRoom, { notes_allowed: true, floor: { speaking: null, next: null, paused: false } }],
+      [getRoom(db, allowed.slug)!.livekitRoom, { notes_allowed: true, floor: { speaking: null, next: null, paused: false, continued: 0 } }],
     ]);
   });
 
@@ -214,6 +214,27 @@ describe("POST /api/livekit/webhook", () => {
 
     await POST(await signed(JSON.stringify({ event: "room_finished", room: { name: a.livekitRoom } })));
     expect(floorView(meeting.slug).speaking).toBeNull();
+  });
+
+  it("frees the floor when a connector agent's tab leaves, but not for a late 'left' from an old connection", async () => {
+    const db = getDb();
+    const { slug } = createRoom(db);
+    const kai = addParticipant(db, { slug, name: "Kainoa", isHost: true });
+    const { connector } = createConnector(db, "kai-key", { name: "Grok", app: "grok" });
+    const { requestId } = requestConnectorJoin(db, kai, "kai-key", connector.id);
+    decideAgentRequest(db, { slug, requestId, approve: true });
+    const grok = connectorAgentFor(db, kai, "kai-key", requestId);
+    const ev = (event: string, sid: string) =>
+      JSON.stringify({ event, room: { name: grok.livekitRoom }, participant: { identity: grok.identity, sid } });
+    await POST(await signed(ev("participant_joined", "PA_1")));
+    await POST(await signed(ev("participant_joined", "PA_2"))); // the tab reconnected
+    requestTurn(slug, grok.identity, { answering: "person", speak: true });
+    requestTurn(slug, "agent-other", { answering: "person", speak: true });
+
+    await POST(await signed(ev("participant_left", "PA_1"))); // the old connection, late
+    expect(floorView(slug).speaking).toBe(grok.identity);
+    await POST(await signed(ev("participant_left", "PA_2")));
+    expect(floorView(slug).speaking).toBe("agent-other");
   });
 
   it("refuses an oversized body before checking it", async () => {

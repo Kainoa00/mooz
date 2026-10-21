@@ -42,14 +42,14 @@ describe("taking turns", () => {
     const grok = ask("grok");
     expect(atlas).toMatchObject({ status: "granted", endsAt: Date.now() + SPEAKING_TURN_MS });
     expect([nova.status, grok.status]).toEqual(["waiting", "waiting"]);
-    expect(floorView(ROOM)).toEqual({ speaking: "atlas", next: "nova", paused: false });
+    expect(floorView(ROOM)).toEqual({ speaking: "atlas", next: "nova", paused: false, continued: 0 });
 
     expect(endTurn(ROOM, "atlas", atlas.id)).toMatchObject({ status: "ended", reason: "done" });
     expect([status("nova", nova.id), status("grok", grok.id)]).toEqual(["granted", "waiting"]);
     endTurn(ROOM, "nova", nova.id);
     expect(status("grok", grok.id)).toBe("granted");
     endTurn(ROOM, "grok", grok.id);
-    expect(floorView(ROOM)).toEqual({ speaking: null, next: null, paused: false });
+    expect(floorView(ROOM)).toEqual({ speaking: null, next: null, paused: false, continued: 0 });
   });
 
   it("puts answers to people ahead of replies to agents", () => {
@@ -212,7 +212,7 @@ describe("taking turns", () => {
     const poll = waitForTurn(ROOM, "nova", nova.id, 25_000);
     endFloor(ROOM);
     await expect(poll).resolves.toMatchObject({ status: "ended", reason: "meeting_ended" });
-    expect(floorView(ROOM)).toEqual({ speaking: null, next: null, paused: false });
+    expect(floorView(ROOM)).toEqual({ speaking: null, next: null, paused: false, continued: 0 });
     endFloor(ROOM);
   });
 });
@@ -233,7 +233,7 @@ describe("pausing agents that keep talking to each other", () => {
     changes.length = 0;
     const held = ask("atlas", "agent");
     expect(held.status).toBe("held");
-    expect(floorView(ROOM)).toEqual({ speaking: null, next: null, paused: true });
+    expect(floorView(ROOM)).toEqual({ speaking: null, next: null, paused: true, continued: 0 });
     expect(changes).toEqual([ROOM]);
 
     // Answers to people still go out while paused, and the reply stays held.
@@ -243,7 +243,59 @@ describe("pausing agents that keep talking to each other", () => {
 
     expect(continueAgents(ROOM)).toBe(true);
     expect(status("atlas", held.id)).toBe("granted");
-    expect(floorView(ROOM)).toEqual({ speaking: "atlas", next: "grok", paused: false });
+    expect(floorView(ROOM)).toEqual({ speaking: "atlas", next: "grok", paused: false, continued: expect.any(Number) });
+  });
+
+  it("says when a person let the agents continue, and nothing else changes that", () => {
+    for (let i = 0; i < MAX_AGENT_STREAK; i++) turn(i % 2 ? "atlas" : "nova", "agent");
+    const held = ask("atlas", "agent");
+    expect(floorView(ROOM)).toMatchObject({ paused: true, continued: 0 });
+
+    // The held reply going away hides the pause, but it isn't a Continue.
+    endTurn(ROOM, "atlas", held.id);
+    expect(floorView(ROOM)).toMatchObject({ paused: false, continued: 0 });
+    const again = ask("nova", "agent");
+    expect(again.status).toBe("held");
+
+    expect(continueAgents(ROOM)).toBe(true);
+    const first = floorView(ROOM).continued;
+    expect(first).toBeGreaterThan(0);
+    endTurn(ROOM, "nova", again.id);
+    turn("atlas", "agent");
+    turn("grok", "agent");
+    expect(ask("atlas", "agent").status).toBe("held");
+    expect(continueAgents(ROOM)).toBe(true);
+    expect(floorView(ROOM).continued).toBeGreaterThan(first);
+  });
+
+  it("lets a paused agent's own replies go again after Continue (its count starts over too)", () => {
+    // Nova replies to agents three times; people's answers between keep the meeting's count low.
+    for (const [agent, answering] of [
+      ["nova", "agent"],
+      ["zed", "person"],
+      ["nova", "agent"],
+      ["zed", "person"],
+      ["nova", "agent"],
+    ] as const) {
+      expect(turn(agent, answering).status).toBe("granted");
+    }
+    const held = ask("nova", "agent");
+    expect(held.status).toBe("held");
+
+    expect(continueAgents(ROOM)).toBe(true);
+    expect(status("nova", held.id)).toBe("granted");
+    endTurn(ROOM, "nova", held.id);
+    expect(turn("nova", "agent").status).toBe("granted");
+  });
+
+  it("gives the floor to another agent's reply, not the last speaker's, whichever asked first", () => {
+    const atlasAnswer = ask("atlas", "person");
+    expect(atlasAnswer.status).toBe("granted");
+    const atlasReply = ask("atlas", "agent");
+    const novaReply = ask("nova", "agent");
+    endTurn(ROOM, "atlas", atlasAnswer.id);
+    expect(status("nova", novaReply.id)).toBe("granted");
+    expect(status("atlas", atlasReply.id)).toBe("waiting");
   });
 
   it("counts again from zero after Continue, so the exchange pauses again", () => {

@@ -81,25 +81,29 @@ export function createAgentCode(db: Db, owner: Participant): { code: string; exp
 
 /**
  * Names of agents that are waiting, in the meeting, or away for a moment (their wake words). One
- * that left for good no longer holds its name.
+ * that left for good no longer holds its name, and nor does one approved that never came in
+ * (its owner stopped the bridge, or it couldn't connect) once its approval has lapsed.
  */
-export function activeAgentNames(db: Db, slug: string): string[] {
-  const now = Date.now();
+export function activeAgentNames(db: Db, slug: string, now = Date.now()): string[] {
   const rows = db
     .prepare(
       `SELECT agent_name FROM agent_requests
-       WHERE room_slug = ? AND ((status = 'approved' AND (left_at IS NULL OR left_at > ?))
+       WHERE room_slug = ? AND ((status = 'approved' AND (left_at IS NULL OR left_at > ?)
+           AND (session_sid IS NOT NULL OR decided_at > ?))
          OR (status = 'pending' AND created_at > ?))`,
     )
-    .all(slug, now - LEFT_GRACE_MS, now - PENDING_TTL_MS) as { agent_name: string }[];
+    .all(slug, now - LEFT_GRACE_MS, now - APPROVAL_WINDOW_MS, now - PENDING_TTL_MS) as { agent_name: string }[];
   return rows.map((r) => r.agent_name);
 }
 
-/** Names of the people in the meeting now (not everyone who ever joined by its link). */
-export function participantNames(db: Db, slug: string): string[] {
-  const rows = db.prepare("SELECT name FROM participants WHERE room_slug = ? AND left_at IS NULL").all(slug) as {
-    name: string;
-  }[];
+/**
+ * Names of the people in the meeting now, or away for a moment (a reload, a dropped connection),
+ * as agents are: not everyone who ever joined by its link, and nobody whose session has ended.
+ */
+export function participantNames(db: Db, slug: string, now = Date.now()): string[] {
+  const rows = db
+    .prepare("SELECT name FROM participants WHERE room_slug = ? AND (left_at IS NULL OR left_at > ?) AND expires_at > ?")
+    .all(slug, now - LEFT_GRACE_MS, now) as { name: string }[];
   return rows.map((r) => r.name);
 }
 

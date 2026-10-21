@@ -43,8 +43,9 @@ class _Sender:
 
 
 class _Room:
-    def __init__(self) -> None:
+    def __init__(self, metadata: str = "") -> None:
         self.local_participant = _Sender()
+        self.metadata = metadata
 
 
 async def test_chat_to_some_people_is_marked_private() -> None:
@@ -60,3 +61,20 @@ async def test_chat_to_some_people_is_marked_private() -> None:
     assert second["attributes"] == {"reply_to": "p_1", "private": "1"}
     assert second["destination_identities"] == ["p_1"]
     assert third["attributes"] is None
+
+
+@pytest.mark.parametrize(
+    ("metadata", "continued"),
+    [
+        ('{"floor": {"paused": false, "continued": 1792000000000}}', 1792000000000),
+        ('{"floor": {"paused": true, "continued": 0}}', 0),
+        ('{"floor": {"paused": true}}', 0),  # a server from before it said
+        ('{"floor": {"continued": "1792000000000"}}', 0),
+        ('{"floor": {"continued": true}}', 0),
+        ('{"floor": {"continued": -5}}', 0),
+        ("not json", 0),
+        ("", 0),
+    ],
+)
+async def test_reads_when_a_person_last_let_agents_continue(metadata: str, continued: int) -> None:
+    assert MeetingRoom(cast(rtc.Room, _Room(metadata))).floor_continued() == continued

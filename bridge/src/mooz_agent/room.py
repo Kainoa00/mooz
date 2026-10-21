@@ -172,14 +172,16 @@ class MeetingRoom:
         if isinstance(participant, rtc.RemoteParticipant):
             self._track_opt_out(participant)
 
-    def floor_paused(self) -> bool:
-        """Whether agents' replies to each other wait for a person: room metadata floor.paused."""
+    def floor_continued(self) -> int:
+        """When a person last let the agents continue: room metadata floor.continued (ms on the
+        server's clock; 0 for never). Only a person's Continue changes it."""
         try:
             data = json.loads(self._room.metadata or "{}")
         except ValueError:
-            return False
+            return 0
         floor = data.get("floor") if isinstance(data, dict) else None
-        return isinstance(floor, dict) and floor.get("paused") is True
+        value = floor.get("continued") if isinstance(floor, dict) else None
+        return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
 
     def _handle_metadata_changed(self, _old: str, _new: str) -> None:
         if self.on_notes_policy_changed:

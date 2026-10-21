@@ -114,7 +114,12 @@ class Turns:
             return
         try:
             current = await self._call("POST", "", {"answering": answering, "speak": speak})
-        except _Unsupported:
+        except _Unsupported as err:
+            if self.supported:
+                # It answered turns before, so this is something in front of it (a tunnel or a
+                # proxy between restarts): the floor is out of reach for now, not gone.
+                yield self._unreachable(answering, err)
+                return
             log.info("this mooz server doesn't keep turns: answering without them")
             self.supported = False
             yield LOCAL
@@ -124,15 +129,7 @@ class Turns:
             yield None
             return
         except (httpx.HTTPError, _Garbled) as err:
-            # The floor is out of reach: answer a person anyway, but not another agent (with no
-            # floor to pause them, two agents could go back and forth on their owners' bills).
-            go = answering == "person"
-            log.warning(
-                "could not ask for a turn (%s): %s",
-                type(err).__name__,
-                "answering anyway" if go else "not replying to another agent",
-            )
-            yield LOCAL if go else None
+            yield self._unreachable(answering, err)
             return
         self.supported = True
         try:
@@ -146,6 +143,18 @@ class Turns:
             if current.status != "ended":
                 await self._release(current.id)
 
+    @staticmethod
+    def _unreachable(answering: Answering, err: Exception) -> Granted | None:
+        """The floor is out of reach: answer a person anyway, but not another agent (with no
+        floor to pause them, two agents could go back and forth on their owners' bills)."""
+        go = answering == "person"
+        log.warning(
+            "could not ask for a turn (%s): %s",
+            type(err).__name__,
+            "answering anyway" if go else "not replying to another agent",
+        )
+        return LOCAL if go else None
+
     async def _wait(self, current: _Turn, max_wait: float) -> _Turn:
         give_up = self._clock() + max_wait
         announced = False
@@ -155,16 +164,21 @@ class Turns:
                     "an answer to another agent is waiting for a person to let the agents continue"
                 )
                 announced = True
-            if self._clock() >= give_up:
+            left = give_up - self._clock()
+            if left <= 0:
                 log.info("gave up waiting for a turn")
                 return current
             try:
-                current = await self._call("GET", f"/{current.id}")
+                # The server holds a check open for up to 25 s: never past the time left.
+                current = await asyncio.wait_for(self._call("GET", f"/{current.id}"), left)
+            except TimeoutError:
+                log.info("gave up waiting for a turn")
+                return current
             except _Refused as err:
                 log.warning("lost a turn while waiting for it (%s)", err.code)
                 return replace(current, status="ended")
             except (httpx.HTTPError, _Garbled, _Unsupported):
-                await asyncio.sleep(self._retry)
+                await asyncio.sleep(min(self._retry, max(0.0, give_up - self._clock())))
         return current
 
     async def _release(self, turn_id: str) -> None:
