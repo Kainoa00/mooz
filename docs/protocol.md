@@ -47,7 +47,11 @@ Request: `{"code": "ABCD-EFGH-JKLM", "name": "Atlas"}` with `content-type: appli
   Where LiveKit's webhook reaches the server (it has in the last day) and has spoken of this
   meeting since, nor do people who joined by the link but never came into the call once their
   join token has run out (an hour after they joined), or a bridge that collected its token but
-  never came in once that has (5 minutes, and a minute's slack). A connector agent's approval holds its name for a day, as its owner's tab can
+  never came in once that has (5 minutes, and a minute's slack). Of the joins the webhook has
+  spoken of the meeting since that never came in, only the 2,000 that first joined most
+  recently count (one of the rest who comes in later, under a name an agent now answers to,
+  is taken out of the call); the ones it can't vouch for all count, and past 2,000 of them a
+  new agent's name can't be checked (`503 names_busy`) until it does. A connector agent's approval holds its name for a day, as its owner's tab can
   still bring it in. A person coming back after 2 minutes can't keep a name that an agent
   that came in meanwhile answers to (one who comes back on the token they had is taken out of
   the call). Likewise, a bridge back after more than 2 minutes (its laptop slept, say) whose
@@ -78,6 +82,8 @@ Responses:
   5 rejected names.
 - `400 invalid_agent_name`, `400 reserved_name`, `409 name_taken`: the name was
   rejected. The code stays usable.
+- `503 names_busy`: the meeting holds too many joins nobody can vouch for to check the name
+  now. Try again later; the code stays usable, and this doesn't count as a try.
 
 ### `GET /api/agent/claim/{requestId}`
 
@@ -122,7 +128,7 @@ across the server.
 | Route | Limit |
 |---|---|
 | `POST /api/rooms` | 30 new meetings across the server (`MOOZ_ROOMS_PER_MINUTE`) |
-| `POST /api/rooms/{slug}/join` | 30 joins per meeting, counted apart for the host and for each person coming back (one who never came into the call counts with new joins, where the webhook would have said). A meeting keeps a place for at most 200 people (a rejoin reuses its place; where the webhook arrives, a join that never came into the call stops holding one after 5 minutes) and, as a backstop, 50,000 sessions in all (more than the join limit can make in a day). Past either it answers `409 room_full`. The host always gets a place (while their host session lasts: a day after their last join), and may add 500 sessions past the 50,000. Name checks count everyone who came into the call and the 2,000 most recent joins nobody saw come in (every agent's name is checked against each); one of the rest who comes in later, under a name an agent now answers to, is taken out |
+| `POST /api/rooms/{slug}/join` | 30 joins per meeting, counted apart for the host and for each person coming back. A meeting keeps a place for at most 200 people (a rejoin reuses its place; where the webhook arrives, a join that never came into the call stops holding one after 5 minutes) and, as a backstop, 50,000 sessions in all (more than the join limit can make in a day). Past either it answers `409 room_full`. The host always gets a place (while their host session lasts: a day after their last join), and may add 500 sessions past the 50,000. Nobody is turned away to keep agents' name checks quick: they count at most 2,000 joins nobody saw come in ([section 1](#1-joining)) |
 | `POST /api/rooms/{slug}/agent-codes` | 10 codes an hour per person, and 50 per meeting for people who aren't the host and haven't come into the call |
 | `POST /api/agent/claim` | None: a made-up, used or expired code is refused at once (`400`), and a real one may try 5 names |
 | `GET /api/agent/claim/{id}` | 60 checks per claim, counted only with the right secret. A bridge that gets a 429 waits and polls again |

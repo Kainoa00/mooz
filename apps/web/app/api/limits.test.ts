@@ -10,7 +10,7 @@ import {
   addParticipant,
   createRoom,
   getRoom,
-  notePersonPresence,
+  renameParticipant,
 } from "@/lib/rooms";
 import { TOKEN_TTL_MS } from "@/lib/livekit";
 import { noteRoomWebhook, noteWebhook } from "@/lib/webhook-seen";
@@ -167,7 +167,7 @@ describe("rate limits", () => {
     expect((await join(jsonRequest(url, { name: "Lee" }), params({ slug }))).status).toBe(200);
   });
 
-  it("counts only the 2,000 newest joins nobody saw come in for names, and turns nobody away", async () => {
+  it("counts the 2,000 joins nobody saw come in that first joined most recently, where the webhook vouches for them", async () => {
     const db = getDb();
     const { slug } = createRoom(db);
     const url = `http://localhost:3000/api/rooms/${slug}/join`;
@@ -175,12 +175,15 @@ describe("rate limits", () => {
     const insert = db.prepare(
       "INSERT INTO participants (identity, room_slug, name, is_host, secret_hash, created_at, expires_at, session_sid) VALUES (?, ?, ?, 0, 's', ?, ?, ?)",
     );
-    // A meeting the webhook hasn't spoken of: every live session holds its name.
-    const long = Date.now() - 2 * TOKEN_TTL_MS;
+    // Joined in the last hour (their tokens still work), and the webhook has spoken of the meeting since.
+    const start = Date.now() - 50 * 60_000;
     db.exec("BEGIN");
-    insert.run("p_in", slug, "Zach", long, long + SESSION_TTL_MS, "PA_zach"); // came in, long ago
-    for (let i = 0; i < MAX_UNSEEN_NAMES + 100; i++) insert.run(`p_ghost${i}`, slug, `Ghost ${i}`, long + i, long + i + SESSION_TTL_MS, null);
+    insert.run("p_in", slug, "Zach", start, start + SESSION_TTL_MS, "PA_zach"); // came in
+    for (let i = 0; i < MAX_UNSEEN_NAMES + 100; i++) insert.run(`p_ghost${i}`, slug, `Ghost ${i}`, start + i, start + i + SESSION_TTL_MS, null);
     db.exec("COMMIT");
+    // The oldest reload, which doesn't make them newer; then the webhook speaks of the meeting.
+    for (let i = 0; i < 100; i++) renameParticipant(db, { identity: `p_ghost${i}`, slug, name: `Ghost ${i}`, isHost: false }, `Ghost ${i}`, false);
+    noteRoomWebhook(db, getRoom(db, slug)!.livekitRoom, Date.now() + 1);
     const names = participantNames(db, slug);
     expect(names).toHaveLength(MAX_UNSEEN_NAMES + 1);
     expect(names).toContain("Zach");
@@ -189,23 +192,26 @@ describe("rate limits", () => {
     expect((await join(jsonRequest(url, { name: "Lee" }), params({ slug }))).status).toBe(200);
   });
 
-  it("counts a reload of a session nobody saw come in with new joins, where the webhook would say", async () => {
+  it("refuses new agents, not people, while too many joins nobody can vouch for hold names", async () => {
     const db = getDb();
     const { slug } = createRoom(db);
     const url = `http://localhost:3000/api/rooms/${slug}/join`;
-    noteWebhook(db);
-    const joined: { name: string; identity: string; secret: string }[] = [];
-    for (const name of ["Zach", "Mia"]) {
-      const res = await join(jsonRequest(url, { name }), params({ slug }));
-      const { identity } = (await res.json()) as { identity: string };
-      joined.push({ name, identity, secret: setCookies(res)[`mooz_p_${slug}`] });
-    }
-    notePersonPresence(db, joined[1].identity, "PA_mia", true); // Mia came in; Zach never did
-    for (let i = 2; i < JOINS_PER_MINUTE; i++) await join(jsonRequest(url, { name: `Stranger ${i}` }), params({ slug }));
-    const back = (p: (typeof joined)[number]) =>
-      join(jsonRequest(url, { name: p.name, rejoin: p.identity }, { cookie: `mooz_p_${slug}=${p.secret}` }), params({ slug }));
-    expect((await back(joined[0])).status).toBe(429);
-    expect((await back(joined[1])).status).toBe(200);
+    noteWebhook(db); // but it hasn't spoken of this meeting: anyone may be in it, unseen
+    const anna = addParticipant(db, { slug, name: "Anna", isHost: false }, Date.now() - 2 * TOKEN_TTL_MS);
+    const { code: real } = createAgentCode(db, anna);
+    const insert = db.prepare(
+      "INSERT INTO participants (identity, room_slug, name, is_host, secret_hash, created_at, expires_at) VALUES (?, ?, ?, 0, 's', ?, ?)",
+    );
+    db.exec("BEGIN");
+    // First joined two hours ago (so they hold no place), last a moment ago.
+    const long = Date.now() - 2 * TOKEN_TTL_MS;
+    for (let i = 0; i < MAX_UNSEEN_NAMES; i++) insert.run(`p_ghost${i}`, slug, `Ghost ${i}`, long, Date.now() + SESSION_TTL_MS);
+    db.exec("COMMIT");
+    const res = await claim(jsonRequest("http://localhost/api/agent/claim", { code: real, name: "Ana" }));
+    expect(res.status).toBe(503);
+    expect(await code(res)).toBe("names_busy");
+    expect((db.prepare("SELECT attempts FROM agent_codes").get() as { attempts: number }).attempts).toBe(0);
+    expect((await join(jsonRequest(url, { name: "Lee" }), params({ slug }))).status).toBe(200);
   });
 
   it("lets the host past a full meeting, though not without end", () => {

@@ -143,9 +143,10 @@ export function foldNameByLook(name: string): string {
 function readings(name: string): string[] {
   const iAsL = name.replace(/(?<=\p{Ll})I|(?<=\p{L})I(?=\p{Ll})/gu, "l");
   const lAsI = name.replace(/(?<![\p{L}\p{N}])l|(?<=\p{Lu})l(?!\p{Ll})/gu, "I");
-  // The letter after the l with its accents off: léon, like leon, has an l before a vowel.
+  // The letter after the l as it sounds: léon, like leon, has an l before a vowel, and so do
+  // ləman, løna and lærke.
   const lSaidAsI = name.replace(/(?<![\p{L}\p{N}])l(?=(\P{M}?\p{M}*))|(?<=\p{Lu})l(?!\p{Ll})/gu, (l, next?: string) =>
-    next !== undefined && /^[aeiouy]/i.test(bare(next)) ? l : "I",
+    next !== undefined && /^[aeiouy]/i.test(foldName(next)) ? l : "I",
   );
   return [
     foldName(name),

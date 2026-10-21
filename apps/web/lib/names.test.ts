@@ -263,6 +263,10 @@ describe("names that look like an agent's", () => {
     ["lúna".normalize("NFD"), "Ina"],
     ["lívia", "Iva"],
     ["lāna", "Ian"],
+    ["ləman", "Iman"], // and so are ə, ø, æ and œ
+    ["løna", "Ina"],
+    ["lærke", "Irke"],
+    ["lœna", "Ina"],
     ["Sevinc Həsənova", "Nova"], // ə doesn't split a word in two
     ["Cəlil", "Leila"],
     ["O’Brien", "Brien"], // ’ is an apostrophe, as ' is

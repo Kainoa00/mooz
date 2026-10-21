@@ -121,20 +121,34 @@ export function activeAgentNames(db: Db, slug: string, now = Date.now()): string
  * Names of the people in the meeting now, or away for a moment (a reload, a dropped connection),
  * as agents are: not everyone who ever joined by its link, and nobody whose session has ended.
  * Where LiveKit's webhook says who's in the meeting, someone who joined by the link but never
- * came into the call holds their name while their join token could still bring them in.
- * Without the webhook, everyone whose session is live counts.
+ * came into the call holds their name while their join token could still bring them in; of
+ * those, the webhook vouches for the ones it has spoken of the meeting since, and only the
+ * MAX_UNSEEN_NAMES who first joined most recently count (one of the rest who comes in later
+ * under a name an agent answers to is taken out). Anyone it can't vouch for (without the
+ * webhook, everyone) counts: past MAX_UNSEEN_NAMES of them, a new agent's name can't be checked
+ * now, and is refused until the webhook speaks of the meeting.
  */
 export function participantNames(db: Db, slug: string, now = Date.now()): string[] {
   const held = holdsName(db, slug, now);
+  const heardAt = held[4];
+  const unvouched = db
+    .prepare(
+      `SELECT name FROM participants WHERE ${HOLDS_NAME} AND session_sid IS NULL AND ? <= expires_at - ? LIMIT ?`,
+    )
+    .all(...held, heardAt, SESSION_TTL_MS, MAX_UNSEEN_NAMES + 1) as { name: string }[];
+  if (unvouched.length > MAX_UNSEEN_NAMES) {
+    throw new HttpError(503, "names_busy", "This meeting is too busy to check agents' names just now. Try again later.");
+  }
   const rows = db
     .prepare(
       `SELECT name FROM participants WHERE ${HOLDS_NAME} AND session_sid IS NOT NULL
        UNION ALL
-       SELECT name FROM (SELECT name FROM participants WHERE ${HOLDS_NAME} AND session_sid IS NULL
-         ORDER BY expires_at DESC LIMIT ?)`,
+       SELECT name FROM (SELECT name FROM participants
+         WHERE ${HOLDS_NAME} AND session_sid IS NULL AND ? > expires_at - ?
+         ORDER BY created_at DESC LIMIT ?)`,
     )
-    .all(...held, ...held, MAX_UNSEEN_NAMES) as { name: string }[];
-  return rows.map((r) => r.name);
+    .all(...held, ...held, heardAt, SESSION_TTL_MS, MAX_UNSEEN_NAMES) as { name: string }[];
+  return [...rows.map((r) => r.name), ...unvouched.map((r) => r.name)];
 }
 
 // A session's expiry is SESSION_TTL_MS after its last /join, which minted its token. A join
@@ -146,10 +160,9 @@ const holdsName = (db: Db, slug: string, now: number) =>
   [slug, now - LEFT_GRACE_MS, now, now + SESSION_TTL_MS - TOKEN_TTL_MS, meetingHeardAt(db, slug, now), SESSION_TTL_MS] as const;
 
 /**
- * Joins nobody has reported coming in whose names a name check counts: the most recent ones.
+ * Joins nobody has reported coming in whose names a name check counts at most (participantNames).
  * Every agent's name is checked against each, so a meeting stuffed with joins that never come in
- * can't make that slow, and nobody is turned away for it. One of the older ones who does come in
- * later, under a name an agent now answers to, is taken out of the call (isUnwelcomePerson).
+ * can't make that slow, and nobody is turned away for it.
  */
 export const MAX_UNSEEN_NAMES = 2_000;
 
@@ -189,10 +202,12 @@ export function claimAgentCode(
       )
       .get(codeHash, Date.now(), MAX_NAME_ATTEMPTS) as { room_slug: string; owner_identity: string } | undefined;
     if (!row) throw invalid;
+    // Outside the try: a meeting too busy to check names doesn't use up one of the code's tries.
+    const people = participantNames(db, row.room_slug);
 
     let name: string;
     try {
-      name = parseAgentName(input.name, participantNames(db, row.room_slug), activeAgentNames(db, row.room_slug));
+      name = parseAgentName(input.name, people, activeAgentNames(db, row.room_slug));
     } catch (err) {
       db.prepare("UPDATE agent_codes SET attempts = attempts + 1 WHERE code_hash = ?").run(codeHash);
       return { rejected: err };

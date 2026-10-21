@@ -36,8 +36,15 @@ describe("the names worked out for name checks", () => {
   });
 
   it("keep only names the server accepted, never the one being checked", () => {
-    for (let i = 0; i < 100; i++) expect(() => parseDisplayName(`Atlas`, ["Atlas"])).toThrow();
+    for (let i = 0; i < 100; i++) {
+      expect(() => parseDisplayName(`Atlas ${i}`, ["Atlas"])).toThrowError(expect.objectContaining({ code: "name_taken" }));
+    }
     for (let i = 0; i < 100; i++) parseDisplayName(`Guest ${i}`, ["Atlas"]);
     expect(namesInMemoryForTests()).toBe(1); // the agent's
+    forgetNames();
+    for (let i = 0; i < 100; i++) {
+      expect(() => parseAgentName(`Bot${i} Atlas`, ["Atlas"])).toThrowError(expect.objectContaining({ code: "name_taken" }));
+    }
+    expect(namesInMemoryForTests()).toBe(1); // the person's
   });
 });

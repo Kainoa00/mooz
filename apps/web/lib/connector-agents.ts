@@ -141,9 +141,8 @@ export function requestConnectorJoin(
   const connector = getOwned(db, ownerKey, connectorId);
   return transaction(db, () => {
     const superseded = revokeLive(db, connector.id);
-    const name = withStoredName(connector.name, () =>
-      parseAgentName(connector.name, participantNames(db, owner.slug), activeAgentNames(db, owner.slug)),
-    );
+    const people = participantNames(db, owner.slug);
+    const name = withStoredName(connector.name, () => parseAgentName(connector.name, people, activeAgentNames(db, owner.slug)));
     const requestId = newId("r");
     db.prepare(
       `INSERT INTO agent_requests
