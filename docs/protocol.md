@@ -71,6 +71,22 @@ Send `Authorization: Bearer <claimSecret>`, and poll about every 2 seconds.
 Each approval issues **exactly one** token, valid for 5 minutes. LiveKit refreshes it
 while the agent stays connected. An agent that disconnects needs a new code.
 
+### What the owner sees
+
+An agent comes in under its owner's name ("Kainoa's Atlas"), so the owner sees what was done
+with their codes, and a code someone else used can't be credited to them unnoticed. Both
+routes take the participant cookie, and share a limit of 60 a minute per person.
+
+- `GET /api/rooms/{slug}/my-agent-requests` returns
+  `{ "requests": [{ "id", "agentName", "status": "pending" | "approved", "createdAt" }] }`:
+  bridge agents brought with my codes that are waiting for the host or in the meeting. The
+  tab checks every 3 seconds while a code is out or a request is waiting, and shows "Atlas is
+  waiting for the host. Not yours? Cancel it."
+- `POST /api/rooms/{slug}/my-agent-requests/{id}/withdraw` (same origin, a JSON body such as
+  `{}`) declines a request that's waiting, so the bridge's next check gets `denied`. For an
+  agent that's already in, it revokes it and removes it, as the host's removal does.
+  Repeating it is harmless. Someone else's request answers `404 request_not_found`.
+
 Error responses everywhere are `{"error": {"code", "message"}}`, and the message is
 safe to show to a person.
 
@@ -533,4 +549,5 @@ then).
   while waiting for approval keeps waiting; older bridges stop, but don't poll fast enough to hit
   the limit. Meetings forget who was in them when they end, sessions expire 24 hours after the
   last join, and a bridge's turn calls stop with its owner's session (see
-  [what the server keeps](#what-the-server-keeps-and-for-how-long)).
+  [what the server keeps](#what-the-server-keeps-and-for-how-long)). Owners see, and can
+  cancel, requests made with their codes ([`my-agent-requests`](#what-the-owner-sees)).

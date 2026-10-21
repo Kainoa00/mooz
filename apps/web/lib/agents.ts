@@ -18,6 +18,8 @@ export const LEFT_GRACE_MS = 2 * 60 * 1000;
 /** Claims a minute with one code, and across the server. */
 export const CLAIMS_PER_CODE_PER_MINUTE = 10;
 export const CLAIMS_PER_MINUTE = 120;
+/** An owner's checks on (and cancels of) the requests made with their codes, a minute. */
+export const MY_REQUESTS_PER_MINUTE = 60;
 
 // No I, O, 0 or 1: codes are read off a screen and typed into a terminal.
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -49,6 +51,14 @@ export interface AgentIdentity {
 export type ClaimStatus =
   | { status: "pending" | "denied" | "revoked" | "expired" }
   | { status: "approved"; agent: AgentIdentity };
+
+/** A request made with one of my codes, as I see it. */
+export interface MyAgentRequest {
+  id: string;
+  agentName: string;
+  status: "pending" | "approved";
+  createdAt: number;
+}
 
 export interface PendingRequest {
   id: string;
@@ -194,6 +204,58 @@ export function decideAgentRequest(
     .get(input.requestId, input.slug);
   if (!exists) throw new HttpError(404, "request_not_found", "No such agent request");
   throw new HttpError(409, "already_decided", "This agent request was already decided");
+}
+
+/**
+ * The agents brought with my codes that are waiting for the host or in the meeting, so a code
+ * someone else used can't be credited to me unnoticed. Connector agents have their own panel.
+ */
+export function listMyAgentRequests(db: Db, owner: Participant, now = Date.now()): MyAgentRequest[] {
+  const rows = db
+    .prepare(
+      `SELECT id, agent_name, status, created_at FROM agent_requests
+       WHERE room_slug = ? AND owner_identity = ? AND door = 'bridge'
+         AND ((status = 'pending' AND created_at > ?) OR (status = 'approved' AND (left_at IS NULL OR left_at > ?)))
+       ORDER BY created_at`,
+    )
+    .all(owner.slug, owner.identity, now - PENDING_TTL_MS, now - LEFT_GRACE_MS) as {
+    id: string;
+    agent_name: string;
+    status: "pending" | "approved";
+    created_at: number;
+  }[];
+  return rows.map((r) => ({ id: r.id, agentName: r.agent_name, status: r.status, createdAt: r.created_at }));
+}
+
+/**
+ * The owner takes back a request made with their code: one still waiting is declined (the
+ * bridge hears "denied"), and an agent that's in is revoked, for the caller to remove from
+ * the meeting. Repeatable, so a failed removal can be retried. Someone else's request is
+ * "not found", whatever it is.
+ */
+export function withdrawMyAgentRequest(
+  db: Db,
+  owner: Participant,
+  requestId: string,
+  now = Date.now(),
+): { remove: string | null } {
+  return transaction(db, () => {
+    const row = db
+      .prepare(
+        `SELECT status, agent_identity FROM agent_requests
+         WHERE id = ? AND room_slug = ? AND owner_identity = ? AND door = 'bridge'`,
+      )
+      .get(requestId, owner.slug, owner.identity) as { status: string; agent_identity: string } | undefined;
+    if (!row) throw new HttpError(404, "request_not_found", "No such agent request");
+    if (row.status === "pending") {
+      db.prepare("UPDATE agent_requests SET status = 'denied', decided_at = ? WHERE id = ?").run(now, requestId);
+      return { remove: null };
+    }
+    if (row.status === "approved") {
+      db.prepare("UPDATE agent_requests SET status = 'revoked', decided_at = ? WHERE id = ?").run(now, requestId);
+    }
+    return { remove: row.status === "approved" || row.status === "revoked" ? row.agent_identity : null };
+  });
 }
 
 /**

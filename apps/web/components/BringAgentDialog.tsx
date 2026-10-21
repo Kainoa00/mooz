@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { errorMessage, readBody } from "@/lib/fetch-json";
 import type { BroughtConnector } from "./ConnectorAgent";
 import { ConnectorDoor } from "./ConnectorDoor";
+import { MyAgentRequestList, useMyAgentRequests } from "./MyAgentRequests";
 
 interface AgentCode {
   code: string;
@@ -13,7 +14,9 @@ interface AgentCode {
 
 /**
  * Two doors for the user's own agent: the assistant app they already use (a connector),
- * or the one-time command that connects mooz-agent on their machine.
+ * or the one-time command that connects mooz-agent on their machine. While a code is out,
+ * it follows what was done with it, so a code someone else used can't pass unnoticed: the
+ * owner sees "Atlas is waiting for the host" here, or in a small tray, and can cancel it.
  */
 export function BringAgentDialog({
   slug,
@@ -27,6 +30,15 @@ export function BringAgentDialog({
   const [code, setCode] = useState<AgentCode | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  // Until the last code shown expires.
+  const [watchUntil, setWatchUntil] = useState<number | null>(null);
+  const mine = useMyAgentRequests(slug, open || watchUntil !== null);
+
+  useEffect(() => {
+    if (watchUntil === null) return;
+    const timer = setTimeout(() => setWatchUntil(null), Math.max(0, watchUntil - Date.now()));
+    return () => clearTimeout(timer);
+  }, [watchUntil]);
 
   async function openDialog() {
     setOpen(true);
@@ -39,7 +51,9 @@ export function BringAgentDialog({
       setError(errorMessage(body, "Could not create a code. Try again."));
       return;
     }
-    setCode(body as unknown as AgentCode);
+    const made = body as unknown as AgentCode;
+    setCode(made);
+    setWatchUntil(made.expiresAt);
   }
 
   async function copy() {
@@ -53,6 +67,11 @@ export function BringAgentDialog({
       <button type="button" onClick={openDialog} className="rounded-lg bg-agent px-3 py-1.5 text-sm font-medium text-white">
         Bring my agent
       </button>
+      {!open && mine.pending && (
+        <div className="fixed bottom-20 left-4 z-40 max-w-sm rounded-lg bg-surface p-3 text-foreground shadow-lg">
+          <MyAgentRequestList requests={mine.requests} error={mine.error} cancel={(id) => void mine.cancel(id)} only="pending" />
+        </div>
+      )}
       {open && (
         <div role="dialog" aria-label="Bring my agent" className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
           <div className="flex max-h-full w-full max-w-lg flex-col gap-4 overflow-y-auto rounded-xl bg-background p-5 text-foreground shadow-xl">
@@ -105,6 +124,7 @@ export function BringAgentDialog({
                 </button>
               </div>
             )}
+            <MyAgentRequestList requests={mine.requests} error={mine.error} cancel={(id) => void mine.cancel(id)} />
             </>
             )}
             <button type="button" onClick={() => setOpen(false)} className="self-end rounded-lg bg-accent px-4 py-2 text-sm text-white">

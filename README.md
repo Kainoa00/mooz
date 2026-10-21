@@ -49,6 +49,9 @@ uv run mooz-agent connect ABCD-EFGH-JKLM --server http://localhost:3000 --name A
 ```
 
 The host approves the agent. Then say **"Hey Atlas, …"** or type **`@Atlas …`** in chat.
+While your code is out, mooz shows you what was done with it: "Atlas is waiting for the host.
+Not yours? **Cancel it**." So if someone else used your code, you can stop their agent coming in
+under your name.
 
 - **No keys yet?** Run the bridge with `MOOZ_PROVIDERS=fake` for an offline demo. It makes no
   audio and understands a few fixed phrases ("read FILE from SOURCE", "remember that …",
