@@ -1,3 +1,4 @@
+import { maybeSweep } from "@/lib/cleanup";
 import { hostCookie, participantCookie, readCookie, sessionCookie } from "@/lib/cookies";
 import { getDb } from "@/lib/db";
 import { HttpError, errorResponse, readJson, SMALL_JSON_BYTES } from "@/lib/http";
@@ -6,7 +7,7 @@ import { parseDisplayName } from "@/lib/names";
 import { activeAgentNames } from "@/lib/agents";
 import { getNotesOptOut } from "@/lib/notes";
 import { allow } from "@/lib/rate-limit";
-import { addParticipant, findParticipant, isHost, renameParticipant } from "@/lib/rooms";
+import { addParticipant, findParticipant, isHost, renameParticipant, touchRoom } from "@/lib/rooms";
 import { assertSameOrigin, requireRoom } from "@/lib/session";
 
 /** Joins (and rejoins) a minute per meeting. */
@@ -20,6 +21,7 @@ export async function POST(
     const { slug } = await ctx.params;
     assertSameOrigin(req);
     const db = getDb();
+    maybeSweep(db); // first, so a room idle for 30 days is gone
     const room = requireRoom(db, slug);
     if (!allow(`joins:${slug}`, JOINS_PER_MINUTE, 60_000)) {
       throw new HttpError(429, "rate_limited", "Lots of people are joining this meeting just now. Try again in a minute.");
@@ -27,7 +29,8 @@ export async function POST(
 
     const body = await readJson(req, SMALL_JSON_BYTES);
     const name = parseDisplayName(body.name, activeAgentNames(db, slug));
-    const host = isHost(db, slug, readCookie(req, hostCookie(slug)));
+    const hostSecret = readCookie(req, hostCookie(slug));
+    const host = isHost(db, slug, hostSecret);
     // A reload in the same tab rejoins as the same person, so agents keep recognizing
     // their owner. The tab says who it was, and that must still be whom the cookie names:
     // another tab in the same browser may have joined since and taken the cookie over.
@@ -37,6 +40,8 @@ export async function POST(
     const participant = returning
       ? { ...renameParticipant(db, returning, name, host), secret: secret as string }
       : addParticipant(db, { slug, name, isHost: host });
+    // Each join keeps the room, and the host's (and this person's) session, for another day.
+    touchRoom(db, slug, host);
     const token = await mintHumanToken({
       room: room.livekitRoom,
       identity: participant.identity,
@@ -51,6 +56,7 @@ export async function POST(
       isHost: host,
     });
     res.headers.append("set-cookie", sessionCookie(req, participantCookie(slug), participant.secret));
+    if (host && hostSecret) res.headers.append("set-cookie", sessionCookie(req, hostCookie(slug), hostSecret));
     return res;
   } catch (err) {
     return errorResponse(err);

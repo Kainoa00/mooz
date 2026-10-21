@@ -90,6 +90,18 @@ const MIGRATIONS = [
   // When a person left the meeting, and as which session (names are checked against who's here).
   `ALTER TABLE participants ADD COLUMN left_at INTEGER;
    ALTER TABLE participants ADD COLUMN session_sid TEXT;`,
+  // Nothing outlives its use: sessions expire on the server (24 h after the last join, like their
+  // cookies), and a room is a setting kept 30 days after its last join (lib/cleanup.ts).
+  `ALTER TABLE rooms ADD COLUMN last_active_at INTEGER;
+   ALTER TABLE rooms ADD COLUMN host_expires_at INTEGER;
+   ALTER TABLE participants ADD COLUMN expires_at INTEGER;
+   UPDATE rooms SET last_active_at = created_at, host_expires_at = created_at + 86400000;
+   UPDATE participants SET expires_at = created_at + 86400000;
+   CREATE INDEX rooms_by_last_active ON rooms(last_active_at);
+   CREATE INDEX participants_by_expiry ON participants(expires_at);
+   CREATE INDEX agent_codes_by_expiry ON agent_codes(expires_at);
+   CREATE INDEX agent_codes_by_owner ON agent_codes(owner_identity);
+   CREATE INDEX agent_requests_by_owner ON agent_requests(owner_identity);`,
 ];
 
 function migrate(db: Db): void {
@@ -113,6 +125,8 @@ function migrate(db: Db): void {
 export function openDb(path: string): Db {
   if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
+  // Deleted rows (names, after a meeting) are overwritten on disk, not just unlinked.
+  db.exec("PRAGMA secure_delete = ON");
   if (path !== ":memory:") db.exec("PRAGMA journal_mode = WAL");
   migrate(db);
   return db;

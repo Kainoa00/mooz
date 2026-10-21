@@ -1,5 +1,6 @@
 import { WebhookReceiver } from "livekit-server-sdk";
-import { isRevokedAgent, noteBridgePresence } from "@/lib/agents";
+import { isUnwelcomeAgent, noteBridgePresence } from "@/lib/agents";
+import { endMeeting } from "@/lib/cleanup";
 import { endRoomConnectors, noteConnectorPresence } from "@/lib/connector-agents";
 import { forgetAgent } from "@/lib/connector-queue";
 import { getDb } from "@/lib/db";
@@ -11,14 +12,15 @@ import { publishRoomState } from "@/lib/room-state";
 import { getRoomByLivekitName, notePersonPresence } from "@/lib/rooms";
 
 /**
- * LiveKit calls this for room events (configured in livekit.yaml). A removed agent
- * that reconnects with a token it still holds is kicked the moment it joins, and a
+ * LiveKit calls this for room events (configured in livekit.yaml). A removed agent (or one
+ * from a meeting that ended) that reconnects with a token it still holds is kicked the moment
+ * it joins, and a
  * room LiveKit starts again (after everyone left) gets its notes policy back. A
  * connector agent whose tab leaves may come back for a couple of minutes (a reload);
  * after that it's out, with its questions. An agent that leaves gives up its turns (a bridge
  * agent can't take more until it's back); a late "left" for a connection it already replaced
  * changes nothing. When the meeting ends, its connector agents are
- * done and its floor is forgotten.
+ * done, its floor is forgotten, and so is everyone who was in it (lib/cleanup.ts).
  */
 export async function POST(req: Request): Promise<Response> {
   try {
@@ -38,7 +40,7 @@ export async function POST(req: Request): Promise<Response> {
     if (event.event === "participant_joined" && identity && room) {
       noteBridgePresence(db, identity, sid, true);
       notePersonPresence(db, identity, sid, true);
-      if (isRevokedAgent(db, identity)) await removeFromRoom(room, identity);
+      if (isUnwelcomeAgent(db, identity)) await removeFromRoom(room, identity);
       else if (noteConnectorPresence(db, identity, sid, true) === "expired") {
         forgetAgent(identity);
         await removeFromRoom(room, identity);
@@ -56,6 +58,7 @@ export async function POST(req: Request): Promise<Response> {
       if (meeting) {
         for (const agent of endRoomConnectors(db, meeting.slug)) forgetAgent(agent);
         endFloor(meeting.slug);
+        endMeeting(db, meeting.slug);
       }
     }
     if (event.event === "room_started" && room) {

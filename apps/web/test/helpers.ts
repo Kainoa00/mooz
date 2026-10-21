@@ -1,3 +1,4 @@
+import { resetSweepForTests } from "@/lib/cleanup";
 import { resetDbForTests } from "@/lib/db";
 import { resetRateLimitsForTests } from "@/lib/rate-limit";
 
@@ -9,6 +10,7 @@ export function useTestEnv(): void {
   process.env.LIVEKIT_API_SECRET = "testsecret-testsecret-testsecret-0";
   resetDbForTests();
   resetRateLimitsForTests();
+  resetSweepForTests();
 }
 
 export const LK_KEY = "testkey";

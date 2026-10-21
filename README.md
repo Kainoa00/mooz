@@ -374,7 +374,10 @@ carrying a per-request nonce and connect only to the mooz server, its LiveKit an
 Agents take turns through the server, each proving who it is (a bridge with its claim
 secret, a connector with its owner's cookies), and only people can let paused agents continue.
 Who may see what is decided by the server-assigned identity of whoever asks. See
-[`docs/protocol.md`](docs/protocol.md#4-access-and-consent). The
+[`docs/protocol.md`](docs/protocol.md#4-access-and-consent). When a meeting ends, the server
+forgets who was in it (names, opt-outs, agent codes and requests), and sessions expire a day
+after the last join; the room's link and notes policy are kept for 30 days as a setting. See
+[what the server keeps](docs/protocol.md#what-the-server-keeps-and-for-how-long). The
 local `docker compose` setup uses LiveKit's public dev keys and listens only on localhost.
 **Don't expose it to a network as-is.** Outside localhost, the server refuses weak LiveKit
 secrets. A production guide comes with M6.

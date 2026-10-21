@@ -1,3 +1,4 @@
+import { maybeSweep } from "@/lib/cleanup";
 import { hostCookie, sessionCookie } from "@/lib/cookies";
 import { getDb } from "@/lib/db";
 import { envInt } from "@/lib/env";
@@ -15,7 +16,9 @@ export async function POST(req: Request): Promise<Response> {
     if (!allow("rooms:create", ROOMS_PER_MINUTE, 60_000)) {
       throw new HttpError(429, "rate_limited", "Lots of meetings are starting just now. Try again in a minute.");
     }
-    const { slug, hostSecret } = createRoom(getDb());
+    const db = getDb();
+    maybeSweep(db);
+    const { slug, hostSecret } = createRoom(db);
     const res = Response.json({ slug }, { status: 201 });
     res.headers.append("set-cookie", sessionCookie(req, hostCookie(slug), hostSecret));
     return res;

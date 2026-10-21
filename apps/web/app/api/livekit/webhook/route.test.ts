@@ -135,22 +135,39 @@ describe("POST /api/livekit/webhook", () => {
     expect(() => connectorAgentFor(db, kai, "kai-key", requestId, tooLate)).toThrow("not approved");
   });
 
-  it("ends a meeting's connector agents when the meeting ends", async () => {
+  it("forgets who was in a meeting when it ends, and keeps the room and connectors (settings)", async () => {
     const db = getDb();
     const { slug } = createRoom(db);
     const kai = addParticipant(db, { slug, name: "Kainoa", isHost: true });
+    const zach = addParticipant(db, { slug, name: "Zach", isHost: false });
+    createAgentCode(db, zach);
+    const bridge = agent(false);
     const { connector } = createConnector(db, "kai-key", { name: "Grok", app: "grok" });
     const { requestId } = requestConnectorJoin(db, kai, "kai-key", connector.id);
     decideAgentRequest(db, { slug, requestId, approve: true });
     const grok = connectorAgentFor(db, kai, "kai-key", requestId);
     enqueueQuestion(db, grok, { asker: kai.identity, text: "q", lines: [] });
+    const rows = (s: string) =>
+      ["participants", "agent_codes", "agent_requests"].map(
+        (t) => (db.prepare(`SELECT COUNT(*) AS n FROM ${t} WHERE room_slug = ?`).get(s) as { n: number }).n,
+      );
+    expect(rows(slug)).toEqual([2, 1, 1]);
 
     await POST(await signed(JSON.stringify({ event: "room_finished", room: { name: grok.livekitRoom } })));
     await POST(await signed(JSON.stringify({ event: "room_finished", room: { name: "lk_unknown" } })));
 
-    expect(connectorJoinStatus(db, kai, "kai-key", requestId)).toBe("revoked");
+    expect(rows(slug)).toEqual([0, 0, 0]);
+    expect(getRoom(db, slug)).toBeDefined();
+    expect(db.prepare("SELECT 1 FROM connectors WHERE id = ?").get(connector.id)).toBeDefined();
     expect(attachedConnectorAgent(db, connector.id)).toBeUndefined();
     expect(listQuestions(grok.identity)).toEqual([]);
+    // Another meeting is untouched (its used code goes in a sweep).
+    expect(rows(bridge.slug)).toEqual([1, 1, 1]);
+
+    // Its connector agent, back with a token it still holds, is shown out; a person isn't.
+    await POST(await signed(joined(grok.livekitRoom, grok.identity)));
+    await POST(await signed(joined(grok.livekitRoom, kai.identity)));
+    expect(removeFromRoom.mock.calls).toEqual([[grok.livekitRoom, grok.identity]]);
   });
 
   it("kicks a connector agent that comes back after the grace period", async () => {

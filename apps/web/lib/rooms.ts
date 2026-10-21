@@ -4,6 +4,8 @@ import { hashSecret, newId, newRoomSlug, newSecret } from "./ids";
 
 /** People a meeting keeps track of (everyone who joined; a rejoin reuses its row). */
 export const MAX_PARTICIPANT_ROWS = 200;
+/** Host and participant secrets work this long after their last join (as long as their cookies). */
+export const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
 export interface Room {
   slug: string;
@@ -19,15 +21,16 @@ export interface Participant {
   isHost: boolean;
 }
 
-export function createRoom(db: Db): { slug: string; hostSecret: string } {
+export function createRoom(db: Db, now = Date.now()): { slug: string; hostSecret: string } {
   const hostSecret = newSecret();
   const insert = db.prepare(
-    "INSERT INTO rooms (slug, host_secret_hash, livekit_room, created_at) VALUES (?, ?, ?, ?)",
+    `INSERT INTO rooms (slug, host_secret_hash, livekit_room, created_at, last_active_at, host_expires_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
   );
   for (let attempt = 0; attempt < 5; attempt++) {
     const slug = newRoomSlug();
     try {
-      insert.run(slug, hashSecret(hostSecret), newId("lk"), Date.now());
+      insert.run(slug, hashSecret(hostSecret), newId("lk"), now, now, now + SESSION_TTL_MS);
       return { slug, hostSecret };
     } catch (err) {
       if (!String(err).includes("UNIQUE")) throw err;
@@ -51,34 +54,49 @@ export function getRoomByLivekitName(db: Db, livekitRoom: string): Room | undefi
   return row && getRoom(db, row.slug);
 }
 
-export function isHost(db: Db, slug: string, secret: string | undefined): boolean {
+export function isHost(db: Db, slug: string, secret: string | undefined, now = Date.now()): boolean {
   if (!secret) return false;
   const row = db
-    .prepare("SELECT 1 FROM rooms WHERE slug = ? AND host_secret_hash = ?")
-    .get(slug, hashSecret(secret));
+    .prepare("SELECT 1 FROM rooms WHERE slug = ? AND host_secret_hash = ? AND host_expires_at > ?")
+    .get(slug, hashSecret(secret), now);
   return row !== undefined;
+}
+
+/** Someone joined: the room was used now, and a host's secret works for another day. */
+export function touchRoom(db: Db, slug: string, host: boolean, now = Date.now()): void {
+  db.prepare(
+    "UPDATE rooms SET last_active_at = ?, host_expires_at = CASE WHEN ? THEN ? ELSE host_expires_at END WHERE slug = ?",
+  ).run(now, host ? 1 : 0, now + SESSION_TTL_MS, slug);
 }
 
 export function addParticipant(
   db: Db,
   input: { slug: string; name: string; isHost: boolean },
+  now = Date.now(),
 ): Participant & { secret: string } {
   const { n } = db.prepare("SELECT COUNT(*) AS n FROM participants WHERE room_slug = ?").get(input.slug) as { n: number };
   if (n >= MAX_PARTICIPANT_ROWS) throw new HttpError(409, "room_full", "This meeting is full.");
   const identity = newId("p");
   const secret = newSecret();
   db.prepare(
-    `INSERT INTO participants (identity, room_slug, name, is_host, secret_hash, created_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-  ).run(identity, input.slug, input.name, input.isHost ? 1 : 0, hashSecret(secret), Date.now());
+    `INSERT INTO participants (identity, room_slug, name, is_host, secret_hash, created_at, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(identity, input.slug, input.name, input.isHost ? 1 : 0, hashSecret(secret), now, now + SESSION_TTL_MS);
   return { identity, slug: input.slug, name: input.name, isHost: input.isHost, secret };
 }
 
-/** Update a returning participant's name (and host flag) in place, keeping their identity. */
-export function renameParticipant(db: Db, participant: Participant, name: string, isHost: boolean): Participant {
-  db.prepare("UPDATE participants SET name = ?, is_host = ?, left_at = NULL WHERE identity = ?").run(
+/** Update a returning participant's name (and host flag) in place, keeping their identity for another day. */
+export function renameParticipant(
+  db: Db,
+  participant: Participant,
+  name: string,
+  isHost: boolean,
+  now = Date.now(),
+): Participant {
+  db.prepare("UPDATE participants SET name = ?, is_host = ?, left_at = NULL, expires_at = ? WHERE identity = ?").run(
     name,
     isHost ? 1 : 0,
+    now + SESSION_TTL_MS,
     participant.identity,
   );
   return { ...participant, name, isHost };
@@ -102,13 +120,14 @@ export function findParticipant(
   db: Db,
   slug: string,
   secret: string | undefined,
+  now = Date.now(),
 ): Participant | undefined {
   if (!secret) return undefined;
   const row = db
     .prepare(
-      "SELECT identity, name, is_host FROM participants WHERE room_slug = ? AND secret_hash = ?",
+      "SELECT identity, name, is_host FROM participants WHERE room_slug = ? AND secret_hash = ? AND expires_at > ?",
     )
-    .get(slug, hashSecret(secret)) as
+    .get(slug, hashSecret(secret), now) as
     | { identity: string; name: string; is_host: number }
     | undefined;
   return row && { identity: row.identity, slug, name: row.name, isHost: row.is_host === 1 };

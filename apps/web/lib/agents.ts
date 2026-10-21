@@ -4,7 +4,7 @@ import { HttpError } from "./http";
 import { hashSecret, newId, newSecret } from "./ids";
 import { parseAgentName } from "./names";
 import { allow } from "./rate-limit";
-import type { Participant } from "./rooms";
+import { SESSION_TTL_MS, type Participant } from "./rooms";
 
 export const AGENT_CODE_TTL_MS = 10 * 60 * 1000;
 /** After approval, the bridge must collect its token within this window. */
@@ -218,6 +218,17 @@ export function isRevokedAgent(db: Db, agentIdentity: string): boolean {
   );
 }
 
+/**
+ * An agent LiveKit let in that has no approval here: removed by the host, or from a meeting
+ * that ended (its rows are gone). A person's identity is never one.
+ */
+export function isUnwelcomeAgent(db: Db, identity: string): boolean {
+  if (!identity.startsWith("a_")) return false;
+  return (
+    db.prepare("SELECT 1 FROM agent_requests WHERE agent_identity = ? AND status = 'approved'").get(identity) === undefined
+  );
+}
+
 /** Record that an approval's single token was handed out. False if it already was. */
 export function markTokenIssued(db: Db, requestId: string): boolean {
   const { changes } = db
@@ -288,7 +299,7 @@ export function requireBridgeAgent(db: Db, requestId: string, claimSecret: strin
     ? (db
         .prepare(
           `SELECT r.status, r.token_issued_at, r.left_at, r.room_slug, rm.livekit_room, r.agent_name,
-                  r.agent_identity, r.owner_identity, p.name AS owner_name
+                  r.agent_identity, r.owner_identity, p.name AS owner_name, p.expires_at AS owner_expires_at
            FROM agent_requests r
            JOIN participants p ON p.identity = r.owner_identity
            JOIN rooms rm ON rm.slug = r.room_slug
@@ -305,12 +316,18 @@ export function requireBridgeAgent(db: Db, requestId: string, claimSecret: strin
             agent_identity: string;
             owner_identity: string;
             owner_name: string;
+            owner_expires_at: number | null;
           }
         | undefined)
     : undefined;
   if (!row) throw new HttpError(404, "request_not_found", "No such agent request");
   if (row.status !== "approved" || row.token_issued_at === null || row.left_at !== null) {
     throw new HttpError(409, "not_in_meeting", "This agent is not in the meeting");
+  }
+  // An agent's standing is its owner's: it goes when their session does, and after a day at most.
+  const now = Date.now();
+  if ((row.owner_expires_at ?? 0) <= now || now - row.token_issued_at >= SESSION_TTL_MS) {
+    throw new HttpError(409, "not_in_meeting", "This agent's approval has run out. Get a new code from the meeting.");
   }
   return {
     identity: row.agent_identity,

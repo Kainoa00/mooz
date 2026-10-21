@@ -249,7 +249,46 @@ remove it.
 
 The agent leaves when its process exits, or when the host removes it. On removal, the
 server disconnects it and revokes its claim. A LiveKit webhook kicks the identity again
-if it reconnects with a token it already holds.
+if it reconnects with a token it already holds, and so for an agent from a meeting that has
+ended.
+
+### What the server keeps, and for how long
+
+| What | Kept until |
+|---|---|
+| People: name, identity, notes opt-out, a hash of their secret | The meeting ends, or 24 hours after their last join |
+| Agent codes | The meeting ends, or 10 minutes after they're made |
+| Agent requests: the agent's name, whose it is, its status | The meeting ends, or its owner's session does, or 24 hours after the request unless the agent is approved and still in the meeting |
+| The room: its link, a hash of the host secret, the notes policy | 30 days after its last join (it's a setting) |
+| Connectors: name, app, a hash of the link | Deleted by their owner, or expired as in [section 5](#the-connector-link) |
+| Questions, the floor, rate-limit counters | Memory only: gone when the meeting ends or the server restarts |
+
+"The meeting ends" is LiveKit's `room_finished`, sent once everyone has left. Without it, a
+sweep (at most once a minute, run by room creation and joins) deletes what has expired.
+
+- **Sessions.** Host and participant secrets work on the server for 24 hours after the last
+  join, and each join resets the clock, as it does for their cookies. A bridge's claim
+  secret works for turn calls while its owner's session lasts, and for 24 hours after its
+  token was issued at most; after that, turn calls answer `409 not_in_meeting`.
+- **Coming back** after a meeting has ended gives a person a new identity. They set their
+  notes opt-out again.
+- **On disk,** SQLite's `secure_delete` is on, and the write-ahead log is checkpointed and
+  emptied after anything is deleted, so deleted names don't linger in the database files.
+
+### LiveKit's webhook
+
+mooz needs LiveKit to send its webhook to `/api/livekit/webhook`, signed with one of the
+server's API keys (`webhook` in `livekit.yaml`). It's how the server knows:
+
+- who is in the meeting now, for name checks, connector agents' grace period and turns
+- when a removed agent, or one from an ended meeting, reconnects, so it can kick it
+- when the meeting ends, so it can forget who was in it
+
+Without the webhook, meetings still work, but the server falls back:
+
+- Name checks count everyone who ever joined by the link.
+- A removed agent can reconnect while its last token lasts.
+- People's rows stay until the sweep finds them expired.
 
 ## 4. Access and consent
 
@@ -492,4 +531,6 @@ then).
 - **v0** (M6): limits on starting meetings, joining, claims and claim checks (see
   [Limits](#limits)), `409 room_full`, and 4 KB caps on small requests. A bridge that gets a 429
   while waiting for approval keeps waiting; older bridges stop, but don't poll fast enough to hit
-  the limit.
+  the limit. Meetings forget who was in them when they end, sessions expire 24 hours after the
+  last join, and a bridge's turn calls stop with its owner's session (see
+  [what the server keeps](#what-the-server-keeps-and-for-how-long)).

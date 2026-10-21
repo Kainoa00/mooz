@@ -1,9 +1,10 @@
 import { TokenVerifier } from "livekit-server-sdk";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getDb } from "@/lib/db";
 import { claimAgentCode, createAgentCode } from "@/lib/agents";
 import { setNotesOptOut } from "@/lib/notes";
-import { addParticipant, createRoom, findParticipant } from "@/lib/rooms";
+import { ROOM_IDLE_MS } from "@/lib/cleanup";
+import { SESSION_TTL_MS, addParticipant, createRoom, findParticipant, isHost } from "@/lib/rooms";
 import { LK_KEY, LK_SECRET, jsonRequest, params, setCookies, useTestEnv } from "@/test/helpers";
 import { POST } from "./route";
 
@@ -165,6 +166,45 @@ describe("POST /api/rooms/[slug]/join", () => {
 
       const claims = await new TokenVerifier(LK_KEY, LK_SECRET).verify(again.json.token);
       expect(claims.attributes).toEqual({ kind: "human", notes_opt_out: "1" });
+    });
+  });
+
+  describe("over time", () => {
+    const T0 = new Date("2026-10-21T12:00:00Z").getTime();
+    beforeEach(() => vi.useFakeTimers({ now: T0, toFake: ["Date"] }));
+    afterEach(() => vi.useRealTimers());
+
+    it("gives the host another day with each join, and their cookie with it", async () => {
+      const db = getDb();
+      const { slug, hostSecret } = createRoom(db);
+      vi.setSystemTime(T0 + 20 * 60 * 60 * 1000);
+
+      const res = await POST(jsonRequest(url(slug), { name: "Kainoa" }, { cookie: `mooz_host_${slug}=${hostSecret}` }), params({ slug }));
+
+      expect(((await res.json()) as { isHost: boolean }).isHost).toBe(true);
+      expect(setCookies(res)[`mooz_host_${slug}`]).toBe(hostSecret);
+      expect(isHost(db, slug, hostSecret, T0 + SESSION_TTL_MS + 1)).toBe(true);
+    });
+
+    it("joins as someone new once a session has run out", async () => {
+      const { slug } = createRoom(getDb());
+      const first = await POST(jsonRequest(url(slug), { name: "Zach" }), params({ slug }));
+      const { identity } = (await first.json()) as { identity: string };
+      const secret = setCookies(first)[`mooz_p_${slug}`];
+      vi.setSystemTime(T0 + SESSION_TTL_MS);
+
+      const again = await POST(
+        jsonRequest(url(slug), { name: "Zach", rejoin: identity }, { cookie: `mooz_p_${slug}=${secret}` }),
+        params({ slug }),
+      );
+      expect(((await again.json()) as { identity: string }).identity).not.toBe(identity);
+    });
+
+    it("finds a meeting nobody joined for 30 days gone", async () => {
+      const { slug } = createRoom(getDb());
+      vi.setSystemTime(T0 + ROOM_IDLE_MS);
+      const res = await POST(jsonRequest(url(slug), { name: "Zach" }), params({ slug }));
+      expect(res.status).toBe(404);
     });
   });
 });
