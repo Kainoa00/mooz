@@ -63,6 +63,13 @@ for (const [file, from, to] of [
   });
 }
 
+test("a pre-release version is refused (Python would spell it differently)", () => {
+  const dir = copy();
+  const v = current();
+  edit(dir, "apps/web/package.json", `"version": "${v}"`, `"version": "${v}-rc.1"`);
+  assert.deepEqual(checkVersions(dir).problems.slice(0, 1), ["apps/web/package.json: no version found"]);
+});
+
 test("a version it can't find fails", () => {
   const dir = copy();
   edit(dir, "apps/web/lib/mcp.ts", `version: "${current()}"`, "version: VERSION");

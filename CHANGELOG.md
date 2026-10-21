@@ -39,8 +39,9 @@ The first release: video meetings where everyone can bring their own AI agent.
 - **Running it for others.** A production kit (`deploy/`: Caddy for HTTPS, LiveKit without
   dev mode, the web image from GHCR), a [VPS guide](docs/deploy-vps.md), `/api/ready`, and a
   server that refuses to start with weak or missing settings.
-- `mooz-agent --version`. The bridge reads `.env` from the folder you run it in, then
-  `~/.mooz/.env`.
+- `mooz-agent --version`. The bridge reads its keys from `~/.mooz/.env` (or your
+  environment), never from a `.env` in the folder you run it in, which a project could use to
+  send your keys elsewhere.
 
 ### Security
 
@@ -67,6 +68,9 @@ The first release: video meetings where everyone can bring their own AI agent.
 - Only the first of several names said aloud is heard; `@Atlas @Nova` reaches both.
 - Turn-taking, rate limits and connector questions live in the web server's memory: run one
   instance, and a restart drops answers waiting for a turn.
+- Server-wide ceilings (new meetings and new connectors a minute, the number of connectors) can
+  be used up by one client, since mooz keeps no IP addresses: on a public server, add per-IP
+  limits in the proxy (see the server guide).
 - Local voice in the browser works in Chrome, Edge and Firefox; Safari and iPhone or iPad
   browsers block it. On a CPU, local speech is much slower than on a GPU or Apple Silicon.
 - The memory file lock uses `fcntl`: on Windows, avoid the CLI's memory commands while the
@@ -78,10 +82,11 @@ The first release: video meetings where everyone can bring their own AI agent.
 
 For anyone who ran mooz from `main` before this release:
 
-- The database upgrades itself on start. Sessions from before it expire 24 hours after the
-  upgrade, and meetings that ended are forgotten at the next sweep.
-- The bridge now reads `.env` from the folder you run it in (then `~/.mooz/.env`), no longer
-  from beside its source. Run it from `bridge/`, or move your keys to `~/.mooz/.env`.
+- The database upgrades itself on start. Room links count as used at the upgrade, so they're
+  kept 30 days from then. Sessions from before it end 24 hours after that person first joined
+  (so some end at once: join again), and meetings that ended are forgotten at the next sweep.
+- The bridge no longer reads `bridge/.env`: move your keys to `~/.mooz/.env`
+  (`mkdir -p ~/.mooz && mv bridge/.env ~/.mooz/.env && chmod 600 ~/.mooz/.env`).
 - Bridges from before M5 don't take turns, and ones from before M6 stop if the server says
   they're polling too fast: update (`uv tool upgrade mooz-agent`, or `git pull && uv sync`).
 - A connector made with a name the M5 rules refuse can't join: delete it and make one with

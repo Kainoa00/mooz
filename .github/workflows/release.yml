@@ -124,7 +124,7 @@ jobs:
           skip-existing: true
 
   image:
-    needs: build
+    needs: [build, check-package]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     # Pushing waits for approval; the dry run only builds.
@@ -152,11 +152,8 @@ jobs:
           {
             echo "tags<<EOF"
             echo "$IMAGE:$VERSION"
-            # Only a plain X.Y.Z release moves X.Y and latest; a pre-release (X.Y.Z-rc.1) doesn't.
-            if [[ "$VERSION" =~ ^([0-9]+\.[0-9]+)\.[0-9]+$ ]]; then
-              echo "$IMAGE:${BASH_REMATCH[1]}"
-              echo "$IMAGE:latest"
-            fi
+            echo "$IMAGE:${VERSION%.*}"
+            echo "$IMAGE:latest"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -202,7 +199,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          prerelease=()
-          [[ "$VERSION" == *-* ]] && prerelease=(--prerelease)
           gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "mooz $VERSION" \
-            --notes-file notes.md "${prerelease[@]}"
+            --notes-file notes.md

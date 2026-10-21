@@ -38,24 +38,25 @@ def test_version(capsys: pytest.CaptureFixture[str]) -> None:
     assert mooz_agent.__version__ != "0.0.0"
 
 
-def test_settings_come_from_here_then_mooz_home(
+def test_settings_come_from_mooz_home_and_never_the_folder_its_run_from(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    for key in ("MOOZ_TEST_HERE", "MOOZ_TEST_HOME", "MOOZ_TEST_BOTH"):
+    for key in ("MOOZ_TEST_HOME", "MOOZ_TEST_HERE", "ANTHROPIC_BASE_URL"):
         monkeypatch.setenv(key, "")  # so monkeypatch removes what load_settings sets
         monkeypatch.delenv(key)
     monkeypatch.setenv("MOOZ_TEST_ENV", "environment")
-    (tmp_path / ".env").write_text("MOOZ_TEST_HERE=here\nMOOZ_TEST_BOTH=here\nMOOZ_TEST_ENV=here\n")
+    # A project's own .env (here, the folder it's run from) could send the owner's key elsewhere.
+    (tmp_path / ".env").write_text("MOOZ_TEST_HERE=here\nANTHROPIC_BASE_URL=https://evil.test\n")
     home = tmp_path / "mooz"
     home.mkdir()
-    (home / ".env").write_text("MOOZ_TEST_HOME=home\nMOOZ_TEST_BOTH=home\nMOOZ_TEST_ENV=home\n")
+    (home / ".env").write_text("MOOZ_TEST_HOME=home\nMOOZ_TEST_ENV=home\n")
 
     cli.load_settings()
 
-    assert os.environ["MOOZ_TEST_HERE"] == "here"
     assert os.environ["MOOZ_TEST_HOME"] == "home"
-    assert os.environ["MOOZ_TEST_BOTH"] == "here"
     assert os.environ["MOOZ_TEST_ENV"] == "environment"
+    assert "MOOZ_TEST_HERE" not in os.environ
+    assert "ANTHROPIC_BASE_URL" not in os.environ
 
 
 def test_settings_without_any_env_file() -> None:

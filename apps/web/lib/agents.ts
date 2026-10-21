@@ -3,7 +3,6 @@ import type { Db } from "./db";
 import { HttpError } from "./http";
 import { hashSecret, newId, newSecret } from "./ids";
 import { parseAgentName } from "./names";
-import { allow } from "./rate-limit";
 import { SESSION_TTL_MS, type Participant } from "./rooms";
 
 export const AGENT_CODE_TTL_MS = 10 * 60 * 1000;
@@ -20,9 +19,6 @@ export const LEFT_GRACE_MS = 2 * 60 * 1000;
  * webhook may not reach this server). After that, only an agent that really joined keeps it.
  */
 export const UNJOINED_APPROVAL_MS = 24 * 60 * 60 * 1000;
-/** Claims a minute with one code, and across the server. */
-export const CLAIMS_PER_CODE_PER_MINUTE = 10;
-export const CLAIMS_PER_MINUTE = 120;
 /** An owner's checks on (and cancels of) the requests made with their codes, a minute. */
 export const MY_REQUESTS_PER_MINUTE = 60;
 
@@ -156,11 +152,9 @@ export function claimAgentCode(
   const invalid = new HttpError(400, "invalid_code", "That code is invalid, used, or expired");
   if (typeof input.code !== "string") throw invalid;
   const codeHash = hashSecret(normalizeCode(input.code));
-  // Before the write lock, so a flood of claims can't hold it. The server-wide count goes first:
-  // it bounds how many per-code counters a flood of made-up codes can create.
-  if (!allow("claims:all", CLAIMS_PER_MINUTE, 60_000) || !allow(`claims-code:${codeHash}`, CLAIMS_PER_CODE_PER_MINUTE, 60_000)) {
-    throw new HttpError(429, "rate_limited", "Too many tries just now. Try again in a minute.");
-  }
+  // No rate limit: a made-up, used or expired code is refused at once, so junk can't use up a
+  // limit that real codes need (and guessing one is hopeless: 60 bits, gone in 10 minutes, and
+  // the host still decides). A real code may try MAX_NAME_ATTEMPTS names.
 
   const outcome = transaction(db, () => {
     const row = db

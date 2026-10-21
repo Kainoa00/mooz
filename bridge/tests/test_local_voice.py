@@ -13,6 +13,7 @@ import respx
 from livekit import rtc
 
 from mooz_agent.providers.local import (
+    MAX_SENTENCE_SECONDS,
     LocalSpeech,
     LocalSTT,
     LocalTTS,
@@ -104,7 +105,30 @@ def test_a_key_never_goes_unencrypted_to_another_machine() -> None:
     tls = LocalSpeech.from_env(
         {"MOOZ_SPEECH_URL": "https://gpu.example/v1", "MOOZ_SPEECH_API_KEY": "sk"}
     )
-    assert speech_problem(tls) is None and speech_warning(tls) is None
+    assert speech_problem(tls) is None
+    # Encrypted, but everyone's audio still leaves this machine: worth a word.
+    assert "goes to gpu.example" in (speech_warning(tls) or "")
+    assert "unencrypted" not in (speech_warning(tls) or "")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.gpu.example.com:3900/v1",
+        "http://127.0.0.1.nip.io/v1",
+        "http://localhost.example/v1",
+    ],
+)
+def test_a_name_that_only_starts_like_this_machine_isnt_it(url: str) -> None:
+    keyed = LocalSpeech.from_env({"MOOZ_SPEECH_URL": url, "MOOZ_SPEECH_API_KEY": "sk"})
+    assert speech_problem(keyed) is not None
+    assert "unencrypted" in (speech_warning(keyed) or "")
+
+
+@pytest.mark.parametrize("url", ["http://127.0.0.2:3900/v1", "http://[::1]:3900/v1"])
+def test_any_loopback_address_is_this_machine(url: str) -> None:
+    keyed = LocalSpeech.from_env({"MOOZ_SPEECH_URL": url, "MOOZ_SPEECH_API_KEY": "sk"})
+    assert speech_problem(keyed) is None and speech_warning(keyed) is None
 
 
 @respx.mock
@@ -293,3 +317,53 @@ async def test_stopping_mid_answer_closes_the_requests() -> None:
         assert first.sample_rate == 24_000
         await gen.aclose()
     assert route.call_count <= 2  # the one playing, and at most the next one fetched early
+
+
+class _Repeat(httpx.AsyncByteStream):
+    """A response body: `chunk`, `times` times (as a server that goes on and on sends it)."""
+
+    def __init__(self, chunk: bytes, times: int) -> None:
+        self.chunk, self.times, self.sent = chunk, times, 0
+
+    async def __aiter__(self):  # type: ignore[no-untyped-def]
+        for _ in range(self.times):
+            self.sent += 1
+            yield self.chunk
+
+
+@respx.mock
+async def test_a_sentence_that_never_ends_is_cut_off() -> None:
+    settings = LocalSpeech()
+    endless = _Repeat(b"\0\0" * settings.tts_rate, int(MAX_SENTENCE_SECONDS) + 5)
+    respx.post(f"{URL}/audio/speech").respond(200, stream=endless)
+    async with httpx.AsyncClient() as http:
+        with pytest.raises(SpeechServerError, match="too long"):
+            async for _ in LocalTTS(settings, http).synthesize("Hello there everyone."):
+                pass
+
+
+@respx.mock
+async def test_an_error_page_is_read_only_a_little() -> None:
+    page = _Repeat(b"x" * 1000, 10_000)
+    respx.post(f"{URL}/audio/speech").respond(500, stream=page)
+    async with httpx.AsyncClient() as http:
+        with pytest.raises(SpeechServerError, match=r"\(500\): x{200}$"):
+            async for _ in LocalTTS(LocalSpeech(), http).synthesize("Hello there everyone."):
+                pass
+    assert page.sent == 1
+
+
+@pytest.mark.parametrize(
+    ("rate", "channels"), [(0, 1), (40, 1), (200_000, 1), (24_000, 0), (24_000, 9)]
+)
+def test_a_wav_header_with_an_impossible_format_is_refused(rate: int, channels: int) -> None:
+    fmt = struct.pack("<HHIIHH", 1, channels, rate, rate * 2 * max(channels, 1), 2, 16)
+    head = b"RIFF" + struct.pack("<I", 0) + b"WAVE" + b"fmt " + struct.pack("<I", 16) + fmt
+    with pytest.raises(SpeechServerError):
+        WavFrames().feed(head + b"data" + struct.pack("<I", 0) + b"\0\0" * 10)
+
+
+def test_a_short_wav_format_chunk_is_refused() -> None:
+    head = b"RIFF" + struct.pack("<I", 0) + b"WAVE" + b"fmt " + struct.pack("<I", 4) + b"\0" * 4
+    with pytest.raises(SpeechServerError, match="cut short"):
+        WavFrames().feed(head + b"data" + struct.pack("<I", 0))

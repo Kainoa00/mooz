@@ -26,6 +26,7 @@ describe("checkConfig", () => {
   it.each([
     [{ LIVEKIT_API_SECRET: "secret" }, /32 characters/],
     [{ LIVEKIT_API_SECRET: "short-but-random" }, /32 characters/],
+    [{ LIVEKIT_API_SECRET: "replace-with-the-output-of-openssl-rand-base64-48" }, /32 characters/], // a placeholder
     [{ LIVEKIT_API_KEY: "devkey" }, /public dev key/],
     [{ LIVEKIT_URL: "ws://livekit.example.com" }, /must be wss/],
     [{ MOOZ_PUBLIC_URL: undefined }, /Set MOOZ_PUBLIC_URL/],

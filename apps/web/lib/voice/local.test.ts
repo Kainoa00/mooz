@@ -127,6 +127,22 @@ describe("synthesizeLocal", () => {
     ]);
   });
 
+  it("goes on to the next sentence after one with no audio, in order", async () => {
+    const replies: Record<string, Response> = {
+      "The build is green again.": new Response(new Uint8Array(0)),
+      "Two tests were flaky.": bytes(3),
+      "I've filed both.": bytes(4),
+    };
+    const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => replies[JSON.parse(init!.body as string).input]);
+    const stream = await synthesizeLocal(LOCAL, "The build is green again. Two tests were flaky. I've filed both.", undefined, fetchImpl);
+    expect([...(await readAll(stream))]).toEqual([3, 4]);
+    expect(calls(fetchImpl).map(([, i]) => JSON.parse(i.body as string).input)).toEqual([
+      "The build is green again.",
+      "Two tests were flaky.",
+      "I've filed both.",
+    ]);
+  });
+
   it("says nothing for nothing", async () => {
     const fetchImpl = vi.fn();
     expect(await readAll(await synthesizeLocal(LOCAL, " ", undefined, fetchImpl))).toEqual([]);

@@ -13,6 +13,8 @@ import { flatten, stripInvisible } from "./text";
 
 export const MAX_ANSWER_CHARS = 4000;
 export const MAX_TASK_SUMMARY_CHARS = 2000;
+/** A task's title, the first line of its report. */
+export const MAX_TITLE_CHARS = 200;
 export const MAX_TASK_DETAILS_CHARS = 4000;
 export const MAX_FILE_BYTES = 500 * 1024;
 
@@ -25,8 +27,9 @@ export function escapeMarkdown(text: string): string {
     .normalize("NFKC")
     .replace(/[\\`*_[\]<>#|~]/g, "\\$&")
     .replace(/:\/\//g, ":\\/\\/")
-    .replace(/\bwww\./gi, (m) => `${m.slice(0, 3)}\\.`)
-    .replace(/@(?=[\p{L}\p{N}-]+\.[\p{L}\p{N}])/gu, "\\@")
+    .replace(/www\./gi, (m) => `${m.slice(0, 3)}\\.`)
+    // GitHub links an email even after "\@", so every @ becomes a fullwidth one (after NFKC).
+    .replace(/@/g, "＠")
     .replace(/^([ \t]*)([-+=])/gm, "$1\\$2")
     .replace(/^([ \t]*\d+)([.)])/gm, "$1\\$2");
 }
@@ -38,7 +41,7 @@ const inline = (text: string) => escapeMarkdown(flatten(text, { markup: false })
 function quote(text: string, max: number): string {
   const over = text.length > max;
   const block = escapeMarkdown(over ? text.slice(0, max).trimEnd() : text)
-    .split("\n")
+    .split(/\r\n|\r|\n/) // Markdown ends a line at a lone \r too
     .map((line) => (line.trim() ? `> ${line}` : ">"))
     .join("\n");
   return over ? `${block}…` : block;
@@ -77,16 +80,24 @@ export function summaryFileName(record: MeetingRecord, options: { now?: number; 
 function belongsTo(record: MeetingRecord, entry: Entry): string[] {
   const named = [entry.from, ...entry.replyTo, ...entry.sources];
   const owners = named.flatMap((id) => {
-    const owner = record.people[id]?.ownerId;
+    const owner = Object.hasOwn(record.people, id) ? record.people[id].ownerId : undefined;
     return owner ? [owner] : [];
   });
   return [...named, ...owners];
 }
 
+/**
+ * Opted out, or someone this tab never saw (it joined late, or reloaded), so it can't know
+ * whether they did: the summary leaves them out either way.
+ */
+function unknownOrOut(record: MeetingRecord, id: string): boolean {
+  // hasOwn: an id like "constructor" (agents choose `sources`) isn't someone the tab saw.
+  return !Object.hasOwn(record.people, id) || record.optedOut.includes(id);
+}
+
 function leftOut(record: MeetingRecord, identity: string): boolean {
-  const optedOut = new Set(record.optedOut);
-  const person = record.people[identity];
-  return optedOut.has(identity) || (person?.ownerId !== undefined && optedOut.has(person.ownerId));
+  const owner = Object.hasOwn(record.people, identity) ? record.people[identity].ownerId : undefined;
+  return unknownOrOut(record, identity) || (owner !== undefined && unknownOrOut(record, owner));
 }
 
 function answerBlock(record: MeetingRecord, entry: Entry, c: Clock): string {
@@ -101,7 +112,10 @@ function taskBlock(record: MeetingRecord, entry: Entry, c: Clock): string {
   const split = body.indexOf("\n\n");
   const summary = split < 0 ? body : body.slice(0, split).trim();
   const details = split < 0 ? "" : body.slice(split + 2).trim();
-  const parts = [`### ${inline(first)} · ${inline(label(record.people[entry.from]))} · ${c.time(entry.at)}`];
+  // Who sent it first, from the server; the title is the agent's own words, so it comes after
+  // (cut short, and with no 🤖 to pass as another agent).
+  const title = inline(first.replace(/🤖/gu, "").slice(0, MAX_TITLE_CHARS));
+  const parts = [`### ${inline(label(record.people[entry.from]))} · ${c.time(entry.at)}: ${title}`];
   if (summary) parts.push(quote(summary, MAX_TASK_SUMMARY_CHARS));
   if (details) parts.push(quote(details, MAX_TASK_DETAILS_CHARS));
   return parts.join("\n\n");
@@ -111,8 +125,7 @@ const bytes = (text: string) => new TextEncoder().encode(text).length;
 
 export function toMarkdown(record: MeetingRecord, options: { now?: number; timeZone?: string } = {}): string {
   const c = clock(options.timeZone);
-  const optedOut = new Set(record.optedOut);
-  const kept = record.entries.filter((e) => !belongsTo(record, e).some((id) => optedOut.has(id)));
+  const kept = record.entries.filter((e) => !belongsTo(record, e).some((id) => unknownOrOut(record, id)));
   const there = record.order.filter((id) => !leftOut(record, id));
   const hidden = record.order.length - there.length;
 
@@ -125,7 +138,7 @@ export function toMarkdown(record: MeetingRecord, options: { now?: number; timeZ
     const person = record.people[id];
     head.push(`- ${inline(label(person))}${person.agent ? ` (agent, through ${door(person)})` : ""}`);
   }
-  if (hidden) head.push(`- and ${hidden} more who asked to be left out`);
+  if (hidden) head.push(`- and ${hidden} more left out (they asked to be, or the host's tab couldn't tell)`);
   if (!there.length && !hidden) head.push("- nobody the host's tab saw");
 
   const tail: string[] = [];

@@ -150,7 +150,8 @@ class Agent:
             playout_tail=PLAYOUT_TAIL_SECONDS if hasattr(voice, "queued_duration") else 0.0,
         )
         self._clock = clock
-        self._voice = type(tts).__name__
+        # For the latency line: "local", "elevenlabs" or, in tests and the demo, the class.
+        self._voice = getattr(tts, "provider", type(tts).__name__)
         self._latencies: list[float] = []  # heard → first audio, ms
         self._follow_up: dict[str, float] = {}
         self._agent_streak = 0
@@ -838,7 +839,6 @@ class Agent:
 async def run(grant: AgentGrant, config: AgentConfig) -> None:
     """Join the meeting from an approved grant and run until the meeting ends for us."""
     import aiohttp
-    import httpx
 
     from .providers import build_providers
     from .room import MeetingRoom
@@ -846,10 +846,15 @@ async def run(grant: AgentGrant, config: AgentConfig) -> None:
     room = MeetingRoom()
     agent: Agent | None = None
     ended = False
+    from .hosts import direct_client
+    from .providers import local_speech, voice_provider
+
+    # Requests for this machine (a local speech server, a local mooz) never go through a proxy.
+    speech_urls = local_speech(config).urls if voice_provider(config) == "local" else []
     async with (
         aiohttp.ClientSession() as http,
-        httpx.AsyncClient() as mooz,
-        httpx.AsyncClient() as speech,
+        direct_client([grant.server] if grant.server else []) as mooz,
+        direct_client(speech_urls) as speech,
     ):
         turns = (
             Turns(

@@ -113,8 +113,9 @@ it from this checkout. The first start takes a minute while Caddy gets certifica
 ## Backups
 
 The database holds rooms (a link, a hash of the host's secret, the notes policy) and
-connectors; people and meetings are deleted when they end. Back it up with SQLite's own copy,
-which is safe while the server runs:
+connectors; people and meetings are deleted when they end. A copy taken during a meeting holds
+the names of the people in it, so back up between meetings. SQLite's own copy is safe while the
+server runs:
 
 ```bash
 docker compose exec web node -e "new (require('node:sqlite').DatabaseSync)('/data/mooz.db').exec(\"VACUUM INTO '/data/backup.db'\")"
@@ -142,11 +143,14 @@ Run exactly one web container. Turn-taking, rate limits and connector questions 
 memory, so a second instance would split them (and a restart forgets them: the answers
 waiting for a turn are dropped, and the chat still has them).
 
-## Optional: limits by IP address
+## Limits by IP address
 
-mooz's own limits are per person, meeting and code, with ceilings across the server; it keeps
-no IP addresses. If you want per-IP limits too, build Caddy with the `caddy-ratelimit` module.
-This isn't part of the tested setup.
+mooz's own limits are per person, meeting and code, with ceilings across the server (new
+meetings and new connectors a minute, and the number of connectors); it keeps no IP addresses.
+So one client that joins over and over can use up a ceiling for everyone. On a server open to
+the internet, add per-IP limits in Caddy, below those ceilings. Build Caddy with the
+`caddy-ratelimit` module (this isn't part of the tested setup yet, so check the module's
+documentation for the current syntax):
 
 ```dockerfile
 FROM caddy:2.11.7-builder AS builder
@@ -162,7 +166,26 @@ COPY --from=builder /usr/bin/caddy /usr/bin/caddy
 
 {$MOOZ_DOMAIN} {
 	rate_limit {
-		zone per_ip {
+		# Below the server-wide ceilings, so one address can't use them up.
+		zone new_things {
+			match {
+				method POST
+				path /api/rooms /api/connectors
+			}
+			key {remote_host}
+			events 5
+			window 1m
+		}
+		zone joins {
+			match {
+				method POST
+				path /api/rooms/*/join
+			}
+			key {remote_host}
+			events 20
+			window 1m
+		}
+		zone everything {
 			key {remote_host}
 			events 300
 			window 1m
@@ -172,6 +195,9 @@ COPY --from=builder /usr/bin/caddy /usr/bin/caddy
 	reverse_proxy 127.0.0.1:3000
 }
 ```
+
+People behind one address (an office, a school) share these, so raise them if they get in each
+other's way.
 
 ## Appendix: TURN over TLS on 443 (untested)
 

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CLAIMS_PER_CODE_PER_MINUTE, CLAIMS_PER_MINUTE, createAgentCode, decideAgentRequest } from "@/lib/agents";
+import { createAgentCode, decideAgentRequest } from "@/lib/agents";
 import { getDb } from "@/lib/db";
-import { MAX_PARTICIPANT_ROWS, addParticipant, createRoom } from "@/lib/rooms";
+import { MAX_PARTICIPANT_ROWS, UNCONNECTED_PLACE_MS, addParticipant, createRoom, notePersonPresence } from "@/lib/rooms";
 import { jsonRequest, params, setCookies, useTestEnv } from "@/test/helpers";
 import { POST as claim } from "./agent/claim/route";
 import { GET as poll, POLLS_PER_MINUTE } from "./agent/claim/[id]/route";
@@ -59,6 +59,23 @@ describe("rate limits", () => {
     expect((await enter(a, 0)).status).toBe(200);
   });
 
+  it("counts the host's joins and people's reloads apart, so strangers can't keep them out", async () => {
+    const db = getDb();
+    const { slug, hostSecret } = createRoom(db);
+    const url = `http://localhost:3000/api/rooms/${slug}/join`;
+    const zach = await join(jsonRequest(url, { name: "Zach" }), params({ slug }));
+    const { identity } = (await zach.json()) as { identity: string };
+    const secret = setCookies(zach)[`mooz_p_${slug}`];
+    // Junk that never says who it is doesn't count at all.
+    for (let i = 0; i < 40; i++) await join(new Request(url, { method: "POST" }), params({ slug }));
+    for (let i = 0; i < JOINS_PER_MINUTE; i++) await join(jsonRequest(url, { name: `Stranger ${i}` }), params({ slug }));
+    expect((await join(jsonRequest(url, { name: "Lee" }), params({ slug }))).status).toBe(429);
+    const host = await join(jsonRequest(url, { name: "Kainoa" }, { cookie: `mooz_host_${slug}=${hostSecret}` }), params({ slug }));
+    expect(host.status).toBe(200);
+    const back = await join(jsonRequest(url, { name: "Zach", rejoin: identity }, { cookie: `mooz_p_${slug}=${secret}` }), params({ slug }));
+    expect(back.status).toBe(200);
+  });
+
   it("keeps track of at most 200 people a meeting, but lets them come back", async () => {
     const db = getDb();
     const { slug } = createRoom(db);
@@ -78,24 +95,21 @@ describe("rate limits", () => {
     expect(back.status).toBe(200);
   });
 
-  it("checks a code at most 10 times a minute, before taking the write lock", async () => {
-    const send = () => claim(jsonRequest("http://localhost/api/agent/claim", { code: "ABCD-EFGH-JKLM", name: "Grok" }));
-    expect(new Set(await statuses(CLAIMS_PER_CODE_PER_MINUTE, send))).toEqual(new Set([400]));
-    const refused = await send();
-    expect(refused.status).toBe(429);
-    expect(await code(refused)).toBe("rate_limited");
-    nextMinute();
-    expect((await send()).status).toBe(400);
+  it("doesn't keep a place for joins that never came into the call, where the webhook says who did", async () => {
+    const db = getDb();
+    const { slug } = createRoom(db);
+    const url = `http://localhost:3000/api/rooms/${slug}/join`;
+    const zach = addParticipant(db, { slug, name: "Zach", isHost: false });
+    notePersonPresence(db, zach.identity, "PA_zach", true); // the webhook works here
+    const long = Date.now() - UNCONNECTED_PLACE_MS - 1;
+    for (let i = 1; i < MAX_PARTICIPANT_ROWS; i++) addParticipant(db, { slug, name: "Ghost", isHost: false }, long);
+    expect((await join(jsonRequest(url, { name: "Kainoa" }), params({ slug }))).status).toBe(200);
   });
 
-  it("takes at most 120 claims a minute across the server", async () => {
+  it("refuses made-up codes without counting them, so a flood of them can't hold up a real one", async () => {
     const send = (i: number) =>
       claim(jsonRequest("http://localhost/api/agent/claim", { code: `ABCD-EFGH-${String(i).padStart(4, "A")}`, name: "Grok" }));
-    expect(new Set(await statuses(CLAIMS_PER_MINUTE, send))).toEqual(new Set([400]));
-    expect((await send(999)).status).toBe(429);
-
-    // A real code still works the next minute.
-    nextMinute();
+    expect(new Set(await statuses(500, send))).toEqual(new Set([400]));
     const db = getDb();
     const { slug } = createRoom(db);
     const zach = addParticipant(db, { slug, name: "Zach", isHost: false });
@@ -123,10 +137,11 @@ describe("rate limits", () => {
     expect(refused.status).toBe(429);
     expect(await code(refused)).toBe("rate_limited");
 
-    // A limited check doesn't spend the approval's one token.
+    // A limited check doesn't spend the approval's one token, even once it's approved.
     decideAgentRequest(db, { slug, requestId, approve: true });
+    expect((await check(claimSecret)).status).toBe(429);
     nextMinute();
-    expect(await (await check(claimSecret)).json()).toMatchObject({ status: "approved" });
+    expect(await (await check(claimSecret)).json()).toMatchObject({ status: "approved", token: expect.any(String) });
   });
 });
 

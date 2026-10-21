@@ -228,8 +228,8 @@ export async function synthesizeLocal(
             controller.close();
             return;
           }
-          fetchAhead();
-          const next: Promise<Speech> = ahead!;
+          // Asked for while the last one came, unless that one had no audio at all.
+          const next: Promise<Speech> = ahead ?? speakOne(fetchImpl, settings, sentences[index], signal);
           ahead = null;
           current = await next;
         }

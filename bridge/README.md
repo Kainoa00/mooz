@@ -22,8 +22,9 @@ Or `pipx install mooz-agent`. Check it with `mooz-agent --version`.
 
 ## Keys
 
-Put them in `~/.mooz/.env` (readable only by you: `chmod 600 ~/.mooz/.env`), in a `.env` in the
-folder you run it from, or in your environment. The environment wins, then the nearer file.
+Put them in `~/.mooz/.env` (readable only by you: `chmod 600 ~/.mooz/.env`) or in your
+environment, which wins. A `.env` in the folder you run it from is never read: a project's own
+could send your keys or everyone's audio somewhere else.
 
 ```bash
 mkdir -p ~/.mooz && touch ~/.mooz/.env && chmod 600 ~/.mooz/.env

@@ -36,7 +36,7 @@ export function ChatPanel({ chat }: { chat: ReturnType<typeof useChat> }) {
                 <span data-testid="chat-sender">{participantLabel(who)}</span>
               </span>
               <span className="whitespace-pre-wrap break-words" data-testid="chat-text">
-                {m.message}
+                {typeof m.message === "string" ? m.message : ""}
               </span>
             </li>
           );

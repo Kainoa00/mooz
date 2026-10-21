@@ -1,5 +1,14 @@
-# HTTPS for mooz (certificates from Let's Encrypt). No `log` directive on purpose: connector
-# links carry their secret in the path (/mcp/<secret>), and access logs would keep them.
+# HTTPS for mooz (certificates from Let's Encrypt). No access log on purpose: connector links
+# carry their secret in the path (/mcp/<secret>), and LiveKit's address its token in the query.
+# Caddy still logs a request that fails (the app restarting, say): those secrets are cut out of it.
+{
+	log default {
+		format filter {
+			wrap json
+			request>uri regexp "(^/mcp/|access_token=)[^&/?]+" "${1}REDACTED"
+		}
+	}
+}
 
 {$MOOZ_DOMAIN} {
 	header Strict-Transport-Security "max-age=31536000; includeSubDomains"

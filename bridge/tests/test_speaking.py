@@ -1,4 +1,5 @@
 import asyncio
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -246,6 +247,31 @@ async def test_stops_when_its_turn_runs_out() -> None:
     )
     await mouth.say(Answer("one two three four five six"))
     assert frames == 3
+
+
+async def test_stops_at_the_end_of_its_turn_while_the_voice_is_still_making_a_sentence() -> None:
+    rec = Recorder()
+    frames = 0
+
+    class Stuck:
+        async def synthesize(self, text: str):  # type: ignore[no-untyped-def]
+            yield rtc.AudioFrame(b"\0\0" * 480, 48_000, 1, 480)
+            await asyncio.Event().wait()  # the next sentence never comes
+            yield rtc.AudioFrame(b"\0\0" * 480, 48_000, 1, 480)
+
+    async def capture(frame: rtc.AudioFrame) -> None:
+        nonlocal frames
+        frames += 1
+
+    mouth = Mouth(
+        send_chat=rec.send_chat,
+        capture_frame=capture,
+        tts=Stuck(),
+        turns=FakeTurns(rec, grant=Granted(deadline=time.monotonic() + 0.1)),
+    )
+    await asyncio.wait_for(mouth.say(Answer("First sentence here. Then a stuck one.")), 2)
+    assert frames == 1
+    assert rec.events[-1] == "released"
 
 
 async def test_lets_its_last_words_play_out_and_arrive_before_giving_the_turn_back() -> None:

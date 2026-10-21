@@ -2,8 +2,13 @@ import type { Db } from "./db";
 import { HttpError } from "./http";
 import { hashSecret, newId, newRoomSlug, newSecret } from "./ids";
 
-/** People a meeting keeps track of (everyone who joined; a rejoin reuses its row). */
+/**
+ * People a meeting keeps a place for: those in the call, and those who joined in the last
+ * UNCONNECTED_PLACE_MS (everyone who joined, where the webhook doesn't arrive). A rejoin reuses
+ * its row.
+ */
 export const MAX_PARTICIPANT_ROWS = 200;
+export const UNCONNECTED_PLACE_MS = 5 * 60 * 1000;
 /** Host and participant secrets work this long after their last join (as long as their cookies). */
 export const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -74,7 +79,15 @@ export function addParticipant(
   input: { slug: string; name: string; isHost: boolean },
   now = Date.now(),
 ): Participant & { secret: string } {
-  const { n } = db.prepare("SELECT COUNT(*) AS n FROM participants WHERE room_slug = ?").get(input.slug) as { n: number };
+  // Where LiveKit's webhook says who came into the call, joins that never did stop holding a
+  // place after a few minutes, so a link holder can't fill the meeting with them.
+  const { n } = db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM participants p WHERE room_slug = ? AND (
+         (session_sid IS NOT NULL AND left_at IS NULL) OR created_at > ?
+         OR NOT EXISTS (SELECT 1 FROM participants q WHERE q.room_slug = p.room_slug AND q.session_sid IS NOT NULL))`,
+    )
+    .get(input.slug, now - UNCONNECTED_PLACE_MS) as { n: number };
   if (n >= MAX_PARTICIPANT_ROWS) throw new HttpError(409, "room_full", "This meeting is full.");
   const identity = newId("p");
   const secret = newSecret();

@@ -1,5 +1,6 @@
 import { transaction } from "./agents";
 import type { Db } from "./db";
+import { pruneExpiredWindows } from "./rate-limit";
 import { SESSION_TTL_MS } from "./rooms";
 
 /**
@@ -62,6 +63,8 @@ export function sweep(db: Db, now = Date.now()): number {
     return total;
   });
   if (changes > 0) checkpoint(db);
+  // Rate-limit counts name meetings and people too: they go once their window is over.
+  pruneExpiredWindows(now);
   return changes;
 }
 

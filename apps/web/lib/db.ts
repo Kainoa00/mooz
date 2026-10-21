@@ -4,7 +4,8 @@ import { DatabaseSync } from "node:sqlite";
 
 export type Db = DatabaseSync;
 
-const MIGRATIONS = [
+/** Append-only: each runs once, in order (PRAGMA user_version counts them). */
+export const MIGRATIONS = [
   `CREATE TABLE rooms (
      slug TEXT PRIMARY KEY,
      host_secret_hash TEXT NOT NULL,
@@ -91,11 +92,14 @@ const MIGRATIONS = [
   `ALTER TABLE participants ADD COLUMN left_at INTEGER;
    ALTER TABLE participants ADD COLUMN session_sid TEXT;`,
   // Nothing outlives its use: sessions expire on the server (24 h after the last join, like their
-  // cookies), and a room is a setting kept 30 days after its last join (lib/cleanup.ts).
+  // cookies), and a room is a setting kept 30 days after its last join (lib/cleanup.ts). Old rows
+  // never recorded their last join: a room counts as used at the upgrade (a link people still
+  // meet on isn't deleted), and a session as joined when it was made, as its cookie was.
   `ALTER TABLE rooms ADD COLUMN last_active_at INTEGER;
    ALTER TABLE rooms ADD COLUMN host_expires_at INTEGER;
    ALTER TABLE participants ADD COLUMN expires_at INTEGER;
-   UPDATE rooms SET last_active_at = created_at, host_expires_at = created_at + 86400000;
+   UPDATE rooms SET last_active_at = CAST(strftime('%s', 'now') AS INTEGER) * 1000,
+     host_expires_at = created_at + 86400000;
    UPDATE participants SET expires_at = created_at + 86400000;
    CREATE INDEX rooms_by_last_active ON rooms(last_active_at);
    CREATE INDEX participants_by_expiry ON participants(expires_at);

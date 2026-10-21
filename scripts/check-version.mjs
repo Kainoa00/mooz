@@ -6,7 +6,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+// Plain X.Y.Z only: a pre-release (0.1.0-rc.1) is spelled differently by Python (0.1.0rc1), and
+// the release workflow checks the package by the version it was given.
+const SEMVER = /^\d+\.\d+\.\d+$/;
 
 /** Each file, and how to find the version in it. */
 const SITES = [

@@ -150,7 +150,9 @@ export function MeetingRoom({ slug }: { slug: string }) {
               <Stage />
             </div>
             <div className="flex min-h-0 flex-col border-t border-zinc-800 md:border-l md:border-t-0">
-              <TaskPanel />
+              <TaskPanel
+                onPrivateTask={session.isHost ? (agent, title) => dispatch({ type: "private-task", agent, title }) : undefined}
+              />
               <Chat record={session.isHost ? dispatch : null} />
             </div>
           </div>

@@ -41,7 +41,7 @@ or VoiceStudio answers `model_not_active`. A voice is a VoiceStudio profile ID o
 
 ## In the bridge
 
-In `~/.mooz/.env` (or a `.env` in the folder you run it from):
+In `~/.mooz/.env` (or your environment):
 
 ```bash
 MOOZ_VOICE=local

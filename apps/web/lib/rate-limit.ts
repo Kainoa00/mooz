@@ -28,17 +28,32 @@ export function allow(key: string, limit: number, windowMs: number, now = Date.n
   let w = all.get(key);
   if (!w || now - w.start >= windowMs) {
     if (!w && all.size >= MAX_KEYS) {
-      // Full: drop windows that are over. If that frees nothing, refuse new keys rather than
-      // forget anyone's count (clearing would let a flood of keys reset every limit).
-      for (const [k, old] of all) if (now - old.start >= old.windowMs) all.delete(k);
-      if (all.size >= MAX_KEYS) return false;
+      // Full: drop windows that are over, then the oldest live one. Refusing new keys instead
+      // would let a flood of throwaway keys (fresh identities) lock everyone else out, and the
+      // ceilings that matter are single keys, which a flood of others never pushes out.
+      prune(all, now);
+      if (all.size >= MAX_KEYS) all.delete(all.keys().next().value as string);
     }
+    // Kept in the order windows start, so the first key is always the oldest window.
+    all.delete(key);
     w = { start: now, count: 0, windowMs };
     all.set(key, w);
   }
   if (w.count >= limit) return false;
   w.count += 1;
   return true;
+}
+
+function prune(all: Map<string, Window>, now: number): void {
+  for (const [k, w] of all) if (now - w.start >= w.windowMs) all.delete(k);
+}
+
+/** Forget windows that are over (the sweep runs this, so counts don't outlast their use). */
+export function pruneExpiredWindows(now = Date.now()): void {
+  for (const [purpose, all] of stores()) {
+    prune(all, now);
+    if (all.size === 0) stores().delete(purpose);
+  }
 }
 
 export function resetRateLimitsForTests(): void {

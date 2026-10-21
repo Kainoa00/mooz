@@ -132,8 +132,8 @@ mooz-agent connect ABCD-EFGH-JKLM --server http://localhost:3000 --agent Atlas
 ```
 
 Its settings and memory live on your machine, in `~/.mooz/agents/atlas/` (`agent.toml` and
-`memory.jsonl`, readable only by you). Your API keys stay in your environment or a `.env` file
-(`~/.mooz/.env`, or one in the folder you run it from), never in the agent's folder.
+`memory.jsonl`, readable only by you). Your API keys stay in `~/.mooz/.env` or your environment,
+never in the agent's folder.
 
 **Folders and repos.** The agent can list, read and search files, and read git history
 (`status`, `log`, `show`, `diff`). It can't write, run anything, or reach outside the folders
@@ -362,8 +362,9 @@ Bridge agents from before M5 still join, but they don't take turns: update the b
 **The host's summary.** The host can **Download summary** (a Markdown file) at any time, and
 again after leaving, until they discard it. It has what the agents said in public, their public
 research, who was there, which agents kept notes and when the agents paused. It never has
-anyone's own words, private answers, or anything to do with someone who chose **Leave me out**.
-It's built in the host's tab and never goes to the server; a reload loses it. Want a real
+anyone's own words, private answers, or anything to do with someone who chose **Leave me out**
+(or anyone the host's tab didn't see, since it can't know whether they did). It's built in the
+host's tab and never goes to the server; a reload loses it. Want a real
 summary? Ask an agent to sum up the meeting before you leave.
 
 ## How it works
@@ -424,6 +425,9 @@ Releases: [docs/releasing.md](docs/releasing.md). The project's planning documen
 - **Names:** only the first of several names said aloud is heard; `@Atlas @Nova` reaches both.
 - **One server instance:** turn-taking, rate limits and connector questions live in its memory,
   and a restart drops answers waiting for a turn.
+- **Server-wide ceilings** (new meetings and new connectors a minute, the number of connectors)
+  can be used up by one client, since mooz keeps no IP addresses. On a public server, add
+  per-IP limits in the proxy ([how](docs/deploy-vps.md#limits-by-ip-address)).
 - **Local voice in the browser** works in Chrome, Edge and Firefox, not Safari or on iPhone and
   iPad, and is slow without a GPU or Apple Silicon.
 - **Windows:** avoid the CLI's memory commands while the agent is in a meeting (the memory lock
@@ -442,8 +446,9 @@ owner turns it on, because xAI's search can open links.
 A connector link is a 256-bit secret, stored only as a hash; rotating or deleting it cuts off
 access at once, and it can do nothing while its agent isn't in a meeting. Starting meetings,
 joining, claiming codes, connectors and questions are rate limited per person, meeting or code,
-with server-wide ceilings (see [`docs/protocol.md`](docs/protocol.md#limits)); mooz keeps no IP
-addresses, so per-IP limits in your reverse proxy are optional. Pages run only scripts
+with server-wide ceilings (see [`docs/protocol.md`](docs/protocol.md#limits)). mooz keeps no IP
+addresses, so one client can use up a server-wide ceiling: on a public server, add per-IP limits
+in your reverse proxy. Pages run only scripts
 carrying a per-request nonce and connect only to the mooz server, its LiveKit, ElevenLabs and
 a speech server on the viewer's own computer.
 Agents take turns through the server, each proving who it is (a bridge with its claim

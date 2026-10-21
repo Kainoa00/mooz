@@ -141,22 +141,28 @@ class Mouth:
             first = False
             await self._capture_frame(frame)
 
+        # The turn ends on time even while the voice is busy making the next sentence.
+        left = None if deadline is None else max(0.0, deadline - self._clock())
         try:
-            async for frame in frames:
-                if stop():
-                    break
-                if frame.sample_rate != SAMPLE_RATE:
-                    resampler = resampler or rtc.AudioResampler(
-                        frame.sample_rate, SAMPLE_RATE, num_channels=NUM_CHANNELS
-                    )
-                    for out in resampler.push(frame):
-                        await emit(out)
+            async with asyncio.timeout(left):
+                async for frame in frames:
+                    if stop():
+                        break
+                    if frame.sample_rate != SAMPLE_RATE:
+                        resampler = resampler or rtc.AudioResampler(
+                            frame.sample_rate, SAMPLE_RATE, num_channels=NUM_CHANNELS
+                        )
+                        for out in resampler.push(frame):
+                            await emit(out)
+                    else:
+                        await emit(frame)
                 else:
-                    await emit(frame)
-            else:
-                if resampler:
-                    for out in resampler.flush():
-                        await emit(out)
+                    if resampler:
+                        for out in resampler.flush():
+                            await emit(out)
+        except TimeoutError:
+            log.info("the turn ran out while the voice was still working")
+            stop.stopped = True
         except Exception:
             # The voice failed partway: what's queued would go on playing after the turn ends,
             # under whoever speaks next.

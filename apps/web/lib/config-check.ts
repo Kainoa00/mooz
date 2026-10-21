@@ -5,6 +5,8 @@
 
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]", "livekit"]);
 const WEAK_SECRETS = new Set(["secret", "devkey", "changeme", "change-me"]);
+/** Placeholders people forget to replace (an earlier deploy/.env.example had one). */
+const PLACEHOLDER = /^(replace|change)[-_ ]?(me|with|this)|^your[-_ ]/i;
 
 function parse(url: string): URL | null {
   try {
@@ -30,7 +32,7 @@ export function checkConfig(env: Readonly<Record<string, string | undefined>> = 
   const exposed = livekitUrl !== null && !isLocal(livekitUrl);
   if (exposed) {
     // The dev keys are public: with them anyone can mint any token, admin ones included.
-    if (secret && (secret.length < 32 || WEAK_SECRETS.has(secret))) {
+    if (secret && (secret.length < 32 || WEAK_SECRETS.has(secret) || PLACEHOLDER.test(secret))) {
       problems.push("LIVEKIT_API_SECRET must be a random secret of 32 characters or more (openssl rand -base64 48).");
     }
     if (env.LIVEKIT_API_KEY === "devkey") problems.push("LIVEKIT_API_KEY is LiveKit's public dev key; use your own (the guide uses mooz).");

@@ -17,7 +17,10 @@ import { assertSameOrigin, publicOrigin, requireParticipant } from "@/lib/sessio
 
 /** New connectors a minute, across this server (MOOZ_CONNECTORS_PER_MINUTE changes it). */
 export const CREATES_PER_MINUTE = envInt("MOOZ_CONNECTORS_PER_MINUTE", 60);
-/** And an hour per person in a meeting, so one person can't spend everyone's minute. */
+/**
+ * And an hour per person in a meeting. Joining again makes a new person, so one client can still
+ * use up the server's minute: on a public server, limit by IP address in the proxy too.
+ */
 export const CREATES_PER_PERSON_PER_HOUR = 10;
 
 /** This browser's connectors (never their links: those are shown only once). */

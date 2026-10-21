@@ -74,6 +74,8 @@ TTS_SAMPLE_RATE = 48_000
 class ElevenLabsTTS:
     """Flash v2.5 for the lowest time-to-first-audio, at 48 kHz to match the agent's track."""
 
+    provider = "elevenlabs"
+
     def __init__(self, *, api_key: str, voice_id: str | None, http: aiohttp.ClientSession) -> None:
         self._tts = elevenlabs.TTS(
             api_key=api_key,

@@ -58,12 +58,12 @@ test("the host downloads a summary of the agents' public words, and nothing of a
     expect(text).toContain("- Kainoa\n");
     expect(text).toContain("🤖 Kainoa's Atlas (agent, through mooz-agent)");
     expect(text).toContain("good morning everyone");
-    expect(text).toContain("### Look into the launch");
+    expect(text).toMatch(/### 🤖 Kainoa's Atlas · \d\d:\d\d: Look into the launch/);
     expect(text).toContain("March 30th");
     expect(text).toContain("- Kept notes: 🤖 Kainoa's Atlas");
     // Not here: anyone's own words, the private result, or anything of Lee's.
     for (const absent of ["@Atlas", "Find out the launch date", "pineapple", "Lee", slug]) expect(text).not.toContain(absent);
-    expect(text).toContain("- and 1 more who asked to be left out");
+    expect(text).toContain("- and 1 more left out");
 
     // After leaving, the summary is still there until the host discards it.
     await page.getByRole("button", { name: "Leave", exact: true }).click();

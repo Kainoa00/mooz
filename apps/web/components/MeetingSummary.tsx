@@ -62,13 +62,16 @@ export function MeetingRecorder({
     for (const m of chat) {
       if (handled.current.has(m.id)) continue;
       handled.current.add(m.id);
+      // Only what a well-formed message carries: an older client's chat packet can hold anything.
+      if (typeof m.message !== "string") continue;
+      const attributes = Object.fromEntries(Object.entries(m.attributes ?? {}).filter(([, v]) => typeof v === "string"));
       dispatch({
         type: "chat",
-        at: m.timestamp,
+        at: Date.now(), // when this tab saw it, as the file says: the sender picks its own timestamp
         id: m.id,
         from: m.from ? seen(m.from) : undefined,
         text: m.message,
-        attributes: m.attributes,
+        attributes,
       });
     }
   }, [chat, dispatch]);

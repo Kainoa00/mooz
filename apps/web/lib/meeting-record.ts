@@ -3,7 +3,9 @@
  * reducer: kept only in that tab's memory, never sent anywhere.
  *
  * - Only agents' public chat is kept. People's own lines, private answers (the `private`
- *   attribute, or the lock that older bridges put first), and filler ("Yes?") never enter it.
+ *   attribute, or the lock that older bridges put on quick ones), filler ("Yes?"), and the
+ *   reports of private tasks this tab was told about (older bridges mark those with neither)
+ *   never enter it. An agent that marks a private message no way at all can't be told apart.
  * - Labels are snapshots taken when someone is seen: an agent's owner and door vanish from
  *   LiveKit once it leaves, and the summary still has to say whose agent it was.
  * - Anyone who opts out of notes at any point is remembered as opted out, and the summary
@@ -66,6 +68,8 @@ export interface MeetingRecord {
   noteKeepers: string[];
   pauses: number;
   paused: boolean;
+  /** Private tasks the host's own agents told this tab about, as `${agent}\n${title}`. */
+  privateTasks: string[];
 }
 
 export type RecordEvent =
@@ -80,6 +84,7 @@ export type RecordEvent =
     }
   | { type: "notes"; at: number; from: Seen; state: "on" | "off" }
   | { type: "floor"; at: number; paused: boolean }
+  | { type: "private-task"; agent: string; title: string }
   | { type: "reset" };
 
 export const EMPTY_RECORD: MeetingRecord = {
@@ -94,10 +99,11 @@ export const EMPTY_RECORD: MeetingRecord = {
   noteKeepers: [],
   pauses: 0,
   paused: false,
+  privateTasks: [],
 };
 
 const add = (list: string[], item: string) => (list.includes(item) ? list : [...list, item]);
-const ids = (value: string | undefined) => (value ? value.split(",").filter(Boolean) : []);
+const ids = (value: unknown) => (typeof value === "string" && value ? value.split(",").filter(Boolean) : []);
 
 function snapshot(seen: Seen, before: Person | undefined): Person {
   const a = seen.attributes;
@@ -127,6 +133,7 @@ function see(record: MeetingRecord, seen: Seen): MeetingRecord {
 }
 
 function stamp(record: MeetingRecord, at: number): MeetingRecord {
+  if (!Number.isFinite(at)) return record; // one bad time mustn't spoil the date and span
   return { ...record, start: record.start === null ? at : Math.min(record.start, at), end: Math.max(record.end ?? at, at) };
 }
 
@@ -136,6 +143,12 @@ function classify(text: string, attributes: Readonly<Record<string, string>> | u
   if (!line || attributes?.private === "1" || line.startsWith(LOCK) || FILLER.has(line)) return null;
   if (line.startsWith(NOTES_NOTICE) || line.startsWith(TASK_FAILED)) return null;
   return line.startsWith(TASK_DONE) ? "task" : "answer";
+}
+
+/** A task report ("📋 title") for a private task that agent told this tab about. */
+function isPrivateReport(record: MeetingRecord, agent: string, text: string): boolean {
+  const title = text.trim().replace(/^📋\s*/u, "").split("\n", 1)[0].trim();
+  return record.privateTasks.includes(`${agent}\n${title}`);
 }
 
 export function recordReducer(record: MeetingRecord, event: RecordEvent): MeetingRecord {
@@ -154,7 +167,8 @@ export function recordReducer(record: MeetingRecord, event: RecordEvent): Meetin
       // Only agents' words, and only from someone LiveKit says sent them.
       if (!from || from.attributes.kind !== "agent") return next;
       const kind = classify(event.text, event.attributes);
-      if (!kind) return next;
+      if (!kind || !Number.isFinite(event.at)) return next;
+      if (kind === "task" && isPrivateReport(next, from.identity, event.text)) return next;
       next = see(stamp(next, event.at), from);
       const entry: Entry = {
         kind,
@@ -172,6 +186,11 @@ export function recordReducer(record: MeetingRecord, event: RecordEvent): Meetin
       if (event.from.attributes.kind !== "agent" || event.state !== "on") return record;
       const next = see(stamp(record, event.at), event.from);
       return { ...next, noteKeepers: add(next.noteKeepers, event.from.identity) };
+    }
+    case "private-task": {
+      const key = `${event.agent}\n${event.title.trim()}`;
+      if (record.privateTasks.includes(key)) return record;
+      return { ...record, privateTasks: [...record.privateTasks, key].slice(-MAX_ENTRIES) };
     }
     case "floor": {
       if (event.paused === record.paused) return record;

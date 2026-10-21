@@ -2,7 +2,7 @@
 
 import { useConnectionState, useLocalParticipant, useParticipants, useRoomContext } from "@livekit/components-react";
 import { ConnectionState, type TextStreamReader } from "livekit-client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { isAgent, ownedName } from "@/lib/labels";
 import { MOOZ_TOPIC } from "@/lib/notes-protocol";
 import {
@@ -37,9 +37,15 @@ const STATE_STYLE: Record<TaskState, string> = {
 /**
  * What agents are researching in the background. Everyone sees it (like the notes banner);
  * a private task shows only its state to anyone but its owner, who can also cancel.
+ * `onPrivateTask` hears of each private task this tab is told about (the host's summary leaves
+ * its report out, even from bridges that don't mark the report private).
  */
-export function TaskPanel() {
+export function TaskPanel({ onPrivateTask }: { onPrivateTask?: (agent: string, title: string) => void } = {}) {
   const room = useRoomContext();
+  const privateTask = useRef(onPrivateTask);
+  useEffect(() => {
+    privateTask.current = onPrivateTask;
+  }, [onPrivateTask]);
   const connection = useConnectionState();
   const { localParticipant } = useLocalParticipant();
   const participants = useParticipants();
@@ -57,6 +63,7 @@ export function TaskPanel() {
       const from = room.remoteParticipants.get(info.identity);
       const event = parseTaskEvent(text);
       if (!from || !event) return;
+      if (event.private && isAgent(from)) privateTask.current?.(from.identity, event.title);
       setTasks((prev) => {
         const next = new Map(prev);
         return applyTaskEvent(next, from, event) ? next : prev;

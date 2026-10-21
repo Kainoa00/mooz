@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 from . import __version__
 from .claim import AgentGrant, ClaimError, claim_code, wait_for_approval
 from .config import AgentConfig, ConfigError, mooz_home
+from .hosts import direct_client, is_this_machine
 
 log = logging.getLogger("mooz_agent")
 
@@ -202,7 +203,7 @@ def cmd_memory(args: argparse.Namespace) -> int:
 
 async def obtain_grant(*, server: str, code: str, name: str) -> AgentGrant:
     try:
-        async with httpx.AsyncClient(timeout=15) as http:
+        async with direct_client([server], timeout=15) as http:
             ticket = await claim_code(http, server, code=code, name=name)
             return await wait_for_approval(
                 http,
@@ -233,14 +234,10 @@ async def check_local_voice(config: AgentConfig) -> None:
     if warning:
         print(f"mooz-agent: warning: {warning}", file=sys.stderr)
     try:
-        async with httpx.AsyncClient() as http:
+        async with direct_client(settings.urls) as http:
             await check_speech_server(http, settings)
     except SpeechServerError as err:
         raise ProviderConfigError(str(err)) from err
-
-
-def _on_this_machine(host: str) -> bool:
-    return host in ("localhost", "::1") or host.startswith("127.")
 
 
 def server_problem(server: str, *, allow_http: bool = False) -> str | None:
@@ -252,7 +249,7 @@ def server_problem(server: str, *, allow_http: bool = False) -> str | None:
             "--server must be the meeting's web address, like https://meet.example.com "
             f"(not {server!r})."
         )
-    if parts.scheme == "http" and not allow_http and not _on_this_machine(parts.hostname.lower()):
+    if parts.scheme == "http" and not allow_http and not is_this_machine(parts.hostname):
         return (
             f"{server} is http://, so your agent's secret would cross the network unencrypted. "
             "Use its https:// address, or add --allow-http for a test on your own network."
@@ -281,7 +278,8 @@ def cmd_connect(args: argparse.Namespace) -> int:
     try:
         voice = voice_provider(config)
         check_environment(config.brain, voice)
-        if voice == "local":
+        # The offline demo (MOOZ_PROVIDERS=fake) makes no sound, so it needs no speech server.
+        if voice == "local" and os.environ.get("MOOZ_PROVIDERS") != "fake":
             asyncio.run(check_local_voice(config))
     except ProviderConfigError as err:
         print(f"mooz-agent: {err}", file=sys.stderr)
@@ -302,9 +300,10 @@ def cmd_connect(args: argparse.Namespace) -> int:
 
 
 def load_settings() -> None:
-    """Keys and settings from ./.env, then ~/.mooz/.env (or $MOOZ_HOME/.env). What's already in
-    the environment wins, then the nearer file."""
-    load_dotenv(Path.cwd() / ".env")
+    """Keys and settings from ~/.mooz/.env (or $MOOZ_HOME/.env); what's already in the
+    environment wins. Never a .env in the folder it's run from: a project's own .env could point
+    the AI SDKs (ANTHROPIC_BASE_URL), a proxy or the speech server elsewhere, and your keys and
+    everyone's audio would go there."""
     load_dotenv(mooz_home() / ".env")
 
 

@@ -108,9 +108,9 @@ ceilings across the server.
 | Route | Limit |
 |---|---|
 | `POST /api/rooms` | 30 new meetings across the server (`MOOZ_ROOMS_PER_MINUTE`) |
-| `POST /api/rooms/{slug}/join` | 30 joins per meeting. A meeting keeps track of at most 200 people (a rejoin reuses its place); past that it answers `409 room_full` |
+| `POST /api/rooms/{slug}/join` | 30 joins per meeting, counted apart for the host and for each person coming back. A meeting keeps a place for at most 200 people (a rejoin reuses its place; where the webhook arrives, a join that never came into the call stops holding one after 5 minutes); past that it answers `409 room_full` |
 | `POST /api/rooms/{slug}/agent-codes` | 10 codes an hour per person, and 50 per meeting for people who aren't the host and haven't come into the call |
-| `POST /api/agent/claim` | 10 tries per code, and 120 across the server |
+| `POST /api/agent/claim` | None: a made-up, used or expired code is refused at once (`400`), and a real one may try 5 names |
 | `GET /api/agent/claim/{id}` | 60 checks per claim, counted only with the right secret. A bridge that gets a 429 waits and polls again |
 | Turns, connectors, questions and MCP | Listed in their sections below |
 
@@ -161,8 +161,10 @@ Notes use both to leave out replies that answer or could quote people who opted 
 they opt out later. Only agents' attributes are read.
 
 A message sent only to some people (`destination_identities`) also carries `private` = `"1"`.
-The host's meeting summary leaves those out, and so does it for messages from older bridges
-that start with 🔒.
+The host's meeting summary leaves those out. For older bridges it also leaves out quick
+private answers that start with 🔒, and the reports (📋) of private tasks that the host's own
+agents told the tab about. A message that is private in neither way can't be told apart from a
+public one, so update agents that don't set `private`.
 
 The host's tab can download a **meeting summary** (Markdown, built in the tab from what it
 saw, never sent to the server). It holds the date and time span, who was there (agents with
@@ -170,7 +172,8 @@ their owner and door), agents' public answers with whom each answered, public re
 agents kept notes, and how often the agents paused. It leaves out people's own lines, private
 messages, acknowledgements ("Yes?", "One sec, checking.", "On it. I'll report back."), and
 anything whose sender, the sender's owner, `reply_to` or `sources` (or their owners) opted
-out at any point. The meeting's link and internal identities never appear, and all text is
+out at any point the tab saw, or that names someone the tab never saw (it joined late or
+reloaded, so it can't know). The meeting's link and internal identities never appear, and all text is
 escaped so it can't become a link, image, HTML or heading. A real summary comes from asking an
 agent to sum up: its answer is in the file.
 
@@ -316,7 +319,8 @@ ended.
 | Agent requests: the agent's name, whose it is, its status | The meeting ends, or its owner's session does, or 24 hours after the request unless the agent is approved and still in the meeting |
 | The room: its link, a hash of the host secret, the notes policy | 30 days after its last join (it's a setting) |
 | Connectors: name, app, a hash of the link | Deleted by their owner, or expired as in [section 5](#the-connector-link) |
-| Questions, the floor, rate-limit counters | Memory only: gone when the meeting ends or the server restarts |
+| Questions, the floor | Memory only: gone when the meeting ends or the server restarts |
+| Rate-limit counters (a meeting's link or a random identity, a count and when it started) | Memory only: gone at the first sweep after their window (a minute or an hour), or a restart |
 
 "The meeting ends" is LiveKit's `room_finished`, sent once everyone has left. Without it, a
 sweep (at most once a minute, run by room creation and joins) deletes what has expired.
@@ -586,7 +590,7 @@ then).
   here. Agents from M4 still join; without taking turns they talk over others, so update.
   A connector made earlier with a name the rules now refuse (`Mark`, `Nova 2`) can't join:
   delete it and make one with another name (its link changes).
-- **v0** (M6): limits on starting meetings, joining, claims and claim checks (see
+- **v0** (M6): limits on starting meetings, joining and claim checks (see
   [Limits](#limits)), `409 room_full`, and 4 KB caps on small requests. A bridge that gets a 429
   while waiting for approval keeps waiting; older bridges stop, but don't poll fast enough to hit
   the limit. Meetings forget who was in them when they end, sessions expire 24 hours after the

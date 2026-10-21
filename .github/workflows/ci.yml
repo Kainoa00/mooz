@@ -93,8 +93,13 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Build the web image
         run: docker build -f apps/web/Dockerfile -t mooz-web:ci .
-      - name: The production kit's settings are complete
-        run: docker compose -f deploy/compose.yaml --env-file deploy/.env.example config --quiet
+      - name: The production kit's settings are complete, and refused without a secret
+        run: |
+          LIVEKIT_API_SECRET="$(openssl rand -base64 48)" \
+            docker compose -f deploy/compose.yaml --env-file deploy/.env.example config --quiet
+          if docker compose -f deploy/compose.yaml --env-file deploy/.env.example config --quiet 2>/dev/null; then
+            echo "the kit started with no LiveKit secret"; exit 1
+          fi
       - name: Runs with a strong secret
         run: |
           docker run -d --name web -p 127.0.0.1:3000:3000 \

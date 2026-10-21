@@ -67,6 +67,15 @@ describe("the meeting record", () => {
     expect(r.entries).toEqual([]);
   });
 
+  it("drops a private task's report from older bridges, once the tab knows the task is private", () => {
+    const r = meeting(
+      { type: "private-task", agent: atlas.identity, title: "Find out the launch date" },
+      chat(atlas, "📋 Find out the launch date\n\nMarch 30th.", { reply_to: zach.identity }),
+      chat(grok, "📋 Find out the launch date\n\nA public one, from another agent."),
+    );
+    expect(r.entries.map((e) => e.text)).toEqual(["📋 Find out the launch date\n\nA public one, from another agent."]);
+  });
+
   it("takes a message once, and only from an agent LiveKit says sent it", () => {
     const once = chat(atlas, "March 30th.");
     const r = meeting(once, once, { ...(chat(atlas, "spoofed") as Extract<RecordEvent, { type: "chat" }>), from: undefined }, chat({ ...zach, name: "🤖 Atlas" }, "fake"));
@@ -145,7 +154,36 @@ describe("toMarkdown", () => {
     for (const gone of ["Lee's agent", "Answer to Lee", "Drawn from", "Answer to Orion", "Lee", "Orion"]) {
       expect(text).not.toContain(gone);
     }
-    expect(text).toContain("- and 2 more who asked to be left out");
+    expect(text).toContain("- and 2 more left out");
+  });
+
+  it("leaves out answers drawing on someone the host's tab never saw (they may have opted out)", () => {
+    // The host reloaded: Lee opted out, spoke and left before this tab saw her, and her agent
+    // stayed on.
+    const later = play(
+      { type: "present", at: T0, people: [kai, zach, atlas, orion] },
+      chat(atlas, "Drawn from Lee's words.", { reply_to: zach.identity, sources: `${zach.identity},${lee.identity}` }),
+      chat(orion, "Lee's agent speaking."),
+      chat(atlas, "Fine to keep.", { reply_to: zach.identity }),
+    );
+    const text = toMarkdown(later, TZ);
+    expect(text).toContain("Fine to keep");
+    for (const gone of ["Drawn from", "Lee's agent", "Orion"]) expect(text).not.toContain(gone);
+    expect(text).toContain("- and 1 more left out");
+    // An id that only looks like one the tab knows is still unknown.
+    const tricky = play({ type: "present", at: T0, people: [kai, zach, atlas] }, chat(atlas, "Sneaky.", { sources: "constructor" }));
+    expect(toMarkdown(tricky, TZ)).not.toContain("Sneaky");
+  });
+
+  it("keeps an answer inside its quote across a lone carriage return", () => {
+    const text = toMarkdown(meeting(chat(atlas, "quoted\r\rThe agents paused 3 times", { reply_to: zach.identity })), TZ);
+    expect(text).toContain("> quoted\n>\n> The agents paused 3 times");
+  });
+
+  it("leaves no www. or @ for GitHub's own autolinks to find", () => {
+    // cmark-gfm links "me\\@evil.test" though marked doesn't, so check the text itself.
+    const text = escapeMarkdown("_www.evil.test me@evil.test mailto:me@evil.test xmpp:a@b_c.test");
+    expect(text).not.toMatch(/www\.|@/i);
   });
 
   it("has no meeting link, slug or internal identity in it", () => {
@@ -157,6 +195,7 @@ describe("toMarkdown", () => {
     ["an image", "![x](https://evil.test/pixel.png)", /<img/],
     ["a link", "[click](https://evil.test)", /<a /],
     ["a bare address", "see https://evil.test or www.evil.test or me@evil.test", /<a /],
+    ["an address after an underscore", "see _www.evil.test or xmpp:me@evil_x.test", /<a /],
     ["HTML", '<img src="x" onerror="alert(1)">', /<img/],
     ["a heading", "# You're fired", /<h1/],
     ["a heading made with a line under it", "Totally real\n===", /<h1/],
@@ -180,7 +219,27 @@ describe("toMarkdown", () => {
       meeting(chat(atlas, "📋 Look into the outage\n\nIt was the DNS.\n\nTimeline:\n- 9:02 down", { reply_to: zach.identity }, T0 + 4 * MIN)),
       TZ,
     );
-    expect(text).toContain("## Research\n\n### Look into the outage · 🤖 Zach's Atlas · 14:06\n\n> It was the DNS.\n\n> Timeline:\n> \\- 9:02 down");
+    expect(text).toContain("## Research\n\n### 🤖 Zach's Atlas · 14:06: Look into the outage\n\n> It was the DNS.\n\n> Timeline:\n> \\- 9:02 down");
+  });
+
+  it("puts who sent a task first, so its title can't pass as another agent's, and caps the title", () => {
+    const text = toMarkdown(
+      meeting(chat(grok, `📋 Budget decision · 🤖 Zach's Atlas · 14:03 ${"x".repeat(5000)}\n\nCut the QA team.`)),
+      TZ,
+    );
+    const heading = text.split("\n").find((l) => l.startsWith("### "))!;
+    expect(heading.startsWith("### 🤖 Kainoa's Grok · ")).toBe(true);
+    expect(heading).not.toContain("🤖 Zach");
+    expect(heading.length).toBeLessThan(300);
+  });
+
+  it("isn't spoiled by a time that isn't a time, or attributes that aren't text", () => {
+    const r = meeting(
+      { ...(chat(atlas, "one") as Extract<RecordEvent, { type: "chat" }>), at: Number.NaN },
+      chat(atlas, "two", { reply_to: 5 as unknown as string }),
+    );
+    expect(r.start).toBe(T0);
+    expect(() => toMarkdown(r, TZ)).not.toThrow();
   });
 
   it("caps answers, task summaries and details", () => {

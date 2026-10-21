@@ -24,6 +24,7 @@ import numpy as np
 from livekit import rtc
 
 from ..gate import LOCAL_GATE, SAMPLE_RATE, Pcm, SpeechGate
+from ..hosts import is_this_machine
 from ..room import Speaker
 
 log = logging.getLogger(__name__)
@@ -46,6 +47,8 @@ SILENCE_PHRASES = frozenset(
      "you", "bye", "bye bye", "okay", "so", "hmm", "uh", "um"}
 )  # fmt: skip
 SILENCE_CLIP_SECONDS = 1.5
+# More audio than this for one sentence means the speech server has gone wrong.
+MAX_SENTENCE_SECONDS = 60.0
 
 
 class SpeechServerError(Exception):
@@ -53,8 +56,7 @@ class SpeechServerError(Exception):
 
 
 def _loopback(url: str) -> bool:
-    host = (urlsplit(url).hostname or "").lower()
-    return host in ("localhost", "::1") or host.startswith("127.")
+    return is_this_machine(urlsplit(url).hostname or "")
 
 
 @dataclass(frozen=True)
@@ -131,13 +133,17 @@ def speech_problem(settings: LocalSpeech) -> str | None:
 
 
 def speech_warning(settings: LocalSpeech) -> str | None:
-    remote = [u for u in settings.urls if urlsplit(u).scheme == "http" and not _loopback(u)]
-    if remote:
-        host = urlsplit(remote[0]).hostname
+    """Everyone's audio leaving this machine: worth saying, and more so unencrypted."""
+    remote = [u for u in settings.urls if not _loopback(u)]
+    if not remote:
+        return None
+    plain = [u for u in remote if urlsplit(u).scheme == "http"]
+    host = urlsplit((plain or remote)[0]).hostname
+    if plain:
         return (
             f"Everyone's audio goes to {host} unencrypted (http). Use https://, or an SSH tunnel."
         )
-    return None
+    return f"Everyone's audio in the meeting goes to {host}, not just this machine."
 
 
 async def check_speech_server(http: httpx.AsyncClient, settings: LocalSpeech) -> None:
@@ -266,6 +272,8 @@ class PcmFrames:
     """Raw 16-bit mono PCM, in chunks split anywhere, as 20 ms frames."""
 
     def __init__(self, rate: int) -> None:
+        if rate < 1000 // FRAME_MS:
+            raise ValueError(f"{rate} Hz is too low for {FRAME_MS} ms frames")
         self._rate = rate
         self._size = rate * FRAME_MS // 1000 * 2
         self._pending = bytearray()
@@ -334,15 +342,30 @@ class WavFrames:
             if len(head) < pos + 8 + size:
                 return None
             if kind == b"fmt ":
+                if size < 16:
+                    raise SpeechServerError("Your speech server's WAV format is cut short")
                 _fmt, channels, rate, _bps, _align, bits = struct.unpack(
                     "<HHIIHH", head[pos + 8 : pos + 24]
                 )
                 if bits != 16:
                     raise SpeechServerError(f"Your speech server's WAV is {bits}-bit, not 16-bit")
+                if not 8_000 <= rate <= 96_000 or not 1 <= channels <= 8:
+                    raise SpeechServerError(
+                        f"Your speech server's WAV is {rate} Hz, {channels} channels"
+                    )
                 self._channels = channels
                 self._pcm = PcmFrames(rate)
             pos += 8 + size + (size & 1)
         return None
+
+
+async def _first_bytes(res: httpx.Response, limit: int) -> bytes:
+    out = b""
+    async for chunk in res.aiter_bytes():
+        out += chunk
+        if len(out) >= limit:
+            break
+    return out[:limit]
 
 
 def split_sentences(text: str) -> list[str]:
@@ -363,6 +386,8 @@ def split_sentences(text: str) -> list[str]:
 
 class LocalTTS:
     """Speaks one sentence per request, fetching the next while this one plays."""
+
+    provider = "local"
 
     def __init__(self, settings: LocalSpeech, http: httpx.AsyncClient) -> None:
         self._settings = settings
@@ -430,15 +455,23 @@ class LocalTTS:
                 "POST", url, json=body, headers=s.headers, timeout=TTS_TIMEOUT
             ) as res:
                 if res.status_code >= 400:
-                    detail = (await res.aread())[:200].decode(errors="replace")
+                    detail = (await _first_bytes(res, 200)).decode(errors="replace")
                     raise SpeechServerError(
                         f"Your speech server refused to speak ({res.status_code}): {detail}"
                     )
                 frames: PcmFrames | WavFrames = (
                     PcmFrames(s.tts_rate) if s.tts_format == "pcm" else WavFrames()
                 )
+                seconds = 0.0
                 async for chunk in res.aiter_bytes():
                     for frame in frames.feed(chunk):
+                        # A sentence is a few seconds: an answer that never ends is a broken
+                        # server, and would fill memory while the next sentence waits for it.
+                        seconds += frame.samples_per_channel / frame.sample_rate
+                        if seconds > MAX_SENTENCE_SECONDS:
+                            raise SpeechServerError(
+                                "Your speech server's answer to one sentence went on too long"
+                            )
                         yield frame
                 for frame in frames.flush():
                     yield frame

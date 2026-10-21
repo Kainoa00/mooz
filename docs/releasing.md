@@ -9,8 +9,8 @@ The web app and `mooz-agent` share one version. A `v*` tag runs
 3. `uv build` of the bridge, then a check that the wheel installs and runs.
 4. **PyPI** (waits for approval in the `pypi` environment): trusted publishing, no token.
 5. **GHCR** (waits for approval in the `release` environment): the web image for amd64 and
-   arm64, tagged `X.Y.Z`, `X.Y` and `latest` (a pre-release like `X.Y.Z-rc.1` gets only its own
-   tag).
+   arm64, tagged `X.Y.Z`, `X.Y` and `latest`. Versions are plain `X.Y.Z`: the version check
+   refuses pre-release forms like `0.1.0-rc.1`, which Python spells differently.
 6. **GitHub Release** (`release` environment): the CHANGELOG entry, plus the wheel and sdist.
 
 Running the workflow by hand (Actions → Release → Run workflow) is a dry run: the same builds,
