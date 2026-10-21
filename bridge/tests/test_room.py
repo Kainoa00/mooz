@@ -78,3 +78,32 @@ async def test_chat_to_some_people_is_marked_private() -> None:
 )
 async def test_reads_when_a_person_last_let_agents_continue(metadata: str, continued: int) -> None:
     assert MeetingRoom(cast(rtc.Room, _Room(metadata))).floor_continued() == continued
+
+
+class _Wiring(_Room):
+    """A room that records what MeetingRoom listens for, then refuses to connect."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.handlers: dict[str, Any] = {}
+
+    def on(self, event: str, handler: Any) -> None:
+        self.handlers[event] = handler
+
+    def register_text_stream_handler(self, *_: Any) -> None:
+        pass
+
+    async def connect(self, *_: Any, **__: Any) -> None:
+        raise ConnectionError("not in this test")
+
+
+async def test_a_metadata_change_tells_the_agent_about_notes_and_the_floor() -> None:
+    fake = _Wiring()
+    room = MeetingRoom(cast(rtc.Room, fake))
+    calls: list[str] = []
+    room.on_notes_policy_changed = lambda: calls.append("notes")
+    room.on_floor_changed = lambda: calls.append("floor")
+    with pytest.raises(ConnectionError):
+        await room.connect("ws://localhost:7880", "token")
+    fake.handlers["room_metadata_changed"]("{}", '{"floor": {"continued": 1792000000000}}')
+    assert calls == ["notes", "floor"]

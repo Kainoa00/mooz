@@ -174,6 +174,16 @@ describe("names that look like an agent's", () => {
     ["Ꭺtlas", "Atlas"], // Cherokee
     ["ᎪᎢᏞᎪᏚ", "Atlas"],
     ["Straß", "Strass"],
+    ["ΗΑΝΚ", "Hank"], // Greek capitals by their own shape: Ν is N, though ν is v
+    ["ΡΕΝΝΥ", "Penny"],
+    ["ꓮꓔꓡꓮꓢ", "Atlas"], // Lisu
+    ["Веӏӏа", "Bella"], // Cyrillic palochka
+    ["ВЕӀӀА", "Bella"],
+    ["һоӏӏу", "Holly"],
+    ["һех", "Hex"],
+    ["AtIas", "Atlas"], // a capital I for l
+    ["lris", "Iris"], // and an l for I
+    ["At1as", "Atlas"],
   ])("refuses %j while %j is here, and the agent while they are", (name, agent) => {
     expect(() => parseDisplayName(name, [agent])).toThrowError(expect.objectContaining({ status: 409, code: "name_taken" }));
     expect(() => parseAgentName(agent, [name])).toThrowError(expect.objectContaining({ status: 409, code: "name_taken" }));
@@ -183,6 +193,22 @@ describe("names that look like an agent's", () => {
     for (const name of ["Michał", "Þóra", "Łukasz", "Søren", "Zoë", "Мария", "李华", "José García", "Ελένη"]) {
       expect(parseDisplayName(name, ["Atlas"])).toBe(name);
     }
+  });
+
+  it.each([
+    "İlham Əliyev", // Azerbaijani
+    "Cəlil Məmmədov",
+    "Oʻktam Rahimov", // Uzbek
+    "Hawaiʻi Lani", // the ʻokina
+    "Tāufaʻāhau Tupou",
+    "Mʼbaye",
+    "Kofi Ɔdɛɛ", // Akan
+    "Ɗanjuma Ƙasim", // Hausa
+    "Ngozi Ɓello",
+    "Ɲaré Kouyaté", // Bambara
+    "ǃXóõ",
+  ])("keeps Latin letters beyond a to z: %j", (name) => {
+    expect(parseDisplayName(name, ["Atlas"])).toBe(name);
   });
 
   it("refuses a word that mixes alphabets, which could look like a name it doesn't match", () => {

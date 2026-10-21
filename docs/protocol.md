@@ -43,13 +43,19 @@ Request: `{"code": "ABCD-EFGH-JKLM", "name": "Atlas"}` with `content-type: appli
   (`mooz`, `everyone`, `agents`, `hey`, …) or end in a common English word (`notes`, `mark`,
   `can`, …). Its wake word must not sound or look like any word in the name of a person or
   agent in the meeting now. People and agents gone for more than 2 minutes don't count, nor
-  do people whose session has ended or agents approved that never came in. The detector's
+  do people whose session has ended, people who joined by the link but never came into the
+  call (after 2 minutes, where the webhook says who's in), or agents approved that never
+  collected their token. A person coming back after 2 minutes can't keep a name that an agent
+  that came in meanwhile answers to. The detector's
   own same-word test decides, so `Atlis` is refused next to `Atlas`, and `Lee's Grok` next
   to `Zach's Grok`. People's names are compared both as they sound and as they look in plain
-  Latin letters: `Атлас`, `Ａｔｌａｓ` and `Atłas` count as `Atlas`, and so does `Сora`
-  (a Cyrillic С) as `Cora`. A person's name can't mix alphabets within a word. The error
-  doesn't say whose name it clashes with. A person can make 10 codes an hour, and a meeting
-  50.
+  Latin letters: `Атлас`, `Ａｔｌａｓ` and `Atłas` count as `Atlas`, and so do `Сora`
+  (a Cyrillic С) as `Cora`, `ΗΑΝΚ` (Greek capitals) as `Hank`, and `AtIas` (a capital I) as
+  `Atlas`. The lookalikes are a list of the common ones, not Unicode's whole confusables
+  table. A person's name can't mix the Latin alphabet with another within a word (every Latin
+  letter counts, so `Əliyev`, `Hawaiʻi` and `Ɔdɛɛ` are fine). The error doesn't say whose name
+  it clashes with. A person can make 10 codes an hour, and a meeting 50 for people nobody can
+  see: the host, and anyone LiveKit says came into the call, aren't held to that.
 
 Responses:
 - `201 {"requestId", "claimSecret", "status": "pending"}`. The response reveals nothing
@@ -103,7 +109,7 @@ ceilings across the server.
 |---|---|
 | `POST /api/rooms` | 30 new meetings across the server (`MOOZ_ROOMS_PER_MINUTE`) |
 | `POST /api/rooms/{slug}/join` | 30 joins per meeting. A meeting keeps track of at most 200 people (a rejoin reuses its place); past that it answers `409 room_full` |
-| `POST /api/rooms/{slug}/agent-codes` | 10 codes an hour per person |
+| `POST /api/rooms/{slug}/agent-codes` | 10 codes an hour per person, and 50 per meeting for people who aren't the host and haven't come into the call |
 | `POST /api/agent/claim` | 10 tries per code, and 120 across the server |
 | `GET /api/agent/claim/{id}` | 60 checks per claim, counted only with the right secret. A bridge that gets a 429 waits and polls again |
 | Turns, connectors, questions and MCP | Listed in their sections below |
@@ -272,8 +278,12 @@ What the agent must do:
 The meeting sees the floor in the room metadata, next to `notes_allowed`:
 `{"floor": {"speaking": identity | null, "next": identity | null, "paused": bool, "continued": ms}}`.
 `paused` says a reply is held right now (the banner shows while it is); `continued` is when a
-person last clicked Continue (milliseconds on the server's clock; 0 for not since it
-started), and only Continue changes it.
+person last clicked Continue (milliseconds on the server's clock). Only Continue moves it up,
+so start your count over only when it's higher than any value you've seen: it goes back to 0
+after a restart, or when the server forgets a floor that has been idle for 10 minutes (and its
+count with it). A released reply can reach you before the new `continued` does (the reference
+bridge keeps an agent's question it refused at its limit for 5 s, and answers it if a Continue
+arrives in that time).
 
 Errors: `404 request_not_found` (wrong id or secret) or `turn_not_found`;
 `409 not_in_meeting`; `400 invalid_body`; `413` for a body over 1 KB; `429 rate_limited` (more
@@ -331,7 +341,10 @@ server's API keys (`webhook` in `livekit.yaml`). It's how the server knows:
 
 Without the webhook, meetings still work, but the server falls back:
 
-- Name checks count everyone who ever joined by the link.
+- Name checks count everyone whose session is live (a day after their last join), and every
+  agent whose token can still be in use (a bridge's for a day, a connector's approval for a
+  day).
+- The meeting-wide cap on agent codes counts everyone but the host.
 - A removed agent can reconnect while its last token lasts.
 - People's rows stay until the sweep finds them expired.
 

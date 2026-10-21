@@ -48,8 +48,9 @@ export interface FloorView {
   /** A reply between agents is held right now (it goes away when that reply does). */
   paused: boolean;
   /**
-   * When a person last let the agents continue (ms since the epoch; 0: not since this server
-   * started). Only Continue changes it, so an agent can trust it to start its own count over.
+   * When a person last let the agents continue (ms since the epoch). Only Continue moves it up,
+   * so an agent can start its own count over when it's higher than any value it has seen. It's
+   * 0 after a restart, or once an idle floor is forgotten (with its count), which isn't news.
    */
   continued: number;
 }

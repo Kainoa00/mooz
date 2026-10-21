@@ -116,6 +116,14 @@ export function notePersonPresence(db: Db, identity: string, sid: string | undef
   }
 }
 
+/** Whether LiveKit has said this person came into the call (only where its webhook arrives). */
+export function cameIntoCall(db: Db, identity: string): boolean {
+  const row = db.prepare("SELECT session_sid FROM participants WHERE identity = ?").get(identity) as
+    | { session_sid: string | null }
+    | undefined;
+  return row?.session_sid != null;
+}
+
 export function findParticipant(
   db: Db,
   slug: string,

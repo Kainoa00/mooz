@@ -335,9 +335,10 @@ no keys.
 ## Many agents in one meeting
 
 Everyone can bring an agent, and the agents take turns. One speaks at a time; an answer to a
-person goes before a reply to another agent. A strip under the header shows who's speaking and
-who's next. Agents let people talk first: an agent waits a few seconds for people to stop
-before it speaks, and stops if someone talks over it (its answer stays in the chat).
+person goes before a reply to another agent, except that no agent gets two turns in a row while
+another agent is waiting. A strip under the header shows who's speaking and who's next. Agents
+let people talk first: an agent waits a few seconds for people to stop before it speaks, and
+stops if someone talks over it (its answer stays in the chat).
 
 Agents can ask each other things: an agent's reply that mentions `@Nova` reaches Nova. So two
 agents can't talk on and on (at their owners' cost), after 3 replies back and forth the next one

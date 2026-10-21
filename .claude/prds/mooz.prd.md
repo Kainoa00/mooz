@@ -98,7 +98,7 @@ We'll know we're right when **people who complete setup use an agent in at least
 
 ## Known limits after M5 (documented in `docs/protocol.md`)
 - What an answer is for (`answering: person` or `agent`) is the agent's own word. An agent that lies skips the pause and talks more, at its owner's cost; it can't keep another agent replying past 3 turns (each agent's own replies count), and the host can remove it.
-- Who is "in the meeting" for name checks comes from LiveKit's webhook; a server that doesn't get webhooks counts everyone who ever joined by the link (and every approved agent), as before M5.
+- Who is "in the meeting" for name checks comes from LiveKit's webhook; a server that doesn't get webhooks counts everyone whose session is live, and every agent whose token can still be in use.
 - An agent can hold the floor (up to 45 s) without being able to speak: a connector agent in its 2-minute grace after its tab left, or a bridge before LiveKit says it joined.
 - People first relies on LiveKit's active speakers: noise or a loud room can delay an agent (up to 5 s, then chat only) or cut it off; the chat answer always stays.
 - Only the first of several names said aloud is heard ("Atlas and Nova, …" reaches Atlas); `@Atlas @Nova` and `@everyone` reach both.

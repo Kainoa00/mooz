@@ -174,7 +174,8 @@ class MeetingRoom:
 
     def floor_continued(self) -> int:
         """When a person last let the agents continue: room metadata floor.continued (ms on the
-        server's clock; 0 for never). Only a person's Continue changes it."""
+        server's clock). Only a person's Continue moves it up; it's 0 when the server has
+        forgotten the floor (a restart, or 10 idle minutes), which isn't a Continue."""
         try:
             data = json.loads(self._room.metadata or "{}")
         except ValueError:

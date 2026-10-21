@@ -62,22 +62,37 @@ const LATIN: Record<string, string> = {
 
 // How letters of other alphabets look in Latin ones, whatever they sound like: Cyrillic "Сora"
 // reads as Cora, though С sounds like S. Read along with TRANSLIT: a name clashes if it would
-// be heard as an agent's either way.
+// be heard as an agent's either way. These are the common lookalikes, not Unicode's whole
+// confusables list. Capitals are read by their own shape first (Greek Ν is N, though ν is v).
+const CAPITALS: Record<string, string> = {
+  Α: "a", Β: "b", Ε: "e", Ζ: "z", Η: "h", Ι: "i", Κ: "k", Μ: "m", Ν: "n", Ο: "o", Ρ: "p",
+  Τ: "t", Υ: "y", Χ: "x", А: "a", В: "b", Е: "e", К: "k", М: "m", Н: "h", О: "o", Р: "p",
+  С: "c", Т: "t", У: "y", Х: "x", Ѕ: "s", І: "i", Ј: "j", Һ: "h", Ӏ: "l", Ү: "y", Ԛ: "q",
+  Ԝ: "w", Օ: "o", Ս: "u",
+};
 const LOOKS: Record<string, string> = {
   ...LATIN,
+  ɩ: "i", ȷ: "j", ɵ: "o", "0": "o", "1": "l",
   а: "a", в: "b", г: "r", е: "e", ё: "e", к: "k", м: "m", н: "h", о: "o", п: "n", р: "p",
   с: "c", т: "t", у: "y", х: "x", ш: "w", ѕ: "s", і: "i", ї: "i", ј: "j", ԁ: "d", ԛ: "q",
-  ԝ: "w", α: "a", β: "b", ε: "e", ζ: "z", η: "h", ι: "i", κ: "k", μ: "m", ν: "v", ο: "o",
-  ρ: "p", τ: "t", υ: "u", χ: "x", օ: "o", ս: "u", ց: "g", հ: "h", ո: "n",
+  ԝ: "w", һ: "h", ӏ: "l", ү: "y", α: "a", β: "b", ε: "e", ζ: "z", η: "n", ι: "i", κ: "k",
+  μ: "u", ν: "v", ο: "o", ρ: "p", τ: "t", υ: "u", χ: "x", ϲ: "c", ϳ: "j", օ: "o", ս: "u",
+  ց: "g", հ: "h", ո: "n",
   // Cherokee capitals (and so their small forms) that look like Latin ones: ᎪᎢᏞᎪᏚ reads ATLAS.
   Ꭺ: "a", Ᏼ: "b", Ꮯ: "c", Ꭰ: "d", Ꭼ: "e", Ꮐ: "g", Ꮋ: "h", Ꭵ: "i", Ꭻ: "j", Ꮶ: "k", Ꮮ: "l",
   Ꮇ: "m", Ꮲ: "p", Ꭱ: "r", Ꮪ: "s", Ꭲ: "t", Ꮩ: "v", Ꮃ: "w", Ꮓ: "z",
+  // Lisu, which has only capitals: ꓮꓔꓡꓮꓢ reads ATLAS too.
+  ꓮ: "a", ꓐ: "b", ꓚ: "c", ꓓ: "d", ꓰ: "e", ꓝ: "f", ꓖ: "g", ꓧ: "h", ꓲ: "i", ꓙ: "j", ꓗ: "k",
+  ꓡ: "l", ꓟ: "m", ꓠ: "n", ꓳ: "o", ꓑ: "p", ꓣ: "r", ꓢ: "s", ꓔ: "t", ꓴ: "u", ꓦ: "v", ꓪ: "w",
+  ꓫ: "x", ꓬ: "y", ꓜ: "z",
 };
 
-/** Compatibility forms (fullwidth, circled…) and accents gone, joiners dropped, lowercase. */
-function plain(name: string): string {
-  return name.normalize("NFKC").normalize("NFKD").replace(/\p{M}/gu, "").replace(/[\u200c\u200d]/g, "").toLowerCase();
+/** Compatibility forms (fullwidth, circled…) and accents gone, joiners dropped. */
+function bare(name: string): string {
+  return name.normalize("NFKC").normalize("NFKD").replace(/\p{M}/gu, "").replace(/[\u200c\u200d]/g, "");
 }
+
+const plain = (name: string) => bare(name).toLowerCase();
 
 /**
  * A name as it sounds in plain Latin letters (what speech-to-text writes when it's said):
@@ -89,26 +104,39 @@ export function foldName(name: string): string {
 
 /** A name as it looks in plain Latin letters (what someone reading it would say). */
 export function foldNameByLook(name: string): string {
-  return plain(name).replace(/[^\x00-\x7f]/gu, (c) => LOOKS[c] ?? LOOKS[c.toUpperCase()] ?? c);
+  return [...bare(name)]
+    .map((c) => CAPITALS[c] ?? LOOKS[c] ?? LOOKS[c.toUpperCase()] ?? LOOKS[c.toLowerCase()] ?? c.toLowerCase())
+    .join("");
 }
 
 /**
- * Whether a word mixes Latin letters with others that don't read as Latin ("Grօk", with an
- * Armenian o): such a word can look like an agent's name and still not match it here.
+ * The ways a name can be read: as it sounds, as it looks, and with a capital I read as l (and l
+ * as I), which many fonts draw alike ("AtIas").
+ */
+function readings(name: string): string[] {
+  return [foldName(name), foldNameByLook(name), foldNameByLook(name.replace(/I/g, "l")), foldNameByLook(name.replace(/l/g, "I"))];
+}
+
+const LATIN_SCRIPT = /\p{Script=Latin}/u;
+const ANY_SCRIPT = /[\p{Script=Common}\p{Script=Inherited}]/u; // ʻ in Hawaiʻi, ʼ, marks
+
+/**
+ * Whether a word mixes Latin letters with letters of another alphabet ("Grօk", with an Armenian
+ * o): such a word can look like an agent's name and still not match it here. Every Latin letter
+ * counts (Əliyev, Ɔdɛɛ, Ƙano), and so do letters shared by all alphabets (Hawaiʻi).
  */
 function mixesAlphabets(name: string): boolean {
-  const latin = (c: string) => /[a-z]/.test(c) || c in LATIN;
   return (plain(name).match(/\p{L}+/gu) ?? []).some((word) => {
-    const letters = [...word];
-    return letters.some(latin) && !letters.every(latin);
+    const letters = [...word].filter((c) => !ANY_SCRIPT.test(c));
+    return letters.some((c) => LATIN_SCRIPT.test(c)) && !letters.every((c) => LATIN_SCRIPT.test(c));
   });
 }
 
-/** Whether saying any word of `name` would be heard as `agent`'s wake word (read either way). */
+/** Whether saying any word of `name` would be heard as `agent`'s wake word (read any way). */
 function heardAs(name: string, agent: string): boolean {
   const wake = wakeWord(foldName(agent));
   if (wake === undefined) return false;
-  return [foldName(name), foldNameByLook(name)].some((folded) => nameWords(folded).some((w) => alike(w, wake)));
+  return readings(name).some((folded) => nameWords(folded).some((w) => alike(w, wake)));
 }
 
 // An agent wakes up when its name is said, so names that people say all the
@@ -147,7 +175,7 @@ export function parseAgentName(value: unknown, people: readonly string[], agents
   if (wake.replace(/[^a-z]/g, "").length < 3) {
     throw new HttpError(400, "invalid_agent_name", "An agent's name needs a last word with at least 3 letters");
   }
-  if (takenNames.some((taken) => foldName(taken.trim()) === key || foldNameByLook(taken.trim()) === key)) {
+  if (takenNames.some((taken) => readings(taken.trim()).includes(key))) {
     throw new HttpError(409, "name_taken", `Someone in this meeting is already called "${name}"`);
   }
   // Which name it clashes with isn't said: the asker may not be able to see everyone who counts.

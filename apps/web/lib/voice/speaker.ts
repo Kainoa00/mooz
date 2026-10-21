@@ -23,8 +23,13 @@ export const BARGE_IN_MS = 1000;
  * said this much later, so the next voice (another agent's turn) never starts over its last words.
  */
 export const PLAYOUT_TAIL_MS = 250;
-/** No audio for this long means the voice has stalled (a dropped connection): give up on the line. */
+/**
+ * No audio for this long once what came has played (or no answer at all from the voice) means it
+ * has stalled, as on a dropped connection: give up on the line.
+ */
 export const STALL_MS = 10_000;
+/** setTimeout's longest wait. */
+const MAX_TIMER_MS = 2 ** 31 - 1;
 const POLL_MS = 100;
 const STALLED = Symbol("stalled");
 
@@ -50,7 +55,7 @@ export interface SpeakerOptions {
   peopleTalking?: () => boolean;
   wait?: (ms: number) => Promise<void>;
   now?: () => number;
-  /** No audio for this long gives up on the line (STALL_MS; tests make it short). */
+  /** No audio for this long after what came has played gives up on the line (STALL_MS). */
   stallMs?: number;
 }
 
@@ -147,23 +152,36 @@ export class AgentSpeaker implements AgentVoice {
     return true;
   }
 
+  /**
+   * `step`, or STALLED if the line has to give up first: at the turn's end, or when nothing more
+   * has come for stallMs after the audio already scheduled (`audioLeftMs` of it) has played. A
+   * voice that never answers or stops mid-stream must not keep the turn, or the answers after it.
+   */
+  private within<T>(step: Promise<T>, until: number | undefined, audioLeftMs: number): Promise<T | typeof STALLED> {
+    const limit = Math.max(0, Math.min((until ?? Infinity) - this.now(), audioLeftMs + this.stallMs, MAX_TIMER_MS));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const stalled = new Promise<typeof STALLED>((resolve) => (timer = setTimeout(() => resolve(STALLED), limit)));
+    step.catch(() => undefined); // if it fails after we've given up on it
+    return Promise.race([step, stalled]).finally(() => clearTimeout(timer));
+  }
+
   private async say(line: Line): Promise<void> {
     const { out, destination } = this.options;
     this.abort = new AbortController();
     const interrupted = this.interruptions(line.until);
-    const stream = await this.options.synthesize(line.text, this.abort.signal);
+    const asked = this.options.synthesize(line.text, this.abort.signal);
+    const stream = await this.within(asked, line.until, 0);
+    if (stream === STALLED) {
+      this.stop();
+      void asked.then((late) => late.cancel().catch(() => undefined), () => undefined);
+      return;
+    }
     const reader = stream.getReader();
     const pcm = new PcmReader();
     let at = 0;
     try {
       for (;;) {
-        // A read that never ends (a stalled connection) must not keep the turn, or every answer
-        // after it: stop at the turn's end, or when nothing has come for a while.
-        const limit = Math.max(0, Math.min(this.stallMs, (line.until ?? Infinity) - this.now()));
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        const stalled = new Promise<typeof STALLED>((resolve) => (timer = setTimeout(() => resolve(STALLED), limit)));
-        const next = await Promise.race([reader.read(), stalled]);
-        clearTimeout(timer);
+        const next = await this.within(reader.read(), line.until, Math.max(0, at - out.currentTime) * 1000);
         if (next === STALLED) {
           this.stop();
           break;

@@ -15,6 +15,11 @@ export const MAX_NAME_ATTEMPTS = 5;
 export const PENDING_TTL_MS = 10 * 60 * 1000;
 /** How long an agent may be away (a reload, a dropped connection) and still come back. */
 export const LEFT_GRACE_MS = 2 * 60 * 1000;
+/**
+ * How long a connector's approval counts as live though LiveKit never said the agent joined (its
+ * webhook may not reach this server). After that, only an agent that really joined keeps it.
+ */
+export const UNJOINED_APPROVAL_MS = 24 * 60 * 60 * 1000;
 /** Claims a minute with one code, and across the server. */
 export const CLAIMS_PER_CODE_PER_MINUTE = 10;
 export const CLAIMS_PER_MINUTE = 120;
@@ -81,29 +86,49 @@ export function createAgentCode(db: Db, owner: Participant): { code: string; exp
 
 /**
  * Names of agents that are waiting, in the meeting, or away for a moment (their wake words). One
- * that left for good no longer holds its name, and nor does one approved that never came in
- * (its owner stopped the bridge, or it couldn't connect) once its approval has lapsed.
+ * that left for good no longer holds its name, and nor does a bridge approved that never
+ * collected its token (its owner stopped it) once its approval has lapsed. Without LiveKit's
+ * webhook nothing says an agent joined, so one keeps its name while its token can be in use (a
+ * bridge's lasts a day), or while a connector's approval counts as live.
  */
 export function activeAgentNames(db: Db, slug: string, now = Date.now()): string[] {
   const rows = db
     .prepare(
       `SELECT agent_name FROM agent_requests
        WHERE room_slug = ? AND ((status = 'approved' AND (left_at IS NULL OR left_at > ?)
-           AND (session_sid IS NOT NULL OR decided_at > ?))
+           AND (session_sid IS NOT NULL
+             OR (door = 'bridge' AND ((token_issued_at IS NULL AND decided_at > ?) OR token_issued_at > ?))
+             OR (door = 'connector' AND decided_at > ?)))
          OR (status = 'pending' AND created_at > ?))`,
     )
-    .all(slug, now - LEFT_GRACE_MS, now - APPROVAL_WINDOW_MS, now - PENDING_TTL_MS) as { agent_name: string }[];
+    .all(
+      slug,
+      now - LEFT_GRACE_MS,
+      now - APPROVAL_WINDOW_MS,
+      now - SESSION_TTL_MS,
+      now - UNJOINED_APPROVAL_MS,
+      now - PENDING_TTL_MS,
+    ) as { agent_name: string }[];
   return rows.map((r) => r.agent_name);
 }
 
 /**
  * Names of the people in the meeting now, or away for a moment (a reload, a dropped connection),
  * as agents are: not everyone who ever joined by its link, and nobody whose session has ended.
+ * Where LiveKit's webhook says who's in the meeting, someone who joined by the link but never
+ * came into the call holds their name only for a moment. Without the webhook, everyone whose
+ * session is live counts.
  */
 export function participantNames(db: Db, slug: string, now = Date.now()): string[] {
   const rows = db
-    .prepare("SELECT name FROM participants WHERE room_slug = ? AND (left_at IS NULL OR left_at > ?) AND expires_at > ?")
-    .all(slug, now - LEFT_GRACE_MS, now) as { name: string }[];
+    .prepare(
+      `SELECT name FROM participants p
+       WHERE room_slug = ? AND (left_at IS NULL OR left_at > ?) AND expires_at > ?
+         AND (session_sid IS NOT NULL OR expires_at > ?
+           OR NOT EXISTS (SELECT 1 FROM participants q WHERE q.room_slug = p.room_slug AND q.session_sid IS NOT NULL))`,
+    )
+    // A session's expiry is SESSION_TTL_MS after its last /join.
+    .all(slug, now - LEFT_GRACE_MS, now, now + SESSION_TTL_MS - LEFT_GRACE_MS) as { name: string }[];
   return rows.map((r) => r.name);
 }
 

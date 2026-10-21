@@ -169,22 +169,28 @@ describe("POST /api/rooms/[slug]/join", () => {
     });
   });
 
-  it("lets someone back under their own name even if an agent that sounds like it came in meanwhile", async () => {
+  it("holds someone's name while they're away for a moment, but not once an agent has it", async () => {
     const db = getDb();
     const { slug } = createRoom(db);
     const first = await POST(jsonRequest(url(slug), { name: "Maya" }), params({ slug }));
     const { identity } = (await first.json()) as { identity: string };
     const secret = setCookies(first)[`mooz_p_${slug}`];
-    // Maya's tab reloads; meanwhile someone's agent "Maya" is waiting for the host.
     const kai = addParticipant(db, { slug, name: "Kainoa", isHost: true });
+    // Away for a moment: nobody's agent can take the name meanwhile.
+    db.prepare("UPDATE participants SET left_at = ? WHERE identity = ?").run(Date.now() - 60_000, identity);
+    expect(() => claimAgentCode(db, { code: createAgentCode(db, kai).code, name: "Maya" })).toThrow();
+    // Gone for 10 minutes: someone's agent "Maya" comes in, so Maya comes back as someone else
+    // the agent won't answer to, and is still the same person (her agents still know her).
     db.prepare("UPDATE participants SET left_at = ? WHERE identity = ?").run(Date.now() - 10 * 60_000, identity);
     claimAgentCode(db, { code: createAgentCode(db, kai).code, name: "Maya" });
-
-    const back = await POST(jsonRequest(url(slug), { name: "Maya", rejoin: identity }, { cookie: `mooz_p_${slug}=${secret}` }), params({ slug }));
-    expect(back.status).toBe(200);
-    // Someone new still can't take a name the agent would answer to.
-    const other = await POST(jsonRequest(url(slug), { name: "Maya" }), params({ slug }));
-    expect(other.status).toBe(409);
+    const cookie = { cookie: `mooz_p_${slug}=${secret}` };
+    const back = await POST(jsonRequest(url(slug), { name: "Maya", rejoin: identity }, cookie), params({ slug }));
+    expect(back.status).toBe(409);
+    const renamed = await POST(jsonRequest(url(slug), { name: "Maya R", rejoin: identity }, cookie), params({ slug }));
+    expect(renamed.status).toBe(409); // "Maya" is still a word in it
+    const other = await POST(jsonRequest(url(slug), { name: "M. Rivera", rejoin: identity }, cookie), params({ slug }));
+    expect(other.status).toBe(200);
+    expect(((await other.json()) as { identity: string }).identity).toBe(identity);
   });
 
   describe("over time", () => {

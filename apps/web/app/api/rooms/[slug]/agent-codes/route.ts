@@ -2,11 +2,16 @@ import { createAgentCode } from "@/lib/agents";
 import { getDb } from "@/lib/db";
 import { errorResponse, HttpError } from "@/lib/http";
 import { allow } from "@/lib/rate-limit";
+import { cameIntoCall } from "@/lib/rooms";
 import { assertSameOrigin, publicOrigin, requireParticipant } from "@/lib/session";
 
 /** Each code may try a few names; more codes than this an hour is someone probing who's here. */
 export const CODES_PER_PERSON_PER_HOUR = 10;
-/** And per meeting, since joining again makes a new person with a fresh count. */
+/**
+ * And per meeting, since joining again makes a new person with a fresh count. Only people nobody
+ * can see count: the host doesn't, nor anyone LiveKit says came into the call, so one person
+ * joining over and over can't stop everyone else bringing agents.
+ */
 export const CODES_PER_MEETING_PER_HOUR = 50;
 
 export async function POST(
@@ -18,9 +23,10 @@ export async function POST(
     const { slug } = await ctx.params;
     const db = getDb();
     const owner = requireParticipant(db, req, slug);
+    const unseen = !owner.isHost && !cameIntoCall(db, owner.identity);
     if (
       !allow(`agent-codes:${owner.identity}`, CODES_PER_PERSON_PER_HOUR, 60 * 60 * 1000) ||
-      !allow(`agent-codes-room:${slug}`, CODES_PER_MEETING_PER_HOUR, 60 * 60 * 1000)
+      (unseen && !allow(`agent-codes-room:${slug}`, CODES_PER_MEETING_PER_HOUR, 60 * 60 * 1000))
     ) {
       throw new HttpError(429, "rate_limited", "That's a lot of agent codes: try again in a while");
     }

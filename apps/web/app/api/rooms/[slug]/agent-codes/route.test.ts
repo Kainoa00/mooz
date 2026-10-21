@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { getDb } from "@/lib/db";
-import { addParticipant, createRoom } from "@/lib/rooms";
+import { addParticipant, createRoom, notePersonPresence } from "@/lib/rooms";
 import { resetRateLimitsForTests } from "@/lib/rate-limit";
 import { params, useTestEnv } from "@/test/helpers";
 import { CODES_PER_MEETING_PER_HOUR, CODES_PER_PERSON_PER_HOUR, POST } from "./route";
@@ -75,6 +75,13 @@ describe("POST /api/rooms/[slug]/agent-codes", () => {
     }
     expect(statuses.filter((s) => s === 201)).toHaveLength(CODES_PER_MEETING_PER_HOUR);
     expect(statuses.at(-1)).toBe(429);
+    // That doesn't stop the host, or anyone LiveKit has seen come into the call.
+    const host = addParticipant(db, { slug, name: "Kainoa", isHost: true });
+    expect((await ask(host.secret)).status).toBe(201);
+    const zach = addParticipant(db, { slug, name: "Zach", isHost: false });
+    expect((await ask(zach.secret)).status).toBe(429);
+    notePersonPresence(db, zach.identity, "PA_zach", true);
+    expect((await ask(zach.secret)).status).toBe(201);
     // Another meeting is unaffected.
     const other = createRoom(db).slug;
     const lee = addParticipant(db, { slug: other, name: "Lee", isHost: false });

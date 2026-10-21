@@ -298,4 +298,65 @@ describe("AgentSpeaker", () => {
     expect(stopped).toHaveLength(1);
     expect(errors.map((e) => e.message)).toEqual(["Your agent's voice stopped partway."]);
   });
+
+  it("gives up on a voice that never answers at all, so the answers after it aren't stuck", async () => {
+    const { out } = fakeOut();
+    const errors: VoiceError[] = [];
+    const signals: AbortSignal[] = [];
+    const speaker = new AgentSpeaker({
+      out,
+      destination: {},
+      synthesize: (text, signal) => {
+        signals.push(signal);
+        // The request is accepted but its answer never comes (and it ignores the abort).
+        return text === "This hangs." ? new Promise(() => undefined) : Promise.resolve(pcmStream([second(10)]));
+      },
+      onError: (e) => errors.push(e),
+      wait: async () => undefined,
+      stallMs: 30,
+    });
+    await speaker.speak("This hangs.");
+    await speaker.speak("And this goes next.");
+    expect(signals.map((s) => s.aborted)).toEqual([true, false]);
+    expect(errors).toEqual([]);
+  });
+
+  it("gives up at the turn's end while the voice still hasn't answered", async () => {
+    const { out } = fakeOut();
+    const time = clock();
+    const speaker = new AgentSpeaker({
+      out,
+      destination: {},
+      synthesize: () => new Promise(() => undefined),
+      onError: () => undefined,
+      ...time,
+    });
+    const started = Date.now();
+    await speaker.speak("This hangs.", { until: time.now() + 50 });
+    expect(Date.now() - started).toBeLessThan(5_000); // not STALL_MS
+  });
+
+  it("doesn't call it a stall while what came is still playing", async () => {
+    // A local speech server sends a whole sentence, then takes a while over the next one: that
+    // wait only counts once the first sentence has played.
+    const { out, started } = fakeOut();
+    const slow = new ReadableStream<Uint8Array>({
+      async start(c) {
+        c.enqueue(new Uint8Array(second(TTS_RATE * 0.3)));
+        await new Promise((r) => setTimeout(r, 100));
+        c.enqueue(new Uint8Array(second(240)));
+        c.close();
+      },
+    });
+    const speaker = new AgentSpeaker({
+      out,
+      destination: {},
+      synthesize: async () => slow,
+      onError: () => undefined,
+      wait: async () => undefined,
+      stallMs: 30,
+    });
+    await speaker.speak("Two sentences. The second is slow.");
+    expect(started.map((s) => s.samples)).toEqual([TTS_RATE * 0.3, 240]);
+  });
 });

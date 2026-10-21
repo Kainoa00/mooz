@@ -49,6 +49,9 @@ FOLLOW_UP_SECONDS = 8.0
 # until a person speaks or lets the agents continue. The meeting's floor also holds the reply
 # that would go past it; on an older server without one, this is the only limit.
 MAX_AGENT_STREAK = 3
+# An agent's question refused at that limit is kept this long: the Continue that let it through
+# can reach us after the question itself (the server sends its floor a moment later).
+HELD_SECONDS = 5.0
 APOLOGY = Answer("Sorry, I couldn't think that through just now. Please try again.")
 # Said out loud (not posted to chat) when an answer needs tools, so the room isn't left in silence.
 FILLER = Answer("One sec, checking.")
@@ -152,6 +155,7 @@ class Agent:
         self._follow_up: dict[str, float] = {}
         self._agent_streak = 0
         self._continued = 0  # when a person last let the meeting's agents continue
+        self._held: tuple[float, Speaker, Callable[[], Awaitable[None]]] | None = None
         self._tasks: set[asyncio.Task[None]] = set()
         # Meeting notes need a brain that can summarize and a memory to keep them in.
         self.notes: NotesKeeper | None = None
@@ -230,14 +234,18 @@ class Agent:
                 return
             question = u.text
         elif not addressed.question:
-            if self._allowed(u.speaker):
-                self._spawn(self._acknowledge(u.speaker, heard_at))
+            self._answer(u.speaker, lambda: self._acknowledge(u.speaker, heard_at))
             return
         else:
             question = addressed.question
 
-        if self._allowed(u.speaker):
-            self._spawn(self._respond(u.speaker, question, heard_at))
+        self._answer(u.speaker, lambda: self._respond(u.speaker, question, heard_at))
+
+    def _answer(self, asker: Speaker, start: Callable[[], Awaitable[None]]) -> None:
+        if self._allowed(asker):
+            self._spawn(start())
+        elif asker.kind == "agent":
+            self._held = (self._clock(), asker, start)
 
     def _role(self, speaker: Speaker) -> str:
         """Who a speaker is to this agent, from server-assigned identities (never names)."""
@@ -257,12 +265,19 @@ class Agent:
         return True
 
     def _on_floor_changed(self) -> None:
-        # Only a person's Continue moves this on. The floor's "paused" also clears when a held
-        # reply just goes away, so it can't be trusted to start the count over.
+        # Only a person's Continue moves this up (it drops to 0 when the server forgets the floor,
+        # which isn't news). The floor's "paused" also clears when a held reply just goes away, so
+        # it can't be trusted to start the count over.
         continued = self.room.floor_continued()
-        if continued > self._continued:
-            self._agent_streak = 0  # a person let the agents continue
-            self._continued = continued
+        if continued <= self._continued:
+            return
+        self._agent_streak = 0  # a person let the agents continue
+        self._continued = continued
+        held, self._held = self._held, None
+        if held is not None and self._clock() - held[0] <= HELD_SECONDS:
+            _, asker, start = held
+            if self._allowed(asker):
+                self._spawn(start())
 
     def _other_agents(self) -> list[str]:
         return [

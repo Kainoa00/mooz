@@ -7,7 +7,7 @@ from livekit import rtc
 
 from mooz_agent.providers.base import Answer
 from mooz_agent.providers.fakes import FakeTTS
-from mooz_agent.speaking import Mouth
+from mooz_agent.speaking import Mouth, _take
 from mooz_agent.turns import Answering, Granted
 
 pytestmark = pytest.mark.unit
@@ -298,3 +298,22 @@ async def test_stops_queued_audio_when_the_voice_fails_partway() -> None:
     with pytest.raises(RuntimeError):
         await mouth.say(Answer("This goes wrong halfway."))
     assert cleared == [True]
+
+
+async def test_a_short_wait_doesnt_queue_behind_an_answer_the_lock_was_just_handed_to() -> None:
+    lock = asyncio.Lock()
+    await lock.acquire()
+    queued = asyncio.ensure_future(lock.acquire())  # the next answer, waiting its turn
+    await asyncio.sleep(0)
+    lock.release()  # handed to it, but it hasn't run yet: the lock looks free
+    assert not await asyncio.wait_for(_take(lock, 0.05), 1)
+    await queued
+    lock.release()
+
+
+async def test_a_free_lock_is_taken_even_with_no_time_to_wait() -> None:
+    lock = asyncio.Lock()
+    assert await _take(lock, 0)
+    assert not await _take(lock, 0)
+    lock.release()
+    assert await _take(lock, None)

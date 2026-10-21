@@ -7,7 +7,7 @@ import { isAgent } from "@/lib/labels";
 import { NOTES_OPT_OUT_ATTRIBUTE } from "@/lib/notes-protocol";
 import { LOCAL_GATE, SCRIBE_GATE } from "@/lib/voice/gate";
 import { HearingHub } from "@/lib/voice/hearing";
-import { LocalHearing, LocalVoiceOut, testLocal, transcribeLocal } from "@/lib/voice/local";
+import { LocalHearing, LocalVoiceOut, REQUEST_TIMEOUT_MS, testLocal, transcribeLocal } from "@/lib/voice/local";
 import { scribeUrl, singleUseToken, synthesize } from "@/lib/voice/elevenlabs";
 import { ScribeStream } from "@/lib/voice/scribe";
 import {
@@ -307,6 +307,8 @@ export function openSpeaker(
         : (text, signal) => synthesize(settings, text, signal),
     onError,
     peopleTalking,
+    // A speech server on a CPU can take a while for each sentence; its requests have their own limit.
+    ...(local ? { stallMs: REQUEST_TIMEOUT_MS } : {}),
   });
   return {
     speaker,

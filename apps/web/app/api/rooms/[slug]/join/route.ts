@@ -36,10 +36,9 @@ export async function POST(
     const secret = readCookie(req, participantCookie(slug));
     const cookieParticipant = typeof body.rejoin === "string" ? findParticipant(db, slug, secret) : undefined;
     const returning = cookieParticipant?.identity === body.rejoin ? cookieParticipant : undefined;
-    // Someone coming back under their own name keeps it, even if an agent that sounds like it
-    // came in while they were away.
-    const same = returning && typeof body.name === "string" && body.name.trim().replace(/\s+/g, " ") === returning.name;
-    const name = parseDisplayName(body.name, same ? [] : activeAgentNames(db, slug));
+    // No exception for someone coming back under their own name: while they're away for a
+    // moment it's held for them, and after that an agent that sounds like it may have come in.
+    const name = parseDisplayName(body.name, activeAgentNames(db, slug));
     const participant = returning
       ? { ...renameParticipant(db, returning, name, host), secret: secret as string }
       : addParticipant(db, { slug, name, isHost: host });

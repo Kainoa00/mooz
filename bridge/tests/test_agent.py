@@ -6,7 +6,14 @@ from contextlib import asynccontextmanager
 import pytest
 from livekit import rtc
 
-from mooz_agent.agent import ACK_WAIT_SECONDS, FILLER, FOLLOW_UP_SECONDS, MAX_AGENT_STREAK, Agent
+from mooz_agent.agent import (
+    ACK_WAIT_SECONDS,
+    FILLER,
+    FOLLOW_UP_SECONDS,
+    HELD_SECONDS,
+    MAX_AGENT_STREAK,
+    Agent,
+)
 from mooz_agent.providers.base import Answer, BrainError
 from mooz_agent.providers.fakes import EchoBrain, FakeSTT, FakeTTS
 from mooz_agent.room import ChatMessage, Speaker
@@ -382,12 +389,15 @@ async def test_keeps_its_own_limit_on_agents_with_a_floor_too_until_a_person_let
     hear(agent, GROK, "@Atlas still paused", via="chat")
     await settle(agent)
     assert len(room.sent) == MAX_AGENT_STREAK
-    # A person clicks Continue.
+    # A person clicks Continue: the question refused a moment ago is answered after all, and the
+    # count starts over.
     room.continued = 1_792_000_000_000
     room.on_floor_changed()
-    hear(agent, GROK, "@Atlas carry on", via="chat")
     await settle(agent)
     assert len(room.sent) == MAX_AGENT_STREAK + 1
+    hear(agent, GROK, "@Atlas carry on", via="chat")
+    await settle(agent)
+    assert len(room.sent) == MAX_AGENT_STREAK + 2
     # The same Continue seen again (another floor change) doesn't count twice.
     for i in range(MAX_AGENT_STREAK):
         room.on_floor_changed()
@@ -400,11 +410,53 @@ async def test_a_continue_from_before_it_joined_isnt_news() -> None:
     room = FakeRoom()
     room.continued = 1_792_000_000_000
     _, agent = with_floor(FakeFloor(), room=room)
-    for i in range(MAX_AGENT_STREAK + 1):
-        room.on_floor_changed()  # type: ignore[misc]
+    for i in range(MAX_AGENT_STREAK):
         hear(agent, GROK, f"@Atlas ping {i}", via="chat")
         await settle(agent)
     assert len(room.sent) == MAX_AGENT_STREAK
+    # The floor changes, still with the Continue from before it joined: no new answers.
+    assert room.on_floor_changed is not None
+    room.on_floor_changed()
+    hear(agent, GROK, "@Atlas one more", via="chat")
+    await settle(agent)
+    assert len(room.sent) == MAX_AGENT_STREAK
+
+
+async def test_a_continue_that_arrives_after_the_question_it_released_still_answers_it() -> None:
+    # The server grants the held reply at once and publishes its floor a moment later, so the
+    # released question can reach us before the Continue does.
+    clock = Clock()
+    room = FakeRoom()
+    agent = Agent(
+        room=room, stt=FakeSTT({}), tts=FakeTTS(), brain=EchoBrain(), clock=clock, turns=FakeFloor()
+    )  # type: ignore[arg-type]
+    agent.wire()
+    for i in range(MAX_AGENT_STREAK):
+        hear(agent, GROK, f"@Atlas ping {i}", via="chat")
+        await settle(agent)
+    hear(agent, GROK, "@Atlas the released one", via="chat")
+    await settle(agent)
+    assert len(room.sent) == MAX_AGENT_STREAK
+    clock.now += 1
+    room.continued = 1_792_000_000_000
+    assert room.on_floor_changed is not None
+    room.on_floor_changed()
+    await settle(agent)
+    assert len(room.sent) == MAX_AGENT_STREAK + 1
+    assert "the released one" in room.sent[-1]
+    # Only once, and a question refused long before a Continue stays refused.
+    room.on_floor_changed()
+    await settle(agent)
+    assert len(room.sent) == MAX_AGENT_STREAK + 1
+    for i in range(MAX_AGENT_STREAK):
+        hear(agent, GROK, f"@Atlas again {i}", via="chat")
+        await settle(agent)
+    assert len(room.sent) == 2 * MAX_AGENT_STREAK
+    clock.now += HELD_SECONDS + 1
+    room.continued += 1
+    room.on_floor_changed()
+    await settle(agent)
+    assert len(room.sent) == 2 * MAX_AGENT_STREAK
 
 
 async def test_yes_waits_only_briefly_for_the_floor_and_the_follow_up_window_still_opens() -> None:

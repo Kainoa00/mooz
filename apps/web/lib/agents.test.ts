@@ -4,6 +4,7 @@ import {
   APPROVAL_WINDOW_MS,
   MAX_NAME_ATTEMPTS,
   PENDING_TTL_MS,
+  UNJOINED_APPROVAL_MS,
   activeAgentNames,
   isRevokedAgent,
   markTokenIssued,
@@ -19,7 +20,7 @@ import {
   requireBridgeAgent,
 } from "./agents";
 import { getDb } from "./db";
-import { addParticipant, createRoom, notePersonPresence } from "./rooms";
+import { SESSION_TTL_MS, addParticipant, createRoom, notePersonPresence } from "./rooms";
 import { useTestEnv } from "@/test/helpers";
 
 beforeEach(useTestEnv);
@@ -336,7 +337,34 @@ describe("who holds a name", () => {
     // Away for a moment (a reload), they keep their name, as an agent would.
     expect(participantNames(db, slug).sort()).toEqual(["Kainoa", "Zach"]);
     expect(() => claimAgentCode(db, { code: createAgentCode(db, meetingHost(db, slug)).code, name: "Zack" })).toThrow();
-    expect(participantNames(db, slug, Date.now() + LEFT_GRACE_MS + 1).sort()).toEqual(["Kainoa", "Lee"]); // Lee made the code
+    // LiveKit's webhook reaches this server (it said Zach came in), so someone who joined by the
+    // link but never came into the call (Kainoa here, and Lee, who made the code) holds their
+    // name only for a moment.
+    expect(participantNames(db, slug, Date.now() + LEFT_GRACE_MS + 1)).toEqual([]);
+  });
+
+  it("is everyone whose session is live, where LiveKit's webhook doesn't reach the server", () => {
+    const { db, slug } = meeting();
+    expect(participantNames(db, slug, Date.now() + LEFT_GRACE_MS + 1).sort()).toEqual(["Kainoa", "Zach"]);
+    expect(participantNames(db, slug, Date.now() + SESSION_TTL_MS + 1)).toEqual([]);
+  });
+
+  it("keeps an agent's name while its token can be in use, where the webhook doesn't say it's in", () => {
+    const { db, slug, host } = meeting();
+    const claim = claimAgentCode(db, { code: createAgentCode(db, host).code, name: "Atlas" });
+    decideAgentRequest(db, { slug, requestId: claim.requestId, approve: true });
+    markTokenIssued(db, claim.requestId);
+    expect(activeAgentNames(db, slug, Date.now() + APPROVAL_WINDOW_MS + 1)).toEqual(["Atlas"]);
+    expect(activeAgentNames(db, slug, Date.now() + SESSION_TTL_MS + 1)).toEqual([]);
+  });
+
+  it("keeps a connector agent's name while its approval counts as live", () => {
+    const { db, slug, host } = meeting();
+    const claim = claimAgentCode(db, { code: createAgentCode(db, host).code, name: "Grok" });
+    decideAgentRequest(db, { slug, requestId: claim.requestId, approve: true });
+    db.prepare("UPDATE agent_requests SET door = 'connector' WHERE id = ?").run(claim.requestId);
+    expect(activeAgentNames(db, slug, Date.now() + APPROVAL_WINDOW_MS + 1)).toEqual(["Grok"]);
+    expect(activeAgentNames(db, slug, Date.now() + UNJOINED_APPROVAL_MS + 1)).toEqual([]);
   });
 
   it("doesn't count someone whose session has ended (a row from before cleanup, say)", () => {

@@ -215,12 +215,14 @@ class _Interruptions:
 
 
 async def _take(lock: asyncio.Lock, at_most: float | None) -> bool:
-    """Take `lock`, waiting at most `at_most` seconds (None: as long as it takes)."""
-    if at_most is None or not lock.locked():
+    """Take `lock`, waiting at most `at_most` seconds (None: as long as it takes). A free lock is
+    taken at once even with no time to wait; one just handed to a queued waiter isn't free."""
+    if at_most is None:
         await lock.acquire()
         return True
     try:
-        await asyncio.wait_for(lock.acquire(), at_most)
+        async with asyncio.timeout(at_most):
+            await lock.acquire()
     except TimeoutError:
         return False
     return True

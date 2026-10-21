@@ -1,6 +1,7 @@
 import {
   LEFT_GRACE_MS,
   PENDING_TTL_MS,
+  UNJOINED_APPROVAL_MS,
   activeAgentNames,
   participantNames,
   transaction,
@@ -27,11 +28,8 @@ import { requireParticipant } from "./session";
 
 /** How long a connector agent may be away (a reload, a dropped connection) and still come back. */
 export { LEFT_GRACE_MS };
-/**
- * How long an approval counts as live though LiveKit never said the agent joined (its webhook
- * may not reach this server). After that, only an agent that really joined keeps a link alive.
- */
-export const UNJOINED_APPROVAL_MS = 24 * 60 * 60 * 1000;
+/** How long an approval counts as live though LiveKit never said the agent joined. */
+export { UNJOINED_APPROVAL_MS };
 
 /** SQL: request `r` is live (a fresh request, or an agent that's really in, or just approved). */
 const LIVE_REQUEST = `(
