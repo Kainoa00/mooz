@@ -66,7 +66,7 @@ We'll know we're right when **people who complete setup use an agent in at least
 | 3 | Async research tasks | "On it" with background work, spoken and chat progress, and a task panel; GitHub issues, PRs and CI; web search; private answers (live Claude/Grok/GitHub checks pending keys) | complete | `.claude/plans/m3-async-research-tasks.plan.md` |
 | 4 | Connector door | Grok, Claude or ChatGPT joins via a private MCP link: queued question, one-tap prefill, browser-side voice | complete | `.claude/plans/m4-connector-door.plan.md` |
 | 5 | Many agents, one floor | Multiple agents, one speaker at a time (people first), agent-to-agent with the 3-turn pause and Continue, names the detector could confuse refused (live two-agent check pending keys) | complete | `.claude/plans/m5-many-agents-one-floor.plan.md` |
-| 6 | Local voice and launch | OpenAI-compatible local voice (VoiceStudio), VPS guide, meeting summary export, security hardening backlog (below), README and demo, v0.1 release | pending | — |
+| 6 | Local voice and launch | OpenAI-compatible local voice (VoiceStudio), VPS guide, meeting summary export, security hardening backlog (below), README and demo, v0.1 release | in-progress | `.claude/plans/m6-local-voice-and-launch.plan.md` |
 
 ## Open Questions
 - [x] Do grok.com, chatgpt.com and claude.ai `?q=` prefill links still work at build time? Yes, as of October 2026 (third-party reports): ChatGPT sends the prompt at once; Claude (`/new?q=`) and Grok fill it in and wait for Enter. They are still undocumented, so mooz always offers Copy prompt and Paste the answer too, and the live check confirms them.
