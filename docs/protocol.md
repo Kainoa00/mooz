@@ -389,7 +389,9 @@ revoked.
 
 The tab hears the meeting like a bridge agent does, with the same rules for being addressed
 (both detectors run `bridge/tests/addressing_cases.json`): chat always, and speech when the
-owner has added their own ElevenLabs key in the browser.
+owner has turned on voice in the browser, through their own ElevenLabs key or a speech server on
+their computer. Either way the tab cuts speech with the bridge's gate
+(`bridge/tests/gate_cases.json`); for a local server it sends one utterance per request.
 
 `POST …/{requestId}/questions` `{ asker, text, at, lines }` queues a question (`at` is when the
 line that asked it was heard) with what the tab heard lately, each line

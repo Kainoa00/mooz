@@ -1,12 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { VoiceError } from "./elevenlabs";
+import { VoiceError } from "./settings";
 import {
   IDLE_CLOSE_MS,
   MAX_FAILURES,
   MAX_QUEUED_SAMPLES,
-  MAX_STREAMS,
   RETRY_DELAYS_MS,
-  ScribeHub,
   ScribeStream,
   type ScribeOptions,
   type SocketLike,
@@ -201,73 +199,5 @@ describe("ScribeStream", () => {
     s.send(pcm(), false);
     await flush();
     expect(FakeSocket.all).toHaveLength(0);
-  });
-});
-
-describe("ScribeHub", () => {
-  function hub() {
-    const heard: [string, string][] = [];
-    const fatal: string[] = [];
-    const made: { s: ScribeStream; onFatal: (m: string) => void }[] = [];
-    const h = new ScribeHub(
-      48_000,
-      (callbacks) => {
-        const s = new ScribeStream({
-          token: async () => "sutkn",
-          url: () => "wss://scribe.test/",
-          connect: (url) => new FakeSocket(url),
-          ...callbacks,
-        });
-        made.push({ s, onFatal: callbacks.onFatal });
-        return s;
-      },
-      (identity, text) => heard.push([identity, text]),
-      (m) => fatal.push(m),
-    );
-    return { h, heard, fatal, made };
-  }
-
-  it("transcribes at most six people, each in their own stream, named by their track", async () => {
-    const { h, heard } = hub();
-    const tracks = Array.from({ length: 8 }, (_, i) => ({ key: `t${i}`, identity: `p_${i}` }));
-    expect(h.sync(tracks)).toEqual(tracks.slice(0, MAX_STREAMS).map((t) => t.key));
-
-    const speech = new Float32Array(4800).fill(0.2); // 100 ms at 48 kHz
-    h.feed("t1", speech);
-    h.feed("t7", speech); // over the cap: ignored
-    await flush();
-    expect(FakeSocket.all).toHaveLength(1);
-    last().start();
-    expect(last().sent[0].audio_base_64.length).toBeGreaterThan(0);
-    last().server({ message_type: "committed_transcript", text: "Hey Grok" });
-    expect(heard).toEqual([["p_1", "Hey Grok"]]);
-
-    // Someone leaves: their stream closes and the next person gets a slot.
-    expect(h.sync(tracks.filter((t) => t.key !== "t1"))).toContain("t6");
-    expect(last().readyState).toBe(3);
-  });
-
-  it("stays quiet in silence, and commits when someone stops talking", async () => {
-    const { h } = hub();
-    h.sync([{ key: "t0", identity: "p_0" }]);
-    for (let i = 0; i < 10; i++) h.feed("t0", new Float32Array(4800));
-    await flush();
-    expect(FakeSocket.all).toHaveLength(0);
-    h.feed("t0", new Float32Array(4800).fill(0.2));
-    await flush();
-    last().start();
-    for (let i = 0; i < 20; i++) h.feed("t0", new Float32Array(4800));
-    expect(last().sent.filter((m) => m.commit)).toHaveLength(1);
-  });
-
-  it("stops everyone's transcription when the account can't be used", () => {
-    const { h, fatal, made } = hub();
-    expect(h.sync([{ key: "a", identity: "p_a" }, { key: "b", identity: "p_b" }])).toHaveLength(2);
-    made[0].onFatal("bad key");
-    made[1].onFatal("bad key");
-    expect(fatal).toEqual(["bad key"]);
-    expect(made.every((m) => m.s.status === "dead")).toBe(true);
-    expect(h.sync([{ key: "c", identity: "p_c" }])).toEqual([]);
-    h.feed("a", new Float32Array(10));
   });
 });

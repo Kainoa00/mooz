@@ -1,4 +1,4 @@
-/** Audio sample plumbing for browser voice: 16-bit PCM in and out, at the rates ElevenLabs takes. */
+/** Audio sample plumbing for browser voice: 16-bit PCM in and out, at the rates the speech services take. */
 
 export const SCRIBE_RATE = 16_000;
 
@@ -30,6 +30,28 @@ export function base64(bytes: Uint8Array): string {
 
 export function pcmBase64(pcm: Int16Array): string {
   return base64(new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength));
+}
+
+/** Mono 16-bit PCM as a WAV file (what a local speech server transcribes). */
+export function wavBytes(pcm: Int16Array, rate = SCRIBE_RATE): Uint8Array<ArrayBuffer> {
+  const out = new Uint8Array(44 + pcm.byteLength);
+  const view = new DataView(out.buffer);
+  const text = (at: number, s: string) => [...s].forEach((c, i) => (out[at + i] = c.charCodeAt(0)));
+  text(0, "RIFF");
+  view.setUint32(4, 36 + pcm.byteLength, true);
+  text(8, "WAVE");
+  text(12, "fmt ");
+  view.setUint32(16, 16, true); // the format chunk's size
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, 1, true); // one channel
+  view.setUint32(24, rate, true);
+  view.setUint32(28, rate * 2, true); // bytes a second
+  view.setUint16(32, 2, true); // bytes a sample
+  view.setUint16(34, 16, true); // bits a sample
+  text(36, "data");
+  view.setUint32(40, pcm.byteLength, true);
+  pcm.forEach((sample, i) => view.setInt16(44 + i * 2, sample, true));
+  return out;
 }
 
 /**

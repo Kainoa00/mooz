@@ -1,9 +1,7 @@
-import { VoiceError } from "./elevenlabs";
-import { SpeechGate } from "./gate";
-import { Downsampler, SCRIBE_RATE, pcmBase64 } from "./pcm";
+import type { Transcriber, TranscriberCallbacks } from "./hearing";
+import { SCRIBE_RATE, pcmBase64 } from "./pcm";
+import { VoiceError } from "./settings";
 
-/** The most people one tab transcribes at once (each is its own stream, on the owner's bill). */
-export const MAX_STREAMS = 6;
 /** Close a stream after this long without speech; the next word opens a fresh one. */
 export const IDLE_CLOSE_MS = 15_000;
 /** Audio held while a stream connects (or waits to retry), in samples: 10 s. */
@@ -31,15 +29,12 @@ export interface SocketLike {
   close(): void;
 }
 
-export interface ScribeOptions {
+export interface ScribeOptions extends TranscriberCallbacks {
   /** A fresh single-use token for each connection. */
   token: () => Promise<string>;
   /** Builds the URL for a token. */
   url: (token: string) => string;
   connect?: (url: string) => SocketLike;
-  onText: (text: string) => void;
-  /** Called once when transcription can't go on (bad key, no credits); the stream is done. */
-  onFatal: (message: string) => void;
 }
 
 type State = "idle" | "connecting" | "open" | "dead";
@@ -48,7 +43,7 @@ type State = "idle" | "connecting" | "open" | "dead";
  * One person's Scribe realtime stream: opened when they start talking, fed while they talk,
  * closed after a quiet spell, and reopened (with a new token) when they talk again.
  */
-export class ScribeStream {
+export class ScribeStream implements Transcriber {
   private state: State = "idle";
   private socket: SocketLike | null = null;
   private queue: { pcm: Int16Array; commit: boolean }[] = [];
@@ -192,79 +187,5 @@ export class ScribeStream {
   private clearIdle(): void {
     if (this.idleTimer) clearTimeout(this.idleTimer);
     this.idleTimer = null;
-  }
-}
-
-export interface HubTrack {
-  /** Unique per audio track (changes when a device switch swaps the track). */
-  key: string;
-  identity: string;
-}
-
-interface Pipeline {
-  identity: string;
-  downsampler: Downsampler;
-  gate: SpeechGate;
-  stream: ScribeStream;
-}
-
-/**
- * Everyone this tab transcribes for its connector agent: up to MAX_STREAMS tracks, each
- * through a speech gate into its own Scribe stream. Who said what comes from the track.
- */
-export class ScribeHub {
-  private readonly pipelines = new Map<string, Pipeline>();
-  private dead = false;
-
-  constructor(
-    private readonly sampleRate: number,
-    private readonly makeStream: (callbacks: Pick<ScribeOptions, "onText" | "onFatal">) => ScribeStream,
-    private readonly onHeard: (identity: string, text: string) => void,
-    private readonly onFatal: (message: string) => void,
-  ) {}
-
-  /** Follows the tracks in the meeting; returns the keys being transcribed. */
-  sync(tracks: readonly HubTrack[]): string[] {
-    const wanted = new Map(tracks.map((t) => [t.key, t]));
-    for (const [key, p] of this.pipelines) {
-      if (!wanted.has(key)) {
-        p.stream.close();
-        this.pipelines.delete(key);
-      }
-    }
-    for (const track of tracks) {
-      if (this.dead || this.pipelines.size >= MAX_STREAMS) break;
-      if (this.pipelines.has(track.key)) continue;
-      const stream = this.makeStream({
-        onText: (text) => this.onHeard(track.identity, text),
-        onFatal: (message) => this.fatal(message),
-      });
-      this.pipelines.set(track.key, {
-        identity: track.identity,
-        downsampler: new Downsampler(this.sampleRate),
-        gate: new SpeechGate(),
-        stream,
-      });
-    }
-    return [...this.pipelines.keys()];
-  }
-
-  feed(key: string, block: Float32Array): void {
-    const p = this.pipelines.get(key);
-    if (!p) return;
-    const { frames, commit } = p.gate.push(p.downsampler.process(block));
-    frames.forEach((frame, i) => p.stream.send(frame, commit && i === frames.length - 1));
-  }
-
-  close(): void {
-    for (const p of this.pipelines.values()) p.stream.close();
-    this.pipelines.clear();
-  }
-
-  private fatal(message: string): void {
-    if (this.dead) return;
-    this.dead = true;
-    this.close();
-    this.onFatal(message);
   }
 }

@@ -1,4 +1,4 @@
-import { TTS_RATE, VoiceError } from "./elevenlabs";
+import { TTS_RATE, VoiceError } from "./settings";
 import { PcmReader } from "./pcm";
 
 /** What the agent can do with its voice. */

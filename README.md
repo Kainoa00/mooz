@@ -250,10 +250,21 @@ spoken in part and posted in full). Turn on **Review answers before they're spok
 each one first. **Take Grok out** removes it from the meeting; it also leaves when you close the
 tab for more than a couple of minutes, or when the meeting ends.
 
-**Voice (optional).** Without it, people reach your assistant in chat. Add your ElevenLabs API
-key in the same dialog and it also hears its name said out loud ("Hey Grok, …") and speaks its
-answers. The key stays in your browser and is sent only to ElevenLabs. Your tab transcribes up
-to 6 people, and only while someone is talking.
+**Voice (optional).** Without it, people reach your assistant in chat. Turn on voice in the
+same dialog and it also hears its name said out loud ("Hey Grok, …") and speaks its answers,
+through either:
+
+- **ElevenLabs:** your API key stays in your browser and is sent only to ElevenLabs.
+- **A speech server on this computer:** VoiceStudio, or any OpenAI-compatible server at
+  `http://127.0.0.1:PORT/v1` (or `localhost`), with no key. Everyone's speech goes only to that
+  server. Saving checks the server is up and lets the page in (VoiceStudio needs the meeting's
+  address in `OMNIVOICE_ALLOWED_ORIGINS`), and your browser may ask to let the site use apps on
+  your device. This works in Chrome, Edge and Firefox; Safari and iPhone or iPad browsers block
+  it. For this, the page's security policy allows `http://127.0.0.1` and `http://localhost` on
+  any port; scripts still need the page's nonce.
+
+Settings stay in your browser; mooz never sees them. Your tab transcribes up to 6 people, and
+only while someone is talking.
 
 **What your app sees.** The question, who asked (marked as you, a guest or another agent), and
 the last 10 minutes of the meeting, labelled by role and marked as information, never
@@ -271,8 +282,9 @@ questions you send your assistant, and the meeting around them, while it's in a 
 connector, and know that proxy and tunnel logs may record it (it's in the URL). The dialog shows
 when each link was last used; **New link** if one looks off.
 
-**Costs:** your assistant app's own plan; with voice, ElevenLabs bills you for transcription
-(per minute of speech) and for the answers it speaks. The mooz server pays for nothing and holds
+**Costs:** your assistant app's own plan; with ElevenLabs voice, ElevenLabs bills you for
+transcription (per minute of speech) and for the answers it speaks (a local server costs only
+your computer's time). The mooz server pays for nothing and holds
 no keys.
 
 ## Many agents in one meeting

@@ -1,79 +1,16 @@
+import { DEFAULT_VOICE_ID, TTS_RATE, VoiceError, type ElevenLabsVoice } from "./settings";
+
 /**
  * The owner's own ElevenLabs account, used straight from their browser: the key lives in
- * this browser's localStorage and is only ever sent to api.elevenlabs.io.
+ * this browser's localStorage (see settings.ts) and is only ever sent to api.elevenlabs.io.
  */
 
 export const ELEVENLABS_API = "https://api.elevenlabs.io";
 export const ELEVENLABS_WS = "wss://api.elevenlabs.io";
 /** The bridge's defaults, so an agent sounds the same whichever door it came through. */
-export const DEFAULT_VOICE_ID = "hpp4J3VqNfWAUOO0d1Us";
+export { DEFAULT_VOICE_ID, TTS_RATE, VoiceError };
 export const TTS_MODEL = "eleven_flash_v2_5";
-export const TTS_RATE = 24_000;
 export const VAD_SILENCE_SECONDS = 0.6;
-
-const SETTINGS_KEY = "mooz.voice";
-const KEY_PATTERN = /^[\x21-\x7e]{16,200}$/;
-const VOICE_PATTERN = /^[A-Za-z0-9]{8,64}$/;
-
-export interface VoiceSettings {
-  apiKey: string;
-  voiceId: string;
-}
-
-export class VoiceError extends Error {
-  constructor(
-    message: string,
-    /** True when retrying can't help: a bad key, no credits left, terms not accepted. */
-    readonly fatal: boolean,
-  ) {
-    super(message);
-  }
-}
-
-/** Checks what the owner typed; returns an error message, or the settings to save. */
-export function parseVoiceSettings(apiKey: string, voiceId: string): VoiceSettings | string {
-  const key = apiKey.trim();
-  const voice = voiceId.trim() || DEFAULT_VOICE_ID;
-  if (!KEY_PATTERN.test(key)) return "That doesn't look like an ElevenLabs API key.";
-  if (!VOICE_PATTERN.test(voice)) return "A voice ID is letters and numbers, from the voice's page in ElevenLabs.";
-  return { apiKey: key, voiceId: voice };
-}
-
-interface KeyValueStore {
-  getItem(key: string): string | null;
-  setItem(key: string, value: string): void;
-  removeItem(key: string): void;
-}
-
-function local(): KeyValueStore | null {
-  try {
-    return window.localStorage;
-  } catch {
-    return null;
-  }
-}
-
-export function readVoiceSettings(store: KeyValueStore | null = local()): VoiceSettings | null {
-  try {
-    const saved = JSON.parse(store?.getItem(SETTINGS_KEY) ?? "null") as Partial<VoiceSettings> | null;
-    if (typeof saved?.apiKey !== "string" || typeof saved.voiceId !== "string") return null;
-    const parsed = parseVoiceSettings(saved.apiKey, saved.voiceId);
-    return typeof parsed === "string" ? null : parsed;
-  } catch {
-    return null;
-  }
-}
-
-export function saveVoiceSettings(settings: VoiceSettings | null, store: KeyValueStore | null = local()): boolean {
-  try {
-    if (!store) return false;
-    if (settings) store.setItem(SETTINGS_KEY, JSON.stringify(settings));
-    else store.removeItem(SETTINGS_KEY);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 async function failure(res: Response, what: string): Promise<VoiceError> {
   if (res.status === 401) return new VoiceError("ElevenLabs didn't accept your API key.", true);
@@ -117,7 +54,7 @@ export function scribeUrl(token: string, keyterms: readonly string[]): string {
 
 /** Streams spoken audio for `text`, as 24 kHz 16-bit PCM bytes. */
 export async function synthesize(
-  settings: VoiceSettings,
+  settings: ElevenLabsVoice,
   text: string,
   signal?: AbortSignal,
   fetchImpl: typeof fetch = fetch,

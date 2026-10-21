@@ -17,6 +17,7 @@ import {
 } from "@/lib/connector-protocol";
 import { errorMessage, readBody } from "@/lib/fetch-json";
 import { isAgent } from "@/lib/labels";
+import { voiceKey } from "@/lib/voice/settings";
 import type { AgentVoice } from "@/lib/voice/speaker";
 import { ConnectorHearing, openSpeaker, useVoiceSettings } from "./ConnectorVoice";
 
@@ -121,11 +122,11 @@ export function ConnectorAgent({
   const answering = useRef(new Map<string, Answering>());
   const meeting = useMaybeRoomContext();
   const settings = useVoiceSettings();
-  // A voice problem belongs to the key it happened with; a new key gets a fresh try.
+  // A voice problem belongs to the setup it happened with; a new key or server gets a fresh try.
   const [problem, setProblem] = useState<{ key: string; message: string } | null>(null);
-  const voiceProblem = settings && problem?.key === settings.apiKey ? problem.message : null;
+  const voiceProblem = settings && problem?.key === voiceKey(settings) ? problem.message : null;
   const onVoiceFatal = useCallback(
-    (message: string) => settings && setProblem({ key: settings.apiKey, message }),
+    (message: string) => settings && setProblem({ key: voiceKey(settings), message }),
     [settings],
   );
 
@@ -330,17 +331,18 @@ export function ConnectorAgent({
     };
   }, [approved, base, receive, hear]);
 
-  // 2b. With the owner's ElevenLabs key, the agent speaks: its answers go out as its microphone.
+  // 2b. With the owner's voice settings, the agent speaks: its answers go out as its microphone.
   useEffect(() => {
     const room = roomRef.current;
     if (phase !== "in" || !settings || !room) return;
     const voice = openSpeaker(
       settings,
       (e) => {
-        if (e.fatal) setProblem({ key: settings.apiKey, message: e.message });
+        if (e.fatal) setProblem({ key: voiceKey(settings), message: e.message });
       },
       // People first: anyone but an agent talking in the meeting (this tab hears it as its owner).
       () => (meeting?.activeSpeakers ?? []).some((p) => !isAgent(p)),
+      ["Yes?", FILLER],
     );
     voiceRef.current = voice.speaker;
     let publication: LocalTrackPublication | undefined;
@@ -351,7 +353,7 @@ export function ConnectorAgent({
         publication = p;
         if (gone && p.track) void room.localParticipant.unpublishTrack(p.track);
       })
-      .catch(() => setProblem({ key: settings.apiKey, message: "Couldn't turn on your agent's voice." }));
+      .catch(() => setProblem({ key: voiceKey(settings), message: "Couldn't turn on your agent's voice." }));
     return () => {
       gone = true;
       voiceRef.current = null;
@@ -465,8 +467,8 @@ export function ConnectorAgent({
           {voiceProblem
             ? `Voice is off: ${voiceProblem} ${connector.name} still answers in chat.`
             : settings
-              ? `🎙️ ${connector.name} hears its name and speaks, through your ElevenLabs account.`
-              : `Chat only: people reach ${connector.name} with @${connector.name}. Add an ElevenLabs key in Bring my agent to let it hear and speak.`}
+              ? `🎙️ ${connector.name} hears its name and speaks, through ${settings.provider === "local" ? "the speech server on this computer" : "your ElevenLabs account"}.`
+              : `Chat only: people reach ${connector.name} with @${connector.name}. Turn on voice in Bring my agent to let it hear and speak.`}
         </p>
       )}
       {phase === "in" && settings && !voiceProblem && (

@@ -33,11 +33,16 @@ describe("contentSecurityPolicy", () => {
       "https://lk.example.com",
       "https://api.elevenlabs.io",
       "wss://api.elevenlabs.io",
+      "http://127.0.0.1:*",
+      "http://localhost:*",
     ]);
     expect(d["frame-ancestors"]).toEqual(["'none'"]);
     expect(d["object-src"]).toEqual(["'none'"]);
     expect(d["base-uri"]).toEqual(["'none'"]);
-    expect(d["connect-src"]).not.toContain("wss:");
+    // No whole schemes, and no wildcard hosts: plain http only to this computer.
+    for (const broad of ["*", "http:", "https:", "ws:", "wss:"]) expect(d["connect-src"]).not.toContain(broad);
+    expect(d["connect-src"].filter((v) => v.startsWith("http://"))).toEqual(["http://127.0.0.1:*", "http://localhost:*"]);
+    expect(d["connect-src"].some((v) => /:\/\/\*/.test(v))).toBe(false);
   });
 
   it("lets React's dev tooling eval in development only", () => {

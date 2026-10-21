@@ -274,14 +274,21 @@ Anything outward-facing beyond pushing `main` is marked **[needs your go-ahead]*
       - models `^[A-Za-z0-9._:/-]{1,100}$` (Speaches model ids contain slashes)
   - Add `lib/voice/local.ts`:
     - `testLocal` does `GET /models`. If that fails, a second `mode: "no-cors"` probe tells "can't reach it" apart from "it answered but doesn't allow this page".
-    - `synthesizeLocal` POSTs JSON to `/audio/speech` with `pcm` and `stream_format: "audio"`. It returns the body stream, so `AgentSpeaker` and `PcmReader` work unchanged.
+    - `synthesizeLocal` POSTs JSON to `/audio/speech` with `response_format: "pcm"` (24 kHz). It returns one stream, so `AgentSpeaker` and `PcmReader` work unchanged.
+      - As in the bridge, it sends one sentence per request and asks for the next once the first audio arrives. `LocalVoiceOut` makes "Yes?" and the filler ahead of time.
+      - It sends no `stream_format` field: strict servers reject unknown fields, and `audio` is the default anyway.
+      - Each request, including reading its body, gets 60 s.
     - `transcribeLocal` POSTs a multipart WAV with `language: "en"` and `response_format: "json"`.
     - Errors become a `VoiceError` that says how to fix it:
       - "Can't reach your speech server at …. Is it running? If your browser asked about apps on this device, allow it in site settings."
       - "Add <this origin> to OMNIVOICE_ALLOWED_ORIGINS."
   - Hearing:
     - Pull a `Transcriber { send(pcm, commit); close() }` interface out of `ScribeHub` (`scribe.ts:221`).
-    - `LocalUtterances` buffers gated frames with `LOCAL_GATE`, encodes a WAV (`wavBytes` in `pcm.ts`), and sends it through a per-tab queue: 1 in flight, at most 6 waiting, oldest dropped.
+    - `LocalUtterances` buffers gated frames with `LOCAL_GATE`, encodes a WAV (`wavBytes` in `pcm.ts`), and sends it through a per-tab queue (`LocalHearing`): 1 in flight, at most 6 waiting, oldest dropped.
+    - The hub becomes `HearingHub` in `lib/voice/hearing.ts`.
+    - When hearing stops:
+      - at once for a wrong address or a refused page (401/403/404/405)
+      - after 5 failures in a row for anything else
     - `ConnectorHearing` picks the transcriber by provider, and `openSpeaker` picks the synthesizer.
   - `useVoiceSettings` snapshots JSON. Everything keyed on `settings.apiKey` switches to `voiceKey(settings)`: `ConnectorAgent.tsx:124-130, 340, 354` and `ConnectorVoice.tsx:239, 271`.
   - The form:

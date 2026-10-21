@@ -1,63 +1,21 @@
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { expect, type Page } from "@playwright/test";
 import { ASK_COOLDOWN_MS } from "../lib/connector-ears";
 import { assistantPrompt } from "../lib/connector-protocol";
+import {
+  agentChat,
+  assistant,
+  bringAndApprove,
+  call,
+  closeAssistants,
+  createConnector,
+  openConnectorDoor,
+  watchForErrors,
+} from "./connector";
 import { guestPage, joinAs, sendChat, startMeeting, test } from "./fixtures";
 
+test.afterEach(closeAssistants);
+
 const ELEVENLABS_KEY = "sk_e2e_0123456789abcdef";
-
-const clients: Client[] = [];
-test.afterEach(async () => {
-  await Promise.all(clients.splice(0).map((c) => c.close()));
-});
-
-/** The owner's assistant app, played by a script: an MCP client on the connector link. */
-async function assistant(url: string): Promise<Client> {
-  const client = new Client({ name: "e2e-assistant", version: "1.0.0" });
-  await client.connect(new StreamableHTTPClientTransport(new URL(url)));
-  clients.push(client);
-  return client;
-}
-
-async function call(client: Client, name: string, args: Record<string, unknown> = {}): Promise<string> {
-  const result = (await client.callTool({ name, arguments: args })) as { content: { type: string; text: string }[] };
-  return result.content.map((c) => c.text).join("\n");
-}
-
-async function openConnectorDoor(owner: Page): Promise<void> {
-  await owner.getByRole("button", { name: "Bring my agent" }).click();
-  await owner.getByRole("tab", { name: "Grok, Claude or ChatGPT" }).click();
-}
-
-/** Makes a connector in the dialog (left open) and returns its link. */
-async function createConnector(owner: Page, name: string): Promise<string> {
-  await openConnectorDoor(owner);
-  await owner.getByTestId("connector-name").fill(name);
-  await owner.getByTestId("connector-app").selectOption("grok");
-  await owner.getByTestId("connector-create").click();
-  return (await owner.getByTestId("connector-url").textContent())!.trim();
-}
-
-/** Brings the connector in (from the open dialog) and lets it in as the host. */
-async function bringAndApprove(host: Page, owner: Page, label: string): Promise<void> {
-  await owner.getByTestId("connector-bring").click(); // closes the dialog
-  await expect(host.getByTestId("agent-request")).toContainText(label, { timeout: 15_000 });
-  await host.getByTestId("agent-request").getByRole("button", { name: "Approve" }).click();
-  await expect(owner.getByTestId("connector-panel")).toHaveAttribute("data-phase", "in", { timeout: 30_000 });
-}
-
-const agentChat = (p: Page) => p.locator('[data-testid="chat-message"][data-kind="agent"]');
-
-/** Everything the page would have refused under its CSP, or thrown. */
-function watchForErrors(page: Page): string[] {
-  const errors: string[] = [];
-  page.on("console", (m) => {
-    if (/Content Security Policy|Refused to/i.test(m.text())) errors.push(m.text());
-  });
-  page.on("pageerror", (e) => errors.push(e.message));
-  return errors;
-}
 
 test("the owner brings Grok through a connector; it answers through the owner's assistant, minus opted-out words", async ({
   page,

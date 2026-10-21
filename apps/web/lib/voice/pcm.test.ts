@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Downsampler, PcmReader, base64, pcmBase64, rms, toInt16 } from "./pcm";
+import { Downsampler, PcmReader, SCRIBE_RATE, base64, pcmBase64, rms, toInt16, wavBytes } from "./pcm";
 
 describe("toInt16", () => {
   it("scales and clips", () => {
@@ -12,6 +12,21 @@ describe("rms", () => {
     expect(rms(new Int16Array(0))).toBe(0);
     expect(rms(new Int16Array(100))).toBe(0);
     expect(rms(new Int16Array([16384, -16384]))).toBeCloseTo(0.5, 5);
+  });
+});
+
+describe("wavBytes", () => {
+  it("wraps PCM in a 16-bit mono WAV header", () => {
+    const wav = wavBytes(new Int16Array([1, -2, 300]).subarray(1));
+    const view = new DataView(wav.buffer);
+    const text = (at: number, n: number) => String.fromCharCode(...wav.subarray(at, at + n));
+    expect(wav.length).toBe(48);
+    expect([text(0, 4), text(8, 4), text(12, 4), text(36, 4)]).toEqual(["RIFF", "WAVE", "fmt ", "data"]);
+    expect(view.getUint32(4, true)).toBe(40);
+    expect([view.getUint16(20, true), view.getUint16(22, true), view.getUint16(34, true)]).toEqual([1, 1, 16]);
+    expect([view.getUint32(24, true), view.getUint32(28, true)]).toEqual([SCRIBE_RATE, SCRIBE_RATE * 2]);
+    expect(view.getUint32(40, true)).toBe(4);
+    expect([view.getInt16(44, true), view.getInt16(46, true)]).toEqual([-2, 300]);
   });
 });
 

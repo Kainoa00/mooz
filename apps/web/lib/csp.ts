@@ -1,10 +1,13 @@
 /**
  * The pages' Content Security Policy. Scripts run only with this request's nonce, so injected
  * markup can't run code (and read an owner's ElevenLabs key); connections go only to this
- * server, its LiveKit, and ElevenLabs; and no other site can frame the meeting.
+ * server, its LiveKit, ElevenLabs and a speech server on the owner's own computer; and no
+ * other site can frame the meeting.
  */
 
 export const ELEVENLABS_ORIGINS = ["https://api.elevenlabs.io", "wss://api.elevenlabs.io"];
+/** A local speech server (VoiceStudio, on any port): only this computer, never the network. */
+export const LOCAL_VOICE_ORIGINS = ["http://127.0.0.1:*", "http://localhost:*"];
 
 /** LiveKit's WebSocket origin and the HTTP one its client checks a failed connection with. */
 export function livekitOrigins(url: string | undefined): string[] {
@@ -44,7 +47,7 @@ export function contentSecurityPolicy({
     "img-src": ["'self'", "blob:", "data:"],
     "font-src": ["'self'"],
     "media-src": ["'self'", "blob:"],
-    "connect-src": ["'self'", ...livekitOrigins(livekitUrl), ...ELEVENLABS_ORIGINS],
+    "connect-src": ["'self'", ...livekitOrigins(livekitUrl), ...ELEVENLABS_ORIGINS, ...LOCAL_VOICE_ORIGINS],
     "worker-src": ["'self'", "blob:"],
     "object-src": ["'none'"],
     "base-uri": ["'none'"],

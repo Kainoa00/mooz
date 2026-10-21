@@ -1,14 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import {
-  DEFAULT_VOICE_ID,
-  VoiceError,
-  parseVoiceSettings,
-  readVoiceSettings,
-  saveVoiceSettings,
-  scribeUrl,
-  singleUseToken,
-  synthesize,
-} from "./elevenlabs";
+import { DEFAULT_VOICE_ID, VoiceError, scribeUrl, singleUseToken, synthesize } from "./elevenlabs";
+import { parseVoiceSettings, readVoiceSettings, saveVoiceSettings } from "./settings";
 
 const KEY = "sk_0123456789abcdef0123456789abcdef";
 
@@ -27,8 +19,8 @@ const reply = (status: number, body: unknown) =>
 
 describe("voice settings", () => {
   it("checks the key and voice, defaulting the voice", () => {
-    expect(parseVoiceSettings(`  ${KEY} `, "")).toEqual({ apiKey: KEY, voiceId: DEFAULT_VOICE_ID });
-    expect(parseVoiceSettings(KEY, "abcDEF123456")).toEqual({ apiKey: KEY, voiceId: "abcDEF123456" });
+    expect(parseVoiceSettings(`  ${KEY} `, "")).toEqual({ provider: "elevenlabs", apiKey: KEY, voiceId: DEFAULT_VOICE_ID });
+    expect(parseVoiceSettings(KEY, "abcDEF123456")).toEqual({ provider: "elevenlabs", apiKey: KEY, voiceId: "abcDEF123456" });
     expect(parseVoiceSettings("short", "")).toMatch(/API key/);
     expect(parseVoiceSettings("has spaces in it, so no key", "")).toMatch(/API key/);
     expect(parseVoiceSettings(KEY, "../../v1/user")).toMatch(/voice ID/);
@@ -37,8 +29,8 @@ describe("voice settings", () => {
   it("saves in this browser, and ignores anything tampered with", () => {
     const store = memoryStore();
     expect(readVoiceSettings(store)).toBeNull();
-    expect(saveVoiceSettings({ apiKey: KEY, voiceId: DEFAULT_VOICE_ID }, store)).toBe(true);
-    expect(readVoiceSettings(store)).toEqual({ apiKey: KEY, voiceId: DEFAULT_VOICE_ID });
+    expect(saveVoiceSettings({ provider: "elevenlabs", apiKey: KEY, voiceId: DEFAULT_VOICE_ID }, store)).toBe(true);
+    expect(readVoiceSettings(store)).toEqual({ provider: "elevenlabs", apiKey: KEY, voiceId: DEFAULT_VOICE_ID });
 
     store.data.set("mooz.voice", JSON.stringify({ apiKey: KEY, voiceId: "../evil" }));
     expect(readVoiceSettings(store)).toBeNull();
@@ -96,7 +88,7 @@ describe("scribeUrl", () => {
 describe("synthesize", () => {
   it("streams PCM for the answer in the owner's chosen voice", async () => {
     const fetchImpl = vi.fn(async () => new Response(new Uint8Array([1, 2]), { status: 200 }));
-    const stream = await synthesize({ apiKey: KEY, voiceId: "abcDEF123456" }, "March 30th.", undefined, fetchImpl);
+    const stream = await synthesize({ provider: "elevenlabs", apiKey: KEY, voiceId: "abcDEF123456" }, "March 30th.", undefined, fetchImpl);
     expect(stream).toBeInstanceOf(ReadableStream);
     const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe(
@@ -107,7 +99,7 @@ describe("synthesize", () => {
   });
 
   it("reports failures, and lets a cancel through as itself", async () => {
-    const settings = { apiKey: KEY, voiceId: DEFAULT_VOICE_ID };
+    const settings = { provider: "elevenlabs" as const, apiKey: KEY, voiceId: DEFAULT_VOICE_ID };
     await expect(synthesize(settings, "hi", undefined, async () => reply(401, {}))).rejects.toMatchObject({ fatal: true });
     await expect(
       synthesize(settings, "hi", undefined, () => Promise.reject(new TypeError("offline"))),
