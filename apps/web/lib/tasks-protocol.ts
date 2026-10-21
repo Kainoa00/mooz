@@ -53,6 +53,14 @@ export const MAX_EVENT_CHARS = 64_000;
 /** Rows kept per agent (a mooz agent takes at most 20 tasks a meeting); oldest finished go first. */
 export const MAX_TASKS_PER_AGENT = 30;
 
+/**
+ * Whether a task event tells this tab of a private task of its own (so the host's summary leaves
+ * its report out): from an agent, about a task its own owner set, and that owner is this tab.
+ */
+export function isOwnPrivateTask(from: Pick<Labelled, "attributes">, event: TaskEvent, localIdentity: string): boolean {
+  return event.private && isAgent(from) && from.attributes.owner_id === event.owner && event.owner === localIdentity;
+}
+
 /** A stream's text, or null once it grows past `max` (it stops reading there). */
 export async function readCapped(reader: AsyncIterable<string>, max = MAX_EVENT_CHARS): Promise<string | null> {
   let text = "";

@@ -192,6 +192,13 @@ describe("names that look like an agent's", () => {
     ["ꜰelix", "Felix"], // a small capital
     ["Ꜳtlas", "Atlas"], // Latin letters no table knows, where the rest is the agent's name
     ["Atʻlas", "Atlas"], // an ʻokina, as an apostrophe would be
+    ["At’las", "Atlas"], // the curly apostrophe phones type
+    ["At´las", "Atlas"],
+    ["ARlA", "ARIA"], // an l among capitals reads as I
+    ["JARVlS", "JARVIS"],
+    ["KAl", "KAI"],
+    ["NovaAl", "NovaAI"],
+    ["lola", "Iola"], // and an l that starts a word
   ])("refuses %j while %j is here, and the agent while they are", (name, agent) => {
     expect(() => parseDisplayName(name, [agent])).toThrowError(expect.objectContaining({ status: 409, code: "name_taken" }));
     expect(() => parseAgentName(agent, [name])).toThrowError(expect.objectContaining({ status: 409, code: "name_taken" }));
@@ -206,6 +213,22 @@ describe("names that look like an agent's", () => {
     ["Ira", "Lyra"], // and a capital I that starts one is an I
     ["Ilham", "Llama"],
     ["Ian", "Lan"],
+    ["Clara", "Kiara"], // an l before a small letter is an l, after a capital too
+    ["Alan", "Aian"],
+    ["lily", "Ilya"], // an l read as I matches only by spelling, not by sound
+    ["lila", "Ila"],
+    ["leila", "Ila"],
+    ["lyla", "Iola"],
+    ["lisa", "Isa"],
+    ["lena", "Iona"],
+    ["Ƙasim", "Wasim"], // Latin letters the tables know read as themselves
+    ["Ɲama", "Rama"],
+    ["Ɗan", "Ian"],
+    ["Ɓala", "Nala"],
+    ["Ɓello", "Jello"],
+    ["Əli", "Oli"],
+    ["Ɓɔla", "Lila"], // and unknown ones stand in only for fewer than half the letters
+    ["O’Brien", "Brien"], // ’ is an apostrophe, as ' is
   ])("keeps %j next to an agent called %j, either way round", (name, agent) => {
     expect(parseDisplayName(name, [agent])).toBe(name);
     expect(parseAgentName(agent, [name])).toBe(agent);

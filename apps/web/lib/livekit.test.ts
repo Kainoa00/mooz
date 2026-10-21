@@ -1,6 +1,6 @@
 import { TokenVerifier } from "livekit-server-sdk";
 import { beforeEach, describe, expect, it } from "vitest";
-import { livekitConfig, mintHumanToken } from "./livekit";
+import { AGENT_TOKEN_TTL_MS, TOKEN_TTL_MS, livekitConfig, mintHumanToken } from "./livekit";
 import { LK_KEY, LK_SECRET, useTestEnv } from "@/test/helpers";
 
 beforeEach(useTestEnv);
@@ -42,6 +42,9 @@ describe("livekitConfig", () => {
   });
 });
 
+/** Seconds a token works (its two times come from separate clock reads, so allow a second). */
+const lifetime = (claims: { exp?: number; nbf?: number }) => (claims.exp ?? 0) - (claims.nbf ?? 0);
+
 describe("mintHumanToken", () => {
   it("grants room join for one room and marks the participant human", async () => {
     const jwt = await mintHumanToken({ room: "abc-defg-hij", identity: "p_1", name: "Zach" });
@@ -59,6 +62,9 @@ describe("mintHumanToken", () => {
       canUpdateOwnMetadata: false,
     });
     expect(claims.video?.roomAdmin).toBeFalsy();
+    // Name checks count on how long it lasts (an hour).
+    expect(lifetime(claims)).toBeGreaterThanOrEqual(TOKEN_TTL_MS / 1000 - 1);
+    expect(lifetime(claims)).toBeLessThanOrEqual(TOKEN_TTL_MS / 1000);
   });
 
   it("carries a notes opt-out so it survives a reconnect", async () => {
@@ -82,6 +88,8 @@ describe("mintAgentToken", () => {
     });
 
     const claims = await new TokenVerifier(LK_KEY, LK_SECRET).verify(jwt);
+    expect(lifetime(claims)).toBeGreaterThanOrEqual(AGENT_TOKEN_TTL_MS / 1000 - 1);
+    expect(lifetime(claims)).toBeLessThanOrEqual(AGENT_TOKEN_TTL_MS / 1000);
     expect(claims.sub).toBe("a_1");
     expect(claims.name).toBe("Grok");
     expect(claims.attributes).toEqual({

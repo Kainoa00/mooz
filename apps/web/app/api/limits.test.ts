@@ -5,6 +5,7 @@ import {
   HOST_SESSIONS,
   MAX_PARTICIPANT_ROWS,
   MAX_ROOM_SESSIONS,
+  SESSION_TTL_MS,
   UNCONNECTED_PLACE_MS,
   addParticipant,
   createRoom,
@@ -123,7 +124,27 @@ describe("rate limits", () => {
     expect(host.status).toBe(200);
   });
 
-  it("holds at most 2000 sessions a meeting, places or not", async () => {
+  it("holds sessions only up to a backstop the join limit can't reach in a day", () => {
+    expect(JOINS_PER_MINUTE * (SESSION_TTL_MS / 60_000 + 1)).toBeLessThan(MAX_ROOM_SESSIONS);
+  });
+
+  it("still lets newcomers in after hours of joins that never stay, where the webhook says who's in", async () => {
+    const db = getDb();
+    const { slug } = createRoom(db);
+    const url = `http://localhost:3000/api/rooms/${slug}/join`;
+    noteWebhook(db);
+    const insert = db.prepare(
+      "INSERT INTO participants (identity, room_slug, name, is_host, secret_hash, created_at, expires_at, session_sid, left_at) VALUES (?, ?, 'Ghost', 0, 's', ?, ?, ?, ?)",
+    );
+    const long = Date.now() - UNCONNECTED_PLACE_MS - 1;
+    // Three hours' worth at the join limit: half never connect, half come in for a moment and leave.
+    for (let i = 0; i < 3 * 60 * JOINS_PER_MINUTE; i++) {
+      insert.run(`p_ghost${i}`, slug, long, Date.now() + 60_000, i % 2 ? `PA_${i}` : null, i % 2 ? long : null);
+    }
+    expect((await join(jsonRequest(url, { name: "Lee" }), params({ slug }))).status).toBe(200);
+  });
+
+  it("holds at most MAX_ROOM_SESSIONS sessions a meeting, places or not", async () => {
     const db = getDb();
     const { slug } = createRoom(db);
     const url = `http://localhost:3000/api/rooms/${slug}/join`;
@@ -132,7 +153,9 @@ describe("rate limits", () => {
       "INSERT INTO participants (identity, room_slug, name, is_host, secret_hash, created_at, expires_at) VALUES (?, ?, 'Ghost', 0, 's', ?, ?)",
     );
     const long = Date.now() - UNCONNECTED_PLACE_MS - 1;
+    db.exec("BEGIN");
     for (let i = 0; i < MAX_ROOM_SESSIONS; i++) insert.run(`p_ghost${i}`, slug, long, Date.now() + 60_000);
+    db.exec("COMMIT");
     expect(await code(await join(jsonRequest(url, { name: "Lee" }), params({ slug })))).toBe("room_full");
     // Sessions that have ended don't count, swept or not.
     db.prepare("UPDATE participants SET expires_at = ? WHERE identity = 'p_ghost0'").run(Date.now());
@@ -145,9 +168,10 @@ describe("rate limits", () => {
     const insert = db.prepare(
       "INSERT INTO participants (identity, room_slug, name, is_host, secret_hash, created_at, expires_at) VALUES (?, ?, 'Ghost', 0, 's', ?, ?)",
     );
-    for (let i = 0; i < MAX_ROOM_SESSIONS; i++) insert.run(`p_ghost${i}`, slug, Date.now(), Date.now() + 60_000);
+    db.exec("BEGIN");
+    for (let i = 0; i < MAX_ROOM_SESSIONS + HOST_SESSIONS - 1; i++) insert.run(`p_ghost${i}`, slug, Date.now(), Date.now() + 60_000);
+    db.exec("COMMIT");
     expect(() => addParticipant(db, { slug, name: "Lee", isHost: false })).toThrow("full");
-    for (let i = 1; i < HOST_SESSIONS; i++) addParticipant(db, { slug, name: "Kainoa", isHost: true });
     expect(addParticipant(db, { slug, name: "Kainoa", isHost: true }).isHost).toBe(true);
     expect(() => addParticipant(db, { slug, name: "Kainoa", isHost: true })).toThrow("full");
   });

@@ -5,6 +5,7 @@ import {
   cancelTaskMessage,
   MAX_TASKS_PER_AGENT,
   isActive,
+  isOwnPrivateTask,
   parseTaskEvent,
   readCapped,
   sortTasks,
@@ -105,6 +106,18 @@ describe("task protocol", () => {
     expect(tasks.size).toBe(MAX_TASKS_PER_AGENT);
     expect(tasks.has("a_atlas:t_active")).toBe(true); // still running: kept
     expect(tasks.has("a_atlas:t_0")).toBe(false);
+  });
+
+  it("knows a private task of the tab's own, from its own agent, and nobody else's", () => {
+    const mine = { attributes: { kind: "agent", owner_id: "p_host" } };
+    const zachs = { attributes: { kind: "agent", owner_id: "p_zach" } };
+    const of = (owner: string, isPrivate = true) => parseTaskEvent(JSON.stringify(event({ owner, private: isPrivate })))!;
+    expect(isOwnPrivateTask(mine, of("p_host"), "p_host")).toBe(true);
+    expect(isOwnPrivateTask(mine, of("p_host", false), "p_host")).toBe(false); // public
+    expect(isOwnPrivateTask(mine, of("p_zach"), "p_host")).toBe(false); // names another owner
+    expect(isOwnPrivateTask(zachs, of("p_host"), "p_host")).toBe(false); // someone else's agent
+    expect(isOwnPrivateTask(zachs, of("p_zach"), "p_host")).toBe(false); // someone else's task
+    expect(isOwnPrivateTask({ attributes: { kind: "human" } }, of("p_host"), "p_host")).toBe(false);
   });
 
   it("stops reading a stream that is far too long", async () => {

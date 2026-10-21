@@ -1,4 +1,4 @@
-import { nameWords, sameWord, wakeWord } from "./addressing";
+import { nameWords, ratio, sameWord, wakeWord } from "./addressing";
 import { COMMON_WORDS } from "./common-words";
 import { HttpError } from "./http";
 import { hasHidden } from "./text";
@@ -40,6 +40,8 @@ export function parseDisplayName(value: unknown, agentNames: readonly string[] =
 
 /** Whether two words would be heard as each other, either way round. */
 const alike = (a: string, b: string) => a === b || sameWord(a, b) || sameWord(b, a);
+/** Whether two words are spelled nearly the same (the detector's spelling rule, not its sound one). */
+const spelledAlike = (a: string, b: string) => a === b || (a.length >= 3 && b.length >= 3 && ratio(a, b) >= 90);
 
 // How Cyrillic and Greek letters sound in Latin ones, so "Атлас" (or "Аtlas", with one
 // Cyrillic letter) is heard as Atlas.
@@ -73,9 +75,9 @@ const CAPITALS: Record<string, string> = {
 const LOOKS: Record<string, string> = {
   ...LATIN,
   ɩ: "i", ȷ: "j", ɵ: "o", "0": "o", "1": "l",
-  // Latin letters drawn like plain ones: Atǀas (a click letter) reads Atlas.
+  // Latin letters drawn like plain ones: Atǀas (a click letter) reads Atlas, Ɗan reads Dan.
   ǀ: "l", ǁ: "ll", ƚ: "l", ɭ: "l", ɫ: "l", ȴ: "l", ɨ: "i", ʉ: "u", ꜰ: "f", ꞵ: "b", ƀ: "b",
-  ꭓ: "x", ɲ: "n", ɾ: "r", ɼ: "r", ʂ: "s", ƙ: "k",
+  ꭓ: "x", ɲ: "n", ɾ: "r", ɼ: "r", ʂ: "s", ƙ: "k", ɓ: "b", ɗ: "d", ƴ: "y", ə: "e",
   а: "a", в: "b", г: "r", е: "e", ё: "e", к: "k", м: "m", н: "h", о: "o", п: "n", р: "p",
   с: "c", т: "t", у: "y", х: "x", ш: "w", ѕ: "s", і: "i", ї: "i", ј: "j", ԁ: "d", ԛ: "q",
   ԝ: "w", һ: "h", ӏ: "l", ү: "y", α: "a", β: "b", ε: "e", ζ: "z", η: "n", ι: "i", κ: "k",
@@ -90,17 +92,22 @@ const LOOKS: Record<string, string> = {
   ꓫ: "x", ꓬ: "y", ꓜ: "z",
 };
 
+// Marks drawn like an apostrophe: the curly ones phones type, the ʻokina, primes, accents.
+const APOSTROPHES = /[\u2018\u2019\u02b9\u02bb\u02bc\u02bd\u02be\u02bf\u02c8\ua78b\ua78c`\u00b4\u2032]/gu;
+
 /**
- * Compatibility forms (fullwidth, circled…) and accents gone, joiners dropped, and the ʻokina
- * and ʼ written as the apostrophe they look like (so "Atʻlas" is one word, as "At'las" is).
+ * Compatibility forms (fullwidth, circled…) and accents gone, joiners dropped, and anything drawn
+ * like an apostrophe written as one (so "At’las" and "Atʻlas" are one word, as "At'las" is).
+ * Before normalizing too: it would turn ´ into a space and an accent.
  */
 function bare(name: string): string {
   return name
+    .replace(APOSTROPHES, "'")
     .normalize("NFKC")
     .normalize("NFKD")
     .replace(/\p{M}/gu, "")
     .replace(/[\u200c\u200d]/g, "")
-    .replace(/[\u02bb\u02bc]/g, "'");
+    .replace(APOSTROPHES, "'");
 }
 
 const plain = (name: string) => bare(name).toLowerCase();
@@ -123,14 +130,35 @@ export function foldNameByLook(name: string): string {
 /**
  * The ways a name can be read: as it sounds, as it looks, and with a capital I read as l (and l
  * as I), which many fonts draw alike. Only where they would pass for each other: an I after a
- * small letter, or before one inside a word ("AtIas", "KaI"), and an l that starts a word
- * ("lris"). A capital I that starts a word (Ira, Ilham) and an l inside one (Joel) are just
- * themselves.
+ * small letter, or before one inside a word ("AtIas", "KaI"), and an l that starts a word, or
+ * follows a capital with no small letter after it ("lris", "ARlA", "NovaAl"). A capital I that
+ * starts a word (Ira, Ilham) and an l among small letters (Joel, Clara) are just themselves.
  */
 function readings(name: string): string[] {
   const iAsL = name.replace(/(?<=\p{Ll})I|(?<=\p{L})I(?=\p{Ll})/gu, "l");
-  const lAsI = name.replace(/(?<![\p{L}\p{N}])l/gu, "I");
+  const lAsI = name.replace(/(?<![\p{L}\p{N}])l|(?<=\p{Lu})l(?!\p{Ll})/gu, "I");
   return [foldName(name), foldNameByLook(name), foldNameByLook(iAsL), foldNameByLook(lAsI)];
+}
+
+interface Reading {
+  folded: string;
+  /** A reading by look (not by sound): letters no table knows may stand in for others. */
+  byLook: boolean;
+  /**
+   * An l read as I: "lily" read as "Iily" is that only to the eye, so it matches by spelling
+   * alone, not by the detector's sound rule (or it would be heard as Ilya).
+   */
+  bySpelling: boolean;
+}
+
+function readingsOf(name: string): Reading[] {
+  const [sound, look, iAsL, lAsI] = readings(name);
+  return [
+    { folded: sound, byLook: false, bySpelling: false },
+    { folded: look, byLook: true, bySpelling: false },
+    { folded: iAsL, byLook: true, bySpelling: false },
+    { folded: lAsI, byLook: true, bySpelling: lAsI !== look },
+  ];
 }
 
 const LATIN_SCRIPT = /\p{Script=Latin}/u;
@@ -149,8 +177,8 @@ function mixesAlphabets(name: string): boolean {
 }
 
 /**
- * Whether a word with Latin letters the tables don't know ("atǀas", "ꜳtlas") reads as `wake`:
- * the same length, with those letters (at most half of them) where the rest doesn't match.
+ * Whether a word with Latin letters the tables don't know ("ꜳtlas") reads as `wake`: the same
+ * length, with those letters (fewer than half of them) where the rest doesn't match.
  */
 function readsAs(word: string, wake: string): boolean {
   const letters = [...word];
@@ -162,7 +190,7 @@ function readsAs(word: string, wake: string): boolean {
     if (c < "\x80" || !LATIN_SCRIPT.test(c)) return false;
     unknown++;
   }
-  return unknown > 0 && unknown * 2 <= letters.length;
+  return unknown > 0 && unknown * 2 < letters.length;
 }
 
 /** The words of a folded name that still have letters beyond a to z, possessive and all. */
@@ -176,12 +204,17 @@ const unknownWords = (folded: string) =>
  * (an agent called "AtIas" is read as Atlas too).
  */
 function heardAs(name: string, agent: string): boolean {
-  const wakes = new Set(readings(agent).map((folded) => wakeWord(folded)).filter((w) => w !== undefined));
-  if (wakes.size === 0) return false;
-  return readings(name).some(
-    (folded) =>
-      nameWords(folded).some((w) => [...wakes].some((wake) => alike(w, wake))) ||
-      unknownWords(folded).some((w) => [...wakes].some((wake) => readsAs(w, wake))),
+  const wakes = readingsOf(agent).flatMap(({ folded, bySpelling }) => {
+    const word = wakeWord(folded);
+    return word === undefined ? [] : [{ word, bySpelling }];
+  });
+  if (wakes.length === 0) return false;
+  return readingsOf(name).some(
+    (r) =>
+      nameWords(r.folded).some((w) =>
+        wakes.some((wake) => (r.bySpelling || wake.bySpelling ? spelledAlike(w, wake.word) : alike(w, wake.word))),
+      ) ||
+      (r.byLook && unknownWords(r.folded).some((w) => wakes.some((wake) => readsAs(w, wake.word)))),
   );
 }
 

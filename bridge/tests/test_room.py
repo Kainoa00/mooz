@@ -40,6 +40,7 @@ class _Sender:
         self.sent: list[dict[str, Any]] = []
 
     async def send_text(self, text: str, **kw: Any) -> None:
+        text.encode("utf-8")  # as LiveKit's protobuf does, which refuses half a character pair
         self.sent.append({"text": text, **kw})
 
 
@@ -71,6 +72,17 @@ async def test_task_updates_go_as_written_not_escaped() -> None:
     (sent,) = fake.local_participant.sent
     assert "Привет" in sent["text"] and len(sent["text"]) < 22_000
     assert json.loads(sent["text"])["details"] == "Привет " * 3000
+
+
+async def test_half_a_character_pair_from_a_model_doesnt_stop_the_message() -> None:
+    fake = _Room()
+    room = MeetingRoom(cast(rtc.Room, fake))
+    await room.send_task_event({"type": "task", "summary": "Up \ud83d 5%", "details": "📈"})
+    await room.send_chat("Up \ud83d 5%")
+    event, chat = fake.local_participant.sent
+    assert json.loads(event["text"])["summary"] == "Up \ufffd 5%"
+    assert json.loads(event["text"])["details"] == "📈"
+    assert chat["text"] == "Up \ufffd 5%"
 
 
 @pytest.mark.parametrize(

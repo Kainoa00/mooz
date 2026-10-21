@@ -11,6 +11,7 @@ import {
   applyTaskEvent,
   cancelTaskMessage,
   isActive,
+  isOwnPrivateTask,
   parseTaskEvent,
   readCapped,
   sortTasks,
@@ -64,9 +65,7 @@ export function TaskPanel({ onPrivateTask }: { onPrivateTask?: (agent: string, t
       const event = parseTaskEvent(text);
       if (!from || !event) return;
       // Only a private task this tab's own agent runs for this person can send a report here.
-      if (event.private && isAgent(from) && from.attributes.owner_id === event.owner && event.owner === room.localParticipant.identity) {
-        privateTask.current?.(from.identity, event.title);
-      }
+      if (isOwnPrivateTask(from, event, room.localParticipant.identity)) privateTask.current?.(from.identity, event.title);
       setTasks((prev) => {
         const next = new Map(prev);
         return applyTaskEvent(next, from, event) ? next : prev;

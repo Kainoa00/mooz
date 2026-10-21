@@ -34,7 +34,10 @@ function checkpoint(db: Db): void {
 
 /** LiveKit says the meeting ended (everyone left): forget who was there. The room stays. */
 export function endMeeting(db: Db, slug: string): number {
-  const changes = transaction(db, () => forgetRooms(db, "?", [slug]));
+  const changes = transaction(db, () => {
+    db.prepare("UPDATE rooms SET webhook_at = NULL WHERE slug = ?").run(slug);
+    return forgetRooms(db, "?", [slug]);
+  });
   if (changes > 0) checkpoint(db);
   return changes;
 }

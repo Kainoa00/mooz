@@ -1,5 +1,5 @@
 import { WebhookReceiver } from "livekit-server-sdk";
-import { isUnwelcomeAgent, isUnwelcomePerson, noteBridgePresence } from "@/lib/agents";
+import { isUnwelcomeAgent, isUnwelcomePerson, noteBridgePresence, revokeIfNameTakenWhileAway } from "@/lib/agents";
 import { endMeeting } from "@/lib/cleanup";
 import { endRoomConnectors, noteConnectorPresence } from "@/lib/connector-agents";
 import { forgetAgent } from "@/lib/connector-queue";
@@ -10,7 +10,7 @@ import { livekitConfig, removeFromRoom } from "@/lib/livekit";
 import { getNotesPolicy } from "@/lib/notes";
 import { publishRoomState } from "@/lib/room-state";
 import { getRoomByLivekitName, notePersonPresence } from "@/lib/rooms";
-import { noteWebhook } from "@/lib/webhook-seen";
+import { noteRoomWebhook, noteWebhook } from "@/lib/webhook-seen";
 
 /**
  * LiveKit calls this for room events (configured in livekit.yaml). A removed agent (or one
@@ -50,10 +50,14 @@ export async function POST(req: Request): Promise<Response> {
     const room = event.room?.name;
     const db = getDb();
     noteWebhook(db);
+    if (room) noteRoomWebhook(db, room);
     if (event.event === "participant_joined" && identity && room) {
+      revokeIfNameTakenWhileAway(db, identity); // before its return is noted: then it's unwelcome
       noteBridgePresence(db, identity, sid, true);
       notePersonPresence(db, identity, sid, true);
-      if (isUnwelcomeAgent(db, identity) || isUnwelcomePerson(db, identity)) await removeFromRoom(room, identity);
+      if (isUnwelcomeAgent(db, identity) || isUnwelcomePerson(db, identity, event.participant?.name)) {
+        await removeFromRoom(room, identity);
+      }
       else if (noteConnectorPresence(db, identity, sid, true) === "expired") {
         forgetAgent(identity);
         await removeFromRoom(room, identity);

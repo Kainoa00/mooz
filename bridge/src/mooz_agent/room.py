@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -28,6 +29,13 @@ SAMPLE_RATE = 48_000
 NUM_CHANNELS = 1
 # Leave this long after the last person does, so the agent doesn't keep an empty room open.
 ALONE_GRACE_SECONDS = 60.0
+# Half of a character pair, on its own: a model can write one, and it can't be sent as UTF-8.
+_LONE_SURROGATE = re.compile("[\ud800-\udfff]")
+
+
+def _wire(text: str) -> str:
+    """Text LiveKit can send: a stray half character becomes \ufffd instead of failing the send."""
+    return _LONE_SURROGATE.sub("\ufffd", text)
 
 
 @dataclass(frozen=True)
@@ -248,7 +256,7 @@ class MeetingRoom:
         if to:
             attributes[PRIVATE_ATTRIBUTE] = "1"
         await self._room.local_participant.send_text(
-            text, topic=CHAT_TOPIC, attributes=attributes or None, destination_identities=to
+            _wire(text), topic=CHAT_TOPIC, attributes=attributes or None, destination_identities=to
         )
 
     async def send_task_event(
@@ -258,7 +266,9 @@ class MeetingRoom:
         # As written, not \uXXXX: escaped, a long result in another alphabet outgrows what
         # the task panel reads.
         await self._room.local_participant.send_text(
-            json.dumps(message, ensure_ascii=False), topic=TASKS_TOPIC, destination_identities=to
+            _wire(json.dumps(message, ensure_ascii=False)),
+            topic=TASKS_TOPIC,
+            destination_identities=to,
         )
 
     async def disconnect(self) -> None:

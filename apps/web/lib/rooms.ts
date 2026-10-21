@@ -11,10 +11,11 @@ import { webhookArrives } from "./webhook-seen";
 export const MAX_PARTICIPANT_ROWS = 200;
 export const UNCONNECTED_PLACE_MS = 5 * 60 * 1000;
 /**
- * Sessions a meeting holds at all, places or not: past this nobody but the host joins, and the
- * host only HOST_SESSIONS more (their reloads reuse their session, so that's plenty).
+ * Sessions a meeting holds at all, places or not: a backstop, above what the join limit can make
+ * in a session's day (30 a minute is 43,200; reloads reuse their session), so a link holder
+ * can't reach it. Past it nobody but the host joins, and the host only HOST_SESSIONS more.
  */
-export const MAX_ROOM_SESSIONS = 2000;
+export const MAX_ROOM_SESSIONS = 50_000;
 export const HOST_SESSIONS = 500;
 /** Host and participant secrets work this long after their last join (as long as their cookies). */
 export const SESSION_TTL_MS = 24 * 60 * 60 * 1000;

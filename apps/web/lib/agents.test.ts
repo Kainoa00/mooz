@@ -21,8 +21,8 @@ import {
 } from "./agents";
 import { getDb } from "./db";
 import { AGENT_TOKEN_TTL_MS, TOKEN_TTL_MS } from "./livekit";
-import { SESSION_TTL_MS, addParticipant, createRoom, notePersonPresence } from "./rooms";
-import { noteWebhook } from "./webhook-seen";
+import { SESSION_TTL_MS, addParticipant, createRoom, getRoom, notePersonPresence } from "./rooms";
+import { noteRoomWebhook, noteWebhook } from "./webhook-seen";
 import { useTestEnv } from "@/test/helpers";
 
 beforeEach(useTestEnv);
@@ -343,8 +343,19 @@ describe("who holds a name", () => {
     // into the call (Kainoa here, and Lee, who made the code) holds their name only while their
     // join token could still bring them in.
     noteWebhook(db);
-    expect(participantNames(db, slug, Date.now() + LEFT_GRACE_MS + 1).sort()).toEqual(["Kainoa", "Lee"]);
-    expect(participantNames(db, slug, Date.now() + TOKEN_TTL_MS + 1)).toEqual([]);
+    noteRoomWebhook(db, getRoom(db, slug)!.livekitRoom, Date.now() + 1000); // and spoke of this meeting since
+    expect(participantNames(db, slug, Date.now() + TOKEN_TTL_MS - 1000).sort()).toEqual(["Kainoa", "Lee"]);
+    expect(participantNames(db, slug, Date.now() + TOKEN_TTL_MS + 1000)).toEqual([]);
+  });
+
+  it("holds names as without the webhook in a meeting it hasn't spoken of (it may have stopped)", () => {
+    const { db, slug, host } = meeting();
+    noteWebhook(db); // from another meeting, an hour ago
+    const claim = claimAgentCode(db, { code: createAgentCode(db, host).code, name: "Atlas" });
+    decideAgentRequest(db, { slug, requestId: claim.requestId, approve: true });
+    markTokenIssued(db, claim.requestId);
+    expect(activeAgentNames(db, slug, Date.now() + 7 * 60_000)).toEqual(["Atlas"]);
+    expect(participantNames(db, slug, Date.now() + TOKEN_TTL_MS + 60_000).sort()).toEqual(["Kainoa", "Zach"]);
   });
 
   it("is everyone whose session is live, where LiveKit's webhook doesn't reach the server", () => {
@@ -368,8 +379,10 @@ describe("who holds a name", () => {
     const claim = claimAgentCode(db, { code: createAgentCode(db, host).code, name: "Atlas" });
     decideAgentRequest(db, { slug, requestId: claim.requestId, approve: true });
     markTokenIssued(db, claim.requestId);
-    expect(activeAgentNames(db, slug, Date.now() + AGENT_TOKEN_TTL_MS)).toEqual(["Atlas"]);
-    expect(activeAgentNames(db, slug, Date.now() + APPROVAL_WINDOW_MS + 1)).toEqual([]);
+    noteRoomWebhook(db, getRoom(db, slug)!.livekitRoom, Date.now() + 1000);
+    // Its 5-minute token, and a minute's slack.
+    expect(activeAgentNames(db, slug, Date.now() + AGENT_TOKEN_TTL_MS + 58_000)).toEqual(["Atlas"]);
+    expect(activeAgentNames(db, slug, Date.now() + AGENT_TOKEN_TTL_MS + 62_000)).toEqual([]);
   });
 
   it("keeps a connector agent's name while its approval counts as live", () => {

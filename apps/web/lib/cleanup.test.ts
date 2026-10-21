@@ -23,6 +23,7 @@ import {
   touchRoom,
   type Participant,
 } from "./rooms";
+import { noteRoomWebhook } from "./webhook-seen";
 import { useTestEnv } from "@/test/helpers";
 
 const T0 = new Date("2026-10-21T12:00:00Z").getTime();
@@ -112,6 +113,16 @@ describe("endMeeting", () => {
     expect(getRoom(db, slug)).toBeDefined();
     expect([count(db, "participants"), count(db, "agent_codes"), count(db, "agent_requests")]).toEqual([1, 1, 1]);
     expect(endMeeting(db, slug)).toBe(0);
+  });
+
+  it("forgets that the webhook spoke of the meeting, so the next one on its link starts over", () => {
+    const db = getDb();
+    const { slug } = createRoom(db);
+    noteRoomWebhook(db, getRoom(db, slug)!.livekitRoom);
+    const heard = () => (db.prepare("SELECT webhook_at FROM rooms WHERE slug = ?").get(slug) as { webhook_at: number | null }).webhook_at;
+    expect(heard()).not.toBeNull();
+    endMeeting(db, slug);
+    expect(heard()).toBeNull();
   });
 });
 

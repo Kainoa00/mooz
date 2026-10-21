@@ -109,6 +109,8 @@ export const MIGRATIONS = [
   `UPDATE rooms SET last_active_at = MAX(COALESCE(last_active_at, 0), CAST(strftime('%s', 'now') AS INTEGER) * 1000);`,
   // What the server has noticed about itself (when LiveKit's webhook last got through: lib/webhook-seen.ts).
   `CREATE TABLE server_state (key TEXT PRIMARY KEY, value INTEGER NOT NULL);`,
+  // When the webhook last spoke of a meeting (cleared when it ends).
+  `ALTER TABLE rooms ADD COLUMN webhook_at INTEGER;`,
 ];
 
 function migrate(db: Db): void {

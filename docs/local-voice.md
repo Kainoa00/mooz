@@ -8,7 +8,7 @@ for both kinds of agent:
 |---|---|---|
 | Where the speech server runs | This computer, or another one through an SSH tunnel | This computer (`127.0.0.1` or `localhost`) |
 | Browsers | Any | Chrome, Edge and Firefox. Not Safari, or any browser on iPhone or iPad |
-| Turn it on | `MOOZ_VOICE=local` | Bring my agent → Grok, Claude or ChatGPT → voice → **A speech server on this computer** |
+| Turn it on | `MOOZ_VOICE=local` | Bring my agent → Grok, Claude or ChatGPT → voice → **Speech server on this computer** |
 
 Any server with OpenAI's `/v1/audio/transcriptions` and `/v1/audio/speech` works.
 [VoiceStudio](https://github.com/debpalash/VoiceStudio) is the one this guide sets up.

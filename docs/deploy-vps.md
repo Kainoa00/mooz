@@ -152,8 +152,11 @@ the internet, add per-IP limits in Caddy, below those ceilings, with the `caddy-
 module. This isn't part of the tested setup yet, so check the module's documentation for the
 current syntax.
 
-1. Build Caddy with the module. Save this as `deploy/Caddy.Dockerfile` (it pins a commit: the
-   module's only release, v0.1.0, can't group IPv6 addresses):
+All three files below are new and yours: nothing tracked in `deploy/` changes, so `git pull`
+keeps working at upgrades. In `deploy`:
+
+1. Build Caddy with the module. Save this as `Caddy.Dockerfile` (it pins a commit: the module's
+   only release, v0.1.0, can't group IPv6 addresses):
 
    ```dockerfile
    FROM caddy:2.11.7-builder AS builder
@@ -162,19 +165,10 @@ current syntax.
    COPY --from=builder /usr/bin/caddy /usr/bin/caddy
    ```
 
-2. In `deploy/compose.yaml`, have the `caddy` service build it instead of using the stock image
-   (which refuses `rate_limit`). Replace `image: caddy:2.11.7` with:
-
-   ```yaml
-       build:
-         context: .
-         dockerfile: Caddy.Dockerfile
-   ```
-
-3. In `deploy/Caddyfile`, add a `rate_limit` block at the top of the `{$MOOZ_DOMAIN}` site, so it
-   reads as below. Leave the global block at the top of the file (the log filter) and the
-   `{$LIVEKIT_DOMAIN}` site as they are. No `order` line is needed: the module runs before
-   `reverse_proxy` on its own.
+2. Copy the shipped Caddyfile (`cp Caddyfile Caddyfile.ratelimit`) and, in the copy, put a
+   `rate_limit` block at the top of the `{$MOOZ_DOMAIN}` site, so it reads as below. Leave the
+   global block at the top of the file (the log filter) and the `{$LIVEKIT_DOMAIN}` site as
+   they are. No `order` line is needed: the module runs before `reverse_proxy` on its own.
 
    ```caddyfile
    {$MOOZ_DOMAIN} {
@@ -212,7 +206,21 @@ current syntax.
    }
    ```
 
-4. In `deploy`, build it and check the file, then start it:
+3. Save this as `compose.override.yaml`. Compose reads it along with `compose.yaml` by itself:
+   Caddy is built from your Dockerfile and reads your Caddyfile.
+
+   ```yaml
+   services:
+     caddy:
+       image: mooz-caddy-ratelimit
+       build:
+         context: .
+         dockerfile: Caddy.Dockerfile
+       volumes:
+         - ./Caddyfile.ratelimit:/etc/caddy/Caddyfile:ro
+   ```
+
+4. Build it and check the file, then start it:
 
    ```bash
    docker compose build caddy
@@ -220,8 +228,9 @@ current syntax.
    docker compose up -d caddy
    ```
 
-   These are edits to files in the repository: at an upgrade, if `git pull` refuses because
-   they changed upstream too, run `git stash`, pull, then `git stash pop`.
+   At upgrades, use `git pull && docker compose pull --ignore-buildable && docker compose up -d
+   --build`, and when `compose.yaml`'s Caddy version or the shipped Caddyfile changes, make the
+   same change in your two copies.
 
 People behind one address or one IPv6 /64 (an office, a school, a home) share these, so raise
 them if they get in each other's way. A client with many addresses (several /64s, or a botnet)

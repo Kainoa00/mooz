@@ -5,7 +5,7 @@ import { hashSecret, newId, newSecret } from "./ids";
 import { AGENT_TOKEN_TTL_MS, TOKEN_TTL_MS } from "./livekit";
 import { parseAgentName, parseDisplayName } from "./names";
 import { SESSION_TTL_MS, type Participant } from "./rooms";
-import { webhookArrives } from "./webhook-seen";
+import { meetingHeardAt } from "./webhook-seen";
 
 export const AGENT_CODE_TTL_MS = 10 * 60 * 1000;
 /** After approval, the bridge must collect its token within this window. */
@@ -86,20 +86,21 @@ export function createAgentCode(db: Db, owner: Participant): { code: string; exp
  * Names of agents that are waiting, in the meeting, or away for a moment (their wake words). One
  * that left for good no longer holds its name, and nor does a bridge approved that never
  * collected its token (its owner stopped it) once its approval has lapsed. Where LiveKit's
- * webhook arrives, a bridge that collected its token and never came in holds its name only while
- * that token works. Without the webhook nothing says an agent joined, so one keeps its name while
+ * webhook arrives (and has spoken of the meeting since), a bridge that collected its token and
+ * never came in holds its name only while that token works. Without the webhook nothing says an agent joined, so one keeps its name while
  * it could be in the call (a bridge's session can last a day), or while a connector's approval
  * counts as live.
  */
 export function activeAgentNames(db: Db, slug: string, now = Date.now()): string[] {
-  // A minute's slack for clocks: the token's expiry is LiveKit's to check.
-  const tokenWorks = webhookArrives(db, now) ? AGENT_TOKEN_TTL_MS + 60_000 : SESSION_TTL_MS;
+  // A bridge's token works 5 minutes (a minute's slack for clocks: its expiry is LiveKit's to
+  // check). Unless the webhook spoke of the meeting after it was issued, it may be in the call.
   const rows = db
     .prepare(
       `SELECT agent_name FROM agent_requests
        WHERE room_slug = ? AND ((status = 'approved' AND (left_at IS NULL OR left_at > ?)
            AND (session_sid IS NOT NULL
-             OR (door = 'bridge' AND ((token_issued_at IS NULL AND decided_at > ?) OR token_issued_at > ?))
+             OR (door = 'bridge' AND ((token_issued_at IS NULL AND decided_at > ?)
+               OR token_issued_at > CASE WHEN ? > token_issued_at THEN ? ELSE ? END))
              OR (door = 'connector' AND decided_at > ?)))
          OR (status = 'pending' AND created_at > ?))`,
     )
@@ -107,7 +108,9 @@ export function activeAgentNames(db: Db, slug: string, now = Date.now()): string
       slug,
       now - LEFT_GRACE_MS,
       now - APPROVAL_WINDOW_MS,
-      now - tokenWorks,
+      meetingHeardAt(db, slug, now),
+      now - AGENT_TOKEN_TTL_MS - 60_000,
+      now - SESSION_TTL_MS,
       now - UNJOINED_APPROVAL_MS,
       now - PENDING_TTL_MS,
     ) as { agent_name: string }[];
@@ -122,15 +125,18 @@ export function activeAgentNames(db: Db, slug: string, now = Date.now()): string
  * Without the webhook, everyone whose session is live counts.
  */
 export function participantNames(db: Db, slug: string, now = Date.now()): string[] {
-  const webhook = webhookArrives(db, now) ? 1 : 0;
+  // A session's expiry is SESSION_TTL_MS after its last /join, which minted its token. A join
+  // nobody reported coming in is let go once that token can't, if the webhook spoke of the
+  // meeting after it (so it would have reported them).
   const rows = db
     .prepare(
       `SELECT name FROM participants
        WHERE room_slug = ? AND (left_at IS NULL OR left_at > ?) AND expires_at > ?
-         AND (session_sid IS NOT NULL OR expires_at > ? OR ? = 0)`,
+         AND (session_sid IS NOT NULL OR expires_at > ? OR ? <= expires_at - ?)`,
     )
-    // A session's expiry is SESSION_TTL_MS after its last /join, which minted its token.
-    .all(slug, now - LEFT_GRACE_MS, now, now + SESSION_TTL_MS - TOKEN_TTL_MS, webhook) as { name: string }[];
+    .all(slug, now - LEFT_GRACE_MS, now, now + SESSION_TTL_MS - TOKEN_TTL_MS, meetingHeardAt(db, slug, now), SESSION_TTL_MS) as {
+    name: string;
+  }[];
   return rows.map((r) => r.name);
 }
 
@@ -323,19 +329,48 @@ export function isUnwelcomeAgent(db: Db, identity: string): boolean {
 /**
  * A person LiveKit says came in under a name that an agent who arrived while they were away (or
  * before they first came in) now answers to: they kept their join token, so no join checked it
- * again. Their own words would wake that agent.
+ * again. Their own words would wake that agent. `admitted` is the name LiveKit has for them, from
+ * their token, which a later rejoin under another name doesn't change.
  */
-export function isUnwelcomePerson(db: Db, identity: string): boolean {
+export function isUnwelcomePerson(db: Db, identity: string, admitted?: string): boolean {
+  // Only people: an agent has no participants row, and would match its own name.
   const row = db.prepare("SELECT room_slug, name FROM participants WHERE identity = ?").get(identity) as
     | { room_slug: string; name: string }
     | undefined;
   if (!row) return false;
+  const agents = activeAgentNames(db, row.room_slug);
+  return [row.name, admitted].some((name) => {
+    if (!name) return false;
+    try {
+      parseDisplayName(name, agents);
+      return false;
+    } catch (err) {
+      return err instanceof HttpError && err.code === "name_taken";
+    }
+  });
+}
+
+/**
+ * A bridge LiveKit says is back after being away longer than LEFT_GRACE_MS (its owner's laptop
+ * slept, say): its name was free meanwhile, so someone may have taken it fairly. If its name now
+ * clashes with anyone here, the bridge is the one that goes (revoked, so it's taken out).
+ */
+export function revokeIfNameTakenWhileAway(db: Db, agentIdentity: string, now = Date.now()): boolean {
+  const row = db
+    .prepare(
+      "SELECT room_slug, agent_name, left_at FROM agent_requests WHERE agent_identity = ? AND door = 'bridge' AND status = 'approved'",
+    )
+    .get(agentIdentity) as { room_slug: string; agent_name: string; left_at: number | null } | undefined;
+  if (!row || row.left_at === null || row.left_at > now - LEFT_GRACE_MS) return false;
   try {
-    parseDisplayName(row.name, activeAgentNames(db, row.room_slug));
+    // It's away, so neither list counts it.
+    parseAgentName(row.agent_name, participantNames(db, row.room_slug, now), activeAgentNames(db, row.room_slug, now));
     return false;
   } catch (err) {
-    return err instanceof HttpError && err.code === "name_taken";
+    if (!(err instanceof HttpError && err.code === "name_taken")) return false;
   }
+  db.prepare("UPDATE agent_requests SET status = 'revoked' WHERE agent_identity = ? AND status = 'approved'").run(agentIdentity);
+  return true;
 }
 
 /** Record that an approval's single token was handed out. False if it already was. */

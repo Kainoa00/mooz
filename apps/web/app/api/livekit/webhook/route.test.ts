@@ -8,7 +8,7 @@ import { createConnector } from "@/lib/connectors";
 import { getDb } from "@/lib/db";
 import { floorView, requestTurn, resetFloorsForTests } from "@/lib/floor";
 import { setNotesPolicy } from "@/lib/notes";
-import { addParticipant, createRoom, getRoom, getRoomByLivekitName } from "@/lib/rooms";
+import { addParticipant, createRoom, getRoom, getRoomByLivekitName, renameParticipant } from "@/lib/rooms";
 import { webhookArrives } from "@/lib/webhook-seen";
 import { LK_KEY, LK_SECRET, useTestEnv } from "@/test/helpers";
 
@@ -52,8 +52,8 @@ function agent(revoked: boolean) {
   return status.agent;
 }
 
-const joined = (room: string, identity: string) =>
-  JSON.stringify({ event: "participant_joined", room: { name: room }, participant: { identity } });
+const joined = (room: string, identity: string, name?: string) =>
+  JSON.stringify({ event: "participant_joined", room: { name: room }, participant: { identity, name } });
 
 describe("POST /api/livekit/webhook", () => {
   it("kicks a removed agent that rejoins", async () => {
@@ -89,6 +89,55 @@ describe("POST /api/livekit/webhook", () => {
     expect(removeFromRoom).not.toHaveBeenCalled();
     await POST(await signed(joined(livekitRoom, maya.identity)));
     expect(removeFromRoom).toHaveBeenCalledWith(livekitRoom, maya.identity);
+  });
+
+  it("judges a returning person by the name on their token, not one they rejoined under since", async () => {
+    const db = getDb();
+    const { slug } = createRoom(db);
+    const { livekitRoom } = getRoom(db, slug)!;
+    const atlas = addParticipant(db, { slug, name: "Atlas", isHost: false });
+    const zach = addParticipant(db, { slug, name: "Zach", isHost: false });
+    db.prepare("UPDATE participants SET session_sid = 'PA_1', left_at = ? WHERE identity = ?").run(Date.now() - 3 * 60_000, atlas.identity);
+    const claim = claimAgentCode(db, { code: createAgentCode(db, zach).code, name: "Atlas" });
+    decideAgentRequest(db, { slug, requestId: claim.requestId, approve: true });
+    // A rejoin as Maya renames the row, but the old token still says Atlas.
+    renameParticipant(db, { identity: atlas.identity, slug, name: "Atlas", isHost: false }, "Maya", false);
+
+    await POST(await signed(joined(livekitRoom, atlas.identity, "Maya")));
+    expect(removeFromRoom).not.toHaveBeenCalled();
+    await POST(await signed(joined(livekitRoom, atlas.identity, "Atlas")));
+    expect(removeFromRoom).toHaveBeenCalledWith(livekitRoom, atlas.identity);
+  });
+
+  it("takes out a bridge that comes back too late to keep its name, not the person who took it", async () => {
+    const db = getDb();
+    const { slug } = createRoom(db);
+    const { livekitRoom } = getRoom(db, slug)!;
+    const zach = addParticipant(db, { slug, name: "Zach", isHost: false });
+    const claim = claimAgentCode(db, { code: createAgentCode(db, zach).code, name: "Atlas" });
+    decideAgentRequest(db, { slug, requestId: claim.requestId, approve: true });
+    const status = getClaimStatus(db, claim.requestId, claim.claimSecret);
+    if (status.status !== "approved") throw new Error("setup failed");
+    const bridge = status.agent.identity;
+    await POST(await signed(joined(livekitRoom, bridge, "Atlas")));
+    // It left (the owner's laptop slept) three minutes ago, so its name was free, and Lee took it.
+    db.prepare("UPDATE agent_requests SET left_at = ? WHERE agent_identity = ?").run(Date.now() - 3 * 60_000, bridge);
+    const lee = addParticipant(db, { slug, name: "Atlas", isHost: false });
+    await POST(await signed(joined(livekitRoom, lee.identity, "Atlas")));
+    expect(removeFromRoom).not.toHaveBeenCalled();
+
+    await POST(await signed(joined(livekitRoom, bridge, "Atlas")));
+    expect(removeFromRoom).toHaveBeenCalledWith(livekitRoom, bridge);
+    removeFromRoom.mockClear();
+    await POST(await signed(joined(livekitRoom, lee.identity, "Atlas"))); // a reconnect: Lee stays
+    expect(removeFromRoom).not.toHaveBeenCalled();
+  });
+
+  it("takes a bridge back as before when its name is still free", async () => {
+    const a = agent(false);
+    getDb().prepare("UPDATE agent_requests SET left_at = ? WHERE agent_identity = ?").run(Date.now() - 3 * 60_000, a.identity);
+    await POST(await signed(joined(a.livekitRoom, a.identity, "Grok")));
+    expect(removeFromRoom).not.toHaveBeenCalled();
   });
 
   it("rejects an unsigned or forged webhook", async () => {

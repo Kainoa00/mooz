@@ -74,6 +74,7 @@ numbers, or what failed) in the release notes; anything not run is listed there 
 
 ```bash
 uv tool install mooz-agent   # or, before it's on PyPI: cd bridge && uv sync, then uv run mooz-agent
+mkdir -p ~/.mooz && touch ~/.mooz/.env && chmod 600 ~/.mooz/.env
 printf 'ANTHROPIC_API_KEY=…\nELEVEN_API_KEY=…\n' >> ~/.mooz/.env
 mooz-agent connect CODE --server http://localhost:3000 --name Atlas -v
 ```
@@ -100,7 +101,7 @@ Record the test's two timings, the `(local)` latency line at Ctrl-C, and your ha
 
 On the VPS from check 4, start VoiceStudio on your own computer with
 `OMNIVOICE_ALLOWED_ORIGINS` set to the meeting's address plus its defaults. In a meeting, open
-Bring my agent → Grok, Claude or ChatGPT, turn on voice with **A speech server on this
+Bring my agent → Grok, Claude or ChatGPT, turn on voice with **Speech server on this
 computer**, and bring the connector in. In Chrome, then Firefox: allow the browser's prompt,
 say "Hey Grok, …", and check it speaks. In Safari, check the voice settings say it can't.
 
