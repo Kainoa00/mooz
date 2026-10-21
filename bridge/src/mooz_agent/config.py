@@ -25,8 +25,13 @@ class ConfigError(Exception):
     """The agent's configuration is missing or invalid."""
 
 
+def mooz_home() -> Path:
+    """Where mooz-agent keeps its agents and settings: MOOZ_HOME, else ~/.mooz."""
+    return Path(os.environ.get("MOOZ_HOME") or "~/.mooz").expanduser()
+
+
 def agents_root() -> Path:
-    return Path(os.environ.get("MOOZ_HOME", "~/.mooz")).expanduser() / "agents"
+    return mooz_home() / "agents"
 
 
 def _slug(text: str) -> str:

@@ -1,0 +1,208 @@
+name: Release
+
+# A v* tag releases: CI again, then mooz-agent to PyPI, the web image to GHCR, and a GitHub
+# Release with the CHANGELOG entry. Publishing waits for approval in the pypi and release
+# environments. Run it by hand (workflow_dispatch) for a dry run: the same builds, the package
+# goes to TestPyPI, and the image isn't pushed. One-time setup: docs/releasing.md.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  build:
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      image: ${{ steps.version.outputs.image }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      # On a tag: the tag must be v<version>, and the CHANGELOG entry dated.
+      - name: Every version agrees
+        run: node scripts/check-version.mjs
+      - id: version
+        run: |
+          echo "version=$(node -p 'require("./apps/web/package.json").version')" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/mooz-web" >> "$GITHUB_OUTPUT"
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          enable-cache: false
+      - name: Build the package
+        run: uv build
+        working-directory: bridge
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: package
+          path: bridge/dist/
+          if-no-files-found: error
+
+  check-package:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions: {}
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: package
+          path: dist
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          enable-cache: false
+      - name: The wheel and sdist are this version, with the license and README
+        run: |
+          ls -l dist
+          test -f "dist/mooz_agent-$VERSION.tar.gz"
+          wheel="dist/mooz_agent-$VERSION-py3-none-any.whl"
+          unzip -p "$wheel" "mooz_agent-$VERSION.dist-info/METADATA" > METADATA
+          grep -qx "Version: $VERSION" METADATA
+          grep -qx "License-File: LICENSE" METADATA
+          grep -qx "Description-Content-Type: text/markdown" METADATA
+          grep -q "uv tool install mooz-agent" METADATA
+      - name: It installs and runs
+        run: |
+          test "$(uvx --isolated --python 3.13 --from "dist/mooz_agent-$VERSION-py3-none-any.whl" mooz-agent --version)" = "mooz-agent $VERSION"
+
+  pypi:
+    if: github.event_name == 'push'
+    needs: [build, check-package]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: pypi
+      url: https://pypi.org/project/mooz-agent/${{ needs.build.outputs.version }}/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: package
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: dist/
+
+  testpypi:
+    if: github.event_name == 'workflow_dispatch'
+    needs: [build, check-package]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/mooz-agent/${{ needs.build.outputs.version }}/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: package
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          packages-dir: dist/
+          # A version can be uploaded only once, so a second dry run keeps the first upload.
+          skip-existing: true
+
+  image:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # Pushing waits for approval; the dry run only builds.
+    environment: ${{ github.event_name == 'push' && 'release' || '' }}
+    permissions:
+      contents: read
+      packages: write
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      IMAGE: ${{ needs.build.outputs.image }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - if: github.event_name == 'push'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: tags
+        run: |
+          {
+            echo "tags<<EOF"
+            echo "$IMAGE:$VERSION"
+            # Only a plain X.Y.Z release moves X.Y and latest; a pre-release (X.Y.Z-rc.1) doesn't.
+            if [[ "$VERSION" =~ ^([0-9]+\.[0-9]+)\.[0-9]+$ ]]; then
+              echo "$IMAGE:${BASH_REMATCH[1]}"
+              echo "$IMAGE:latest"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.tags.outputs.tags }}
+          build-args: VERSION=${{ env.VERSION }}
+          labels: org.opencontainers.image.revision=${{ github.sha }}
+
+  github-release:
+    if: github.event_name == 'push'
+    needs: [build, pypi, image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: release
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: package
+          path: dist
+      - name: Notes from the CHANGELOG
+        run: |
+          node scripts/release-notes.mjs "$VERSION" "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/" > notes.md
+          cat >> notes.md <<EOF
+
+          ---
+
+          - Bridge: \`uv tool install mooz-agent==$VERSION\` ([PyPI](https://pypi.org/project/mooz-agent/$VERSION/))
+          - Server: \`${{ needs.build.outputs.image }}:$VERSION\` (see [the VPS guide]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/docs/deploy-vps.md))
+          EOF
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          prerelease=()
+          [[ "$VERSION" == *-* ]] && prerelease=(--prerelease)
+          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "mooz $VERSION" \
+            --notes-file notes.md "${prerelease[@]}"

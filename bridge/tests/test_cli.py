@@ -1,7 +1,9 @@
+import os
 from pathlib import Path
 
 import pytest
 
+import mooz_agent
 from mooz_agent import cli
 from mooz_agent.claim import AgentGrant, ClaimError
 from mooz_agent.config import AgentConfig
@@ -14,6 +16,7 @@ def offline(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("MOOZ_PROVIDERS", "fake")
     monkeypatch.setenv("MOOZ_HOME", str(tmp_path / "mooz"))
     monkeypatch.delenv("MOOZ_AGENT", raising=False)
+    monkeypatch.chdir(tmp_path)
 
 
 def test_missing_keys_fail_before_joining(
@@ -25,6 +28,40 @@ def test_missing_keys_fail_before_joining(
 
     assert cli.main(["connect", "X", "--server", "https://s", "--name", "Atlas"]) == 2
     assert "ANTHROPIC_API_KEY and ELEVEN_API_KEY" in capsys.readouterr().err
+
+
+def test_version(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exit:
+        cli.main(["--version"])
+    assert exit.value.code == 0
+    assert capsys.readouterr().out.strip() == f"mooz-agent {mooz_agent.__version__}"
+    assert mooz_agent.__version__ != "0.0.0"
+
+
+def test_settings_come_from_here_then_mooz_home(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    for key in ("MOOZ_TEST_HERE", "MOOZ_TEST_HOME", "MOOZ_TEST_BOTH"):
+        monkeypatch.setenv(key, "")  # so monkeypatch removes what load_settings sets
+        monkeypatch.delenv(key)
+    monkeypatch.setenv("MOOZ_TEST_ENV", "environment")
+    (tmp_path / ".env").write_text("MOOZ_TEST_HERE=here\nMOOZ_TEST_BOTH=here\nMOOZ_TEST_ENV=here\n")
+    home = tmp_path / "mooz"
+    home.mkdir()
+    (home / ".env").write_text("MOOZ_TEST_HOME=home\nMOOZ_TEST_BOTH=home\nMOOZ_TEST_ENV=home\n")
+
+    cli.load_settings()
+
+    assert os.environ["MOOZ_TEST_HERE"] == "here"
+    assert os.environ["MOOZ_TEST_HOME"] == "home"
+    assert os.environ["MOOZ_TEST_BOTH"] == "here"
+    assert os.environ["MOOZ_TEST_ENV"] == "environment"
+
+
+def test_settings_without_any_env_file() -> None:
+    before = dict(os.environ)
+    cli.load_settings()
+    assert dict(os.environ) == before
 
 
 def test_parse_connect_arguments() -> None:

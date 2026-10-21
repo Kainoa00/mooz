@@ -14,14 +14,16 @@ from urllib.parse import urlsplit
 import httpx
 from dotenv import load_dotenv
 
+from . import __version__
 from .claim import AgentGrant, ClaimError, claim_code, wait_for_approval
-from .config import AgentConfig, ConfigError
+from .config import AgentConfig, ConfigError, mooz_home
 
 log = logging.getLogger("mooz_agent")
 
 
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="mooz-agent", description=__doc__)
+    parser.add_argument("--version", action="version", version=f"mooz-agent {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     def agent_option(p: argparse.ArgumentParser) -> None:
@@ -299,8 +301,15 @@ def cmd_connect(args: argparse.Namespace) -> int:
     return 0
 
 
+def load_settings() -> None:
+    """Keys and settings from ./.env, then ~/.mooz/.env (or $MOOZ_HOME/.env). What's already in
+    the environment wins, then the nearer file."""
+    load_dotenv(Path.cwd() / ".env")
+    load_dotenv(mooz_home() / ".env")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    load_dotenv()
+    load_settings()
     args = parse_args(sys.argv[1:] if argv is None else argv)
     logging.basicConfig(
         level=logging.DEBUG if getattr(args, "verbose", False) else logging.INFO,

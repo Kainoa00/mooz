@@ -119,6 +119,11 @@ export function BringAgentDialog({
                   {code.command} --name &lt;AgentName&gt;
                 </code>
                 <span className="sr-only" data-testid="agent-code">{code.code}</span>
+                <p data-testid="agent-install" className="text-xs text-muted">
+                  First time? Install it with <code className="font-mono">uv tool install mooz-agent</code>{" "}
+                  (needs <a href="https://docs.astral.sh/uv/" target="_blank" rel="noreferrer" className="underline">uv</a>)
+                  and put your keys in <code className="font-mono">~/.mooz/.env</code>.
+                </p>
                 <button type="button" onClick={copy} className="self-start rounded-lg border border-zinc-400 px-3 py-1 text-sm">
                   {copied ? "Copied" : "Copy command"}
                 </button>

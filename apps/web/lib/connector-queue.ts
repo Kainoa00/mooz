@@ -386,6 +386,8 @@ export function answerQuestion(
     reply_to: entry.replyTo,
     sources: entry.people,
   };
+  // How long from the question to its answer, for the PRD's round-trip target: timing only.
+  console.log(`connector round trip ${Math.max(0, now - entry.question.askedAt)} ms (${by === "owner" ? "pasted" : "assistant"})`);
   return entry.answer;
 }
 

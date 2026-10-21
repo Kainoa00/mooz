@@ -9,6 +9,7 @@ test("a guest's agent waits for the host, who approves it", async ({ page, brows
 
   await zach.getByRole("button", { name: "Bring my agent" }).click();
   await expect(zach.getByTestId("agent-command")).toContainText("mooz-agent connect");
+  await expect(zach.getByTestId("agent-install")).toContainText("uv tool install mooz-agent");
   const code = await zach.getByTestId("agent-code").textContent();
 
   // What `mooz-agent connect` does: redeem the code, then poll.

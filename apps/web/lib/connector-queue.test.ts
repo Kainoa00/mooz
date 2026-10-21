@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { claimAgentCode, createAgentCode, decideAgentRequest } from "./agents";
 import { connectorAgentFor, requestConnectorJoin, type ConnectorAgent } from "./connector-agents";
 import {
@@ -200,6 +200,18 @@ describe("the connector question queue", () => {
       NOW,
     );
     expect(meetingLines(db, grok, NOW).map((l) => l.text)).toEqual(["fine"]);
+  });
+
+  it("logs how long each question took to answer, and nothing it said", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const { db, zach, grok } = meeting();
+    const asked = enqueueQuestion(db, grok, { asker: zach.identity, text: "When does it ship?", lines: [] }, NOW);
+    const pasted = enqueueQuestion(db, grok, { asker: zach.identity, text: "And the docs?", lines: [] }, NOW);
+    releaseQuestion(grok.identity, asked.id, NOW + 1000);
+    answerQuestion(grok.identity, asked.id, { spoken: "Friday.", details: "Per plan.md" }, { now: NOW + 21_500 });
+    answerQuestion(grok.identity, pasted.id, { spoken: "Monday." }, { by: "owner", now: NOW + 30_000 });
+    expect(log.mock.calls).toEqual([["connector round trip 21500 ms (assistant)"], ["connector round trip 30000 ms (pasted)"]]);
+    log.mockRestore();
   });
 
   it("answers the oldest question the owner sent unless one is named, then sends it only to that agent", () => {

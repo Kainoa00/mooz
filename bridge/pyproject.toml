@@ -4,7 +4,24 @@ version = "0.1.0"
 description = "Bring your own AI agent into a mooz meeting."
 readme = "README.md"
 license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "mooz contributors" }]
 requires-python = ">=3.11,<3.15"
+keywords = ["ai-agent", "meetings", "livekit", "voice", "claude", "grok", "video-conferencing"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Communications :: Conferencing",
+  "Topic :: Multimedia :: Sound/Audio :: Speech",
+  "Typing :: Typed",
+]
 dependencies = [
   "livekit>=1.1.20,<2",
   "livekit-agents>=1.8.8,<2",
@@ -17,6 +34,13 @@ dependencies = [
   "openai>=3.35.1,<4",
   "regex>=2025.9.1",
 ]
+
+[project.urls]
+Homepage = "https://github.com/kainoa00/mooz"
+Documentation = "https://github.com/kainoa00/mooz/tree/main/bridge#readme"
+Source = "https://github.com/kainoa00/mooz/tree/main/bridge"
+Issues = "https://github.com/kainoa00/mooz/issues"
+Changelog = "https://github.com/kainoa00/mooz/blob/main/CHANGELOG.md"
 
 [project.scripts]
 mooz-agent = "mooz_agent.cli:main"
@@ -33,7 +57,7 @@ dev = [
 ]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27,<2"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]

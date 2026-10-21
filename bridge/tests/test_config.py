@@ -3,7 +3,14 @@ from pathlib import Path
 
 import pytest
 
-from mooz_agent.config import AgentConfig, ConfigError, Source, agent_dir, agents_root
+from mooz_agent.config import (
+    AgentConfig,
+    ConfigError,
+    Source,
+    agent_dir,
+    agents_root,
+    mooz_home,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -17,6 +24,16 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def test_agents_live_under_mooz_home(home: Path) -> None:
     assert agents_root() == home / "mooz" / "agents"
     assert agent_dir("Zach's Grok") == home / "mooz" / "agents" / "zachs-grok"
+
+
+@pytest.mark.parametrize("value", [None, ""])
+def test_mooz_home_defaults_to_dot_mooz(monkeypatch: pytest.MonkeyPatch, value: str | None) -> None:
+    # An empty MOOZ_HOME= (as in a copied .env.example) means the default, not this folder.
+    if value is None:
+        monkeypatch.delenv("MOOZ_HOME", raising=False)
+    else:
+        monkeypatch.setenv("MOOZ_HOME", value)
+    assert mooz_home() == Path.home() / ".mooz"
 
 
 def test_round_trips_through_toml(home: Path) -> None:

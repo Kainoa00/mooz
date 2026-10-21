@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The release workflow runs all of this first.
+  workflow_call:
 
 permissions:
   contents: read
@@ -12,12 +14,14 @@ jobs:
   web:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: pnpm
+      - name: Every version agrees
+        run: node scripts/check-version.mjs && node --test scripts/check-version.test.mjs
       - run: pnpm install --frozen-lockfile
       - run: pnpm -C apps/web lint
       - run: pnpm -C apps/web typecheck
@@ -29,8 +33,8 @@ jobs:
       run:
         working-directory: bridge
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
       - name: Start LiveKit dev server
         run: docker compose up -d livekit
         working-directory: .
@@ -41,17 +45,38 @@ jobs:
       # Unit + integration (against the LiveKit dev server); live API tests are opt-in.
       - run: uv run pytest -m "not live" --cov --cov-fail-under=80
 
+  # The oldest and newest Pythons the package supports (the job above runs the runner's own).
+  bridge-pythons:
+    name: bridge (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.13"]
+    env:
+      UV_PYTHON: ${{ matrix.python }}
+    defaults:
+      run:
+        working-directory: bridge
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - run: uv sync --locked
+      - run: uv run python --version
+      # Unit tests (integration needs LiveKit, which the job above runs).
+      - run: uv run pytest
+
   e2e:
     runs-on: ubuntu-latest
     needs: [web, bridge]
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: pnpm
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
       - name: Start LiveKit dev server
         run: docker compose up -d livekit
       - run: pnpm install --frozen-lockfile
@@ -65,7 +90,7 @@ jobs:
   image:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Build the web image
         run: docker build -f apps/web/Dockerfile -t mooz-web:ci .
       - name: The production kit's settings are complete
@@ -76,7 +101,7 @@ jobs:
             -e LIVEKIT_URL=wss://livekit.example.com -e LIVEKIT_API_KEY=mooz \
             -e LIVEKIT_API_SECRET="$(openssl rand -base64 48)" \
             -e MOOZ_PUBLIC_URL=https://meet.example.com -e MOOZ_DB_PATH=/data/mooz.db mooz-web:ci
-          for i in $(seq 1 30); do curl -sf http://127.0.0.1:3000/api/ready && break; sleep 1; done
+          for _ in $(seq 1 30); do curl -sf http://127.0.0.1:3000/api/ready && break; sleep 1; done
           curl -sf http://127.0.0.1:3000/api/ready | grep -q '"ok":true'
           curl -sf -o /dev/null http://127.0.0.1:3000/mooz-pcm-worklet.js
           curl -sfI http://127.0.0.1:3000/ | grep -qi '^content-security-policy:'

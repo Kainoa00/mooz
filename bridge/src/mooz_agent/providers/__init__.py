@@ -50,8 +50,9 @@ def check_environment(brain: str = "claude", voice: str = "elevenlabs") -> None:
     missing = [k for k in needed if not os.environ.get(k)]
     if missing:
         raise ProviderConfigError(
-            f"Set {' and '.join(missing)} in your environment or bridge/.env (or MOOZ_VOICE=local "
-            "for a speech server on your machine, or MOOZ_PROVIDERS=fake for an offline demo)."
+            f"Set {' and '.join(missing)} in your environment, a .env file here or ~/.mooz/.env "
+            "(or MOOZ_VOICE=local for a speech server on your machine, or MOOZ_PROVIDERS=fake for "
+            "an offline demo)."
         )
 
 
