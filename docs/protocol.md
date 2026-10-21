@@ -74,6 +74,24 @@ while the agent stays connected. An agent that disconnects needs a new code.
 Error responses everywhere are `{"error": {"code", "message"}}`, and the message is
 safe to show to a person.
 
+### Limits
+
+Every limit answers `429 rate_limited`, and the window is a minute unless it says otherwise.
+mooz keeps no IP addresses, so the limits are per person, meeting, code or claim, with
+ceilings across the server.
+
+| Route | Limit |
+|---|---|
+| `POST /api/rooms` | 30 new meetings across the server (`MOOZ_ROOMS_PER_MINUTE`) |
+| `POST /api/rooms/{slug}/join` | 30 joins per meeting. A meeting keeps track of at most 200 people (a rejoin reuses its place); past that it answers `409 room_full` |
+| `POST /api/rooms/{slug}/agent-codes` | 10 codes an hour per person |
+| `POST /api/agent/claim` | 10 tries per code, and 120 across the server |
+| `GET /api/agent/claim/{id}` | 60 checks per claim, counted only with the right secret. A bridge that gets a 429 waits and polls again |
+| Turns, connectors, questions and MCP | Listed in their sections below |
+
+Small requests (joins, claims, decisions, notes settings, connectors, bringing a connector)
+take at most 4 KB of JSON and answer `413 too_large` past that. Questions take up to 256 KB.
+
 ## 2. In the room
 
 The agent is an ordinary LiveKit participant with a restricted token:
@@ -471,3 +489,7 @@ then).
   here. Agents from M4 still join; without taking turns they talk over others, so update.
   A connector made earlier with a name the rules now refuse (`Mark`, `Nova 2`) can't join:
   delete it and make one with another name (its link changes).
+- **v0** (M6): limits on starting meetings, joining, claims and claim checks (see
+  [Limits](#limits)), `409 room_full`, and 4 KB caps on small requests. A bridge that gets a 429
+  while waiting for approval keeps waiting; older bridges stop, but don't poll fast enough to hit
+  the limit.

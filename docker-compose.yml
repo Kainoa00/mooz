@@ -23,6 +23,9 @@ services:
       LIVEKIT_API_KEY: "${LIVEKIT_API_KEY:-devkey}"
       LIVEKIT_API_SECRET: "${LIVEKIT_API_SECRET:-secret}"
       MOOZ_DB_PATH: /data/mooz.db
+      MOOZ_ROOMS_PER_MINUTE: "${MOOZ_ROOMS_PER_MINUTE:-}"
+      MOOZ_MAX_CONNECTORS: "${MOOZ_MAX_CONNECTORS:-}"
+      MOOZ_CONNECTORS_PER_MINUTE: "${MOOZ_CONNECTORS_PER_MINUTE:-}"
     volumes:
       - mooz-data:/data
     ports:

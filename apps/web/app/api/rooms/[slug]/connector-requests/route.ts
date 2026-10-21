@@ -1,7 +1,7 @@
 import { requestConnectorJoin } from "@/lib/connector-agents";
 import { requireOwnerKey } from "@/lib/connectors";
 import { getDb } from "@/lib/db";
-import { HttpError, errorResponse, readJson } from "@/lib/http";
+import { HttpError, errorResponse, readJson, SMALL_JSON_BYTES } from "@/lib/http";
 import { removeAllFromRooms } from "@/lib/kicks";
 import { allow } from "@/lib/rate-limit";
 import { assertSameOrigin, requireParticipant } from "@/lib/session";
@@ -23,7 +23,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ slug: string }
     ) {
       throw new HttpError(429, "rate_limited", "Too many requests to bring agents in just now. Try again in a minute.");
     }
-    const body = await readJson(req);
+    const body = await readJson(req, SMALL_JSON_BYTES);
     const { requestId, status, superseded } = requestConnectorJoin(db, owner, requireOwnerKey(req), body.connectorId);
     await removeAllFromRooms(superseded);
     return Response.json({ requestId, status }, { status: 201 });

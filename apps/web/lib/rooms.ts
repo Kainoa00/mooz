@@ -1,5 +1,9 @@
 import type { Db } from "./db";
+import { HttpError } from "./http";
 import { hashSecret, newId, newRoomSlug, newSecret } from "./ids";
+
+/** People a meeting keeps track of (everyone who joined; a rejoin reuses its row). */
+export const MAX_PARTICIPANT_ROWS = 200;
 
 export interface Room {
   slug: string;
@@ -59,6 +63,8 @@ export function addParticipant(
   db: Db,
   input: { slug: string; name: string; isHost: boolean },
 ): Participant & { secret: string } {
+  const { n } = db.prepare("SELECT COUNT(*) AS n FROM participants WHERE room_slug = ?").get(input.slug) as { n: number };
+  if (n >= MAX_PARTICIPANT_ROWS) throw new HttpError(409, "room_full", "This meeting is full.");
   const identity = newId("p");
   const secret = newSecret();
   db.prepare(

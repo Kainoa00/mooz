@@ -1,6 +1,6 @@
 import { decideAgentRequest } from "@/lib/agents";
 import { getDb } from "@/lib/db";
-import { HttpError, errorResponse, readJson } from "@/lib/http";
+import { HttpError, errorResponse, readJson, SMALL_JSON_BYTES } from "@/lib/http";
 import { assertSameOrigin, requireHost } from "@/lib/session";
 
 export async function POST(
@@ -12,7 +12,7 @@ export async function POST(
     const { slug, id } = await ctx.params;
     const db = getDb();
     requireHost(db, req, slug);
-    const { decision } = await readJson(req);
+    const { decision } = await readJson(req, SMALL_JSON_BYTES);
     if (decision !== "approve" && decision !== "deny") {
       throw new HttpError(400, "invalid_decision", 'decision must be "approve" or "deny"');
     }

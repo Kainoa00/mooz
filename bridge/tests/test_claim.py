@@ -83,6 +83,25 @@ async def test_wait_for_approval_polls_until_approved() -> None:
 
 
 @respx.mock
+async def test_wait_for_approval_waits_out_a_rate_limit() -> None:
+    limited = {"error": {"code": "rate_limited", "message": "Too many checks just now"}}
+    route = respx.get(f"{SERVER}/api/agent/claim/r_1").mock(
+        side_effect=[
+            httpx.Response(429, json=limited),
+            httpx.Response(200, json={"status": "denied"}),
+        ]
+    )
+    async with httpx.AsyncClient() as http:
+        with pytest.raises(ClaimError) as exc:
+            await wait_for_approval(
+                http, SERVER, request_id="r_1", claim_secret="s", poll_interval=0
+            )
+
+    assert exc.value.code == "denied"
+    assert route.call_count == 2
+
+
+@respx.mock
 async def test_wait_for_approval_raises_when_denied() -> None:
     respx.get(f"{SERVER}/api/agent/claim/r_1").respond(200, json={"status": "denied"})
     async with httpx.AsyncClient() as http:

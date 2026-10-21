@@ -77,7 +77,9 @@ async def wait_for_approval(
     deadline = time.monotonic() + max_wait
     announced = False
     while True:
-        body = _raise_for_error(await http.get(url, headers=headers))
+        res = await http.get(url, headers=headers)
+        # Polled too often (the server allows 60 a minute): wait, and keep going.
+        body = {} if res.status_code == 429 else _raise_for_error(res)
         status = body.get("status")
         if status == "approved":
             return AgentGrant(

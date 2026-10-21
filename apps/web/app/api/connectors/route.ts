@@ -10,7 +10,7 @@ import { pruneConnectors } from "@/lib/connector-agents";
 import { sessionCookie } from "@/lib/cookies";
 import { getDb } from "@/lib/db";
 import { envInt } from "@/lib/env";
-import { HttpError, errorResponse, readJson } from "@/lib/http";
+import { HttpError, errorResponse, readJson, SMALL_JSON_BYTES } from "@/lib/http";
 import { newSecret } from "@/lib/ids";
 import { allow } from "@/lib/rate-limit";
 import { assertSameOrigin, publicOrigin, requireParticipant } from "@/lib/session";
@@ -35,7 +35,7 @@ export async function GET(req: Request): Promise<Response> {
 export async function POST(req: Request): Promise<Response> {
   try {
     assertSameOrigin(req);
-    const body = await readJson(req);
+    const body = await readJson(req, SMALL_JSON_BYTES);
     const db = getDb();
     if (typeof body.slug !== "string") throw new HttpError(400, "invalid_body", "Make a connector from a meeting");
     const me = requireParticipant(db, req, body.slug);

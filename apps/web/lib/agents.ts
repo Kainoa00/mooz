@@ -3,6 +3,7 @@ import type { Db } from "./db";
 import { HttpError } from "./http";
 import { hashSecret, newId, newSecret } from "./ids";
 import { parseAgentName } from "./names";
+import { allow } from "./rate-limit";
 import type { Participant } from "./rooms";
 
 export const AGENT_CODE_TTL_MS = 10 * 60 * 1000;
@@ -14,6 +15,9 @@ export const MAX_NAME_ATTEMPTS = 5;
 export const PENDING_TTL_MS = 10 * 60 * 1000;
 /** How long an agent may be away (a reload, a dropped connection) and still come back. */
 export const LEFT_GRACE_MS = 2 * 60 * 1000;
+/** Claims a minute with one code, and across the server. */
+export const CLAIMS_PER_CODE_PER_MINUTE = 10;
+export const CLAIMS_PER_MINUTE = 120;
 
 // No I, O, 0 or 1: codes are read off a screen and typed into a terminal.
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -113,6 +117,11 @@ export function claimAgentCode(
   const invalid = new HttpError(400, "invalid_code", "That code is invalid, used, or expired");
   if (typeof input.code !== "string") throw invalid;
   const codeHash = hashSecret(normalizeCode(input.code));
+  // Before the write lock, so a flood of claims can't hold it. The server-wide count goes first:
+  // it bounds how many per-code counters a flood of made-up codes can create.
+  if (!allow("claims:all", CLAIMS_PER_MINUTE, 60_000) || !allow(`claims-code:${codeHash}`, CLAIMS_PER_CODE_PER_MINUTE, 60_000)) {
+    throw new HttpError(429, "rate_limited", "Too many tries just now. Try again in a minute.");
+  }
 
   const outcome = transaction(db, () => {
     const row = db

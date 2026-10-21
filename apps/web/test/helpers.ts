@@ -1,4 +1,5 @@
 import { resetDbForTests } from "@/lib/db";
+import { resetRateLimitsForTests } from "@/lib/rate-limit";
 
 /** Fresh in-memory database and LiveKit test credentials for each test. */
 export function useTestEnv(): void {
@@ -7,6 +8,7 @@ export function useTestEnv(): void {
   process.env.LIVEKIT_API_KEY = "testkey";
   process.env.LIVEKIT_API_SECRET = "testsecret-testsecret-testsecret-0";
   resetDbForTests();
+  resetRateLimitsForTests();
 }
 
 export const LK_KEY = "testkey";

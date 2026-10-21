@@ -24,6 +24,8 @@ export function errorResponse(err: unknown): Response {
 
 /** Request bodies past this are refused before they're read into memory. */
 export const MAX_JSON_BYTES = 256 * 1024;
+/** For routes whose bodies are a few small fields (a name, a decision, a flag). */
+export const SMALL_JSON_BYTES = 4 * 1024;
 
 /** The body as text, or null once it passes `max` bytes (it stops reading there). */
 export async function readCapped(req: Request, max: number): Promise<string | null> {

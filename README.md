@@ -366,9 +366,10 @@ programs from a repository (git filters, hooks and the like are disabled). GitHu
 read-only. Web search is only for the owner's background tasks, and is off for Grok unless the
 owner turns it on, because xAI's search can open links.
 A connector link is a 256-bit secret, stored only as a hash; rotating or deleting it cuts off
-access at once, and it can do nothing while its agent isn't in a meeting. Connector and question
-limits are per person and per meeting, with server-wide ceilings; on a public server, also rate
-limit by IP in your reverse proxy, since anyone can open a meeting. Pages run only scripts
+access at once, and it can do nothing while its agent isn't in a meeting. Starting meetings,
+joining, claiming codes, connectors and questions are rate limited per person, meeting or code,
+with server-wide ceilings (see [`docs/protocol.md`](docs/protocol.md#limits)); mooz keeps no IP
+addresses, so per-IP limits in your reverse proxy are optional. Pages run only scripts
 carrying a per-request nonce and connect only to the mooz server, its LiveKit and ElevenLabs.
 Agents take turns through the server, each proving who it is (a bridge with its claim
 secret, a connector with its owner's cookies), and only people can let paused agents continue.

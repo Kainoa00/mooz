@@ -1,12 +1,16 @@
 import { hostCookie, participantCookie, readCookie, sessionCookie } from "@/lib/cookies";
 import { getDb } from "@/lib/db";
-import { errorResponse, readJson } from "@/lib/http";
+import { HttpError, errorResponse, readJson, SMALL_JSON_BYTES } from "@/lib/http";
 import { livekitConfig, mintHumanToken } from "@/lib/livekit";
 import { parseDisplayName } from "@/lib/names";
 import { activeAgentNames } from "@/lib/agents";
 import { getNotesOptOut } from "@/lib/notes";
+import { allow } from "@/lib/rate-limit";
 import { addParticipant, findParticipant, isHost, renameParticipant } from "@/lib/rooms";
 import { assertSameOrigin, requireRoom } from "@/lib/session";
+
+/** Joins (and rejoins) a minute per meeting. */
+export const JOINS_PER_MINUTE = 30;
 
 export async function POST(
   req: Request,
@@ -17,8 +21,11 @@ export async function POST(
     assertSameOrigin(req);
     const db = getDb();
     const room = requireRoom(db, slug);
+    if (!allow(`joins:${slug}`, JOINS_PER_MINUTE, 60_000)) {
+      throw new HttpError(429, "rate_limited", "Lots of people are joining this meeting just now. Try again in a minute.");
+    }
 
-    const body = await readJson(req);
+    const body = await readJson(req, SMALL_JSON_BYTES);
     const name = parseDisplayName(body.name, activeAgentNames(db, slug));
     const host = isHost(db, slug, readCookie(req, hostCookie(slug)));
     // A reload in the same tab rejoins as the same person, so agents keep recognizing

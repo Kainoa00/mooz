@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { errorMessage, readBody } from "@/lib/fetch-json";
 
 export function NewMeetingButton() {
   const router = useRouter();
@@ -11,15 +12,15 @@ export function NewMeetingButton() {
   async function start() {
     setBusy(true);
     setError(null);
-    try {
-      const res = await fetch("/api/rooms", { method: "POST" });
-      if (!res.ok) throw new Error("Could not create a meeting");
-      const { slug } = (await res.json()) as { slug: string };
-      router.push(`/r/${slug}`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not create a meeting");
+    const res = await fetch("/api/rooms", { method: "POST" }).catch(() => null);
+    const body = res ? await readBody(res) : null;
+    if (!res?.ok || typeof body?.slug !== "string") {
+      // The server says why (lots of meetings starting at once, say).
+      setError(errorMessage(body, "Could not create a meeting"));
       setBusy(false);
+      return;
     }
+    router.push(`/r/${body.slug}`);
   }
 
   return (
