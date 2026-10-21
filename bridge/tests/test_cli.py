@@ -176,6 +176,35 @@ def test_connect_uses_the_saved_agent(monkeypatch: pytest.MonkeyPatch) -> None:
     assert seen["brain"] == "grok"
 
 
+def test_local_voice_is_checked_before_joining(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from mooz_agent.providers.local import SpeechServerError
+
+    cli.main(["init", "Atlas", "--voice-provider", "local"])
+    assert AgentConfig.load("Atlas").voice_provider == "local"
+    monkeypatch.delenv("MOOZ_PROVIDERS")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
+    monkeypatch.delenv("ELEVEN_API_KEY", raising=False)
+    monkeypatch.setenv("MOOZ_SPEECH_URL", "http://10.0.0.9:3900/v1")
+    joined: list[bool] = []
+
+    async def down(_http: object, _settings: object) -> None:
+        raise SpeechServerError(
+            "Can't reach your speech server at http://10.0.0.9:3900/v1. Is it running?"
+        )
+
+    async def approve(**_: object) -> AgentGrant:
+        joined.append(True)
+        return AgentGrant(token="t", url="ws://lk", room="r", identity="a_1", name="Atlas")
+
+    monkeypatch.setattr("mooz_agent.providers.local.check_speech_server", down)
+    monkeypatch.setattr(cli, "obtain_grant", approve)
+    assert cli.main(["connect", "X", "--server", "http://s", "--agent", "Atlas"]) == 2
+    err = capsys.readouterr().err
+    assert "unencrypted" in err and "Is it running?" in err and joined == []
+
+
 def test_grok_needs_an_xai_key(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -45,7 +45,16 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     init.add_argument("name", help="its name, which is also its wake word")
     init.add_argument("--brain", choices=["claude", "grok"], default="claude")
     init.add_argument("--model", help="override the default model for that brain")
-    init.add_argument("--voice", dest="voice_id", help="ElevenLabs voice ID")
+    init.add_argument(
+        "--voice",
+        dest="voice_id",
+        help="its voice: an ElevenLabs voice ID, or a voice on your local speech server",
+    )
+    init.add_argument(
+        "--voice-provider",
+        choices=["elevenlabs", "local"],
+        help="how it hears and speaks (default: MOOZ_VOICE, else elevenlabs)",
+    )
     init.add_argument(
         "--source",
         action="append",
@@ -113,6 +122,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         brain=args.brain,
         model=args.model,
         voice_id=args.voice_id,
+        voice_provider=args.voice_provider,
         web_search=args.web_search,
     )
     cfg.validate()
@@ -205,8 +215,24 @@ async def run_agent(grant: AgentGrant, config: AgentConfig) -> None:
     await run(grant, config)
 
 
+async def check_local_voice(config: AgentConfig) -> None:
+    """Before joining: the speech server is set up safely and answering."""
+    from .providers import ProviderConfigError, local_speech
+    from .providers.local import SpeechServerError, check_speech_server, speech_warning
+
+    settings = local_speech(config)
+    warning = speech_warning(settings)
+    if warning:
+        print(f"mooz-agent: warning: {warning}", file=sys.stderr)
+    try:
+        async with httpx.AsyncClient() as http:
+            await check_speech_server(http, settings)
+    except SpeechServerError as err:
+        raise ProviderConfigError(str(err)) from err
+
+
 def cmd_connect(args: argparse.Namespace) -> int:
-    from .providers import ProviderConfigError, check_environment
+    from .providers import ProviderConfigError, check_environment, voice_provider
 
     if args.agent:
         config = AgentConfig.load(args.agent)
@@ -220,7 +246,10 @@ def cmd_connect(args: argparse.Namespace) -> int:
         )
         return 2
     try:
-        check_environment(config.brain)
+        voice = voice_provider(config)
+        check_environment(config.brain, voice)
+        if voice == "local":
+            asyncio.run(check_local_voice(config))
     except ProviderConfigError as err:
         print(f"mooz-agent: {err}", file=sys.stderr)
         return 2

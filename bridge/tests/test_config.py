@@ -27,6 +27,7 @@ def test_round_trips_through_toml(home: Path) -> None:
         brain="grok",
         model="grok-4.7",
         voice_id="v1",
+        voice_provider="local",
         sources=[Source(label="repo", path=repo, public=True)],
     )
     cfg.save()
@@ -159,3 +160,8 @@ def test_web_search_is_on_for_claude_and_off_for_grok_unless_set(
     assert AgentConfig.load("Nova").searches_web is False  # its search also opens pages
     assert AgentConfig.load("Echo").searches_web is True
     assert "web_search" not in (AgentConfig.load("Atlas").home / "agent.toml").read_text()
+
+
+def test_rejects_an_unknown_voice_provider() -> None:
+    with pytest.raises(ConfigError, match="elevenlabs or local"):
+        AgentConfig(name="Atlas", voice_provider="piper").validate()  # type: ignore[arg-type]

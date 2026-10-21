@@ -147,6 +147,8 @@ class Agent:
             playout_tail=PLAYOUT_TAIL_SECONDS if hasattr(voice, "queued_duration") else 0.0,
         )
         self._clock = clock
+        self._voice = type(tts).__name__
+        self._latencies: list[float] = []  # heard → first audio, ms
         self._follow_up: dict[str, float] = {}
         self._agent_streak = 0
         self._paused = False  # the meeting's agents are waiting for a person
@@ -348,6 +350,7 @@ class Agent:
     ) -> None:
         def first_frame() -> None:
             latency_ms = (self._clock() - heard_at) * 1000
+            self._latencies.append(latency_ms)
             log.info("latency heard→voice %.0f ms", latency_ms)
 
         about = self._person(asker)
@@ -768,6 +771,7 @@ class Agent:
         and are saved to memory first. Otherwise (Ctrl-C) they stop at once.
         """
         self._closing = True
+        self._log_latency()
         await self.listener.aclose()
         await self._cancel_spawned()
         if self._notes_timer:
@@ -792,6 +796,21 @@ class Agent:
             await self.tasks.aclose()  # anything left (or a second Ctrl-C): stop now
             await self._cancel_spawned()  # reports of what just finished: it's in memory
 
+    def _log_latency(self) -> None:
+        """How quickly it answered in this meeting (what the PRD's latency target is about)."""
+        if not self._latencies:
+            return
+        ordered = sorted(self._latencies)
+        p50 = ordered[len(ordered) // 2]
+        p95 = ordered[min(len(ordered) - 1, int(len(ordered) * 0.95))]
+        log.info(
+            "heard→voice over %d answers: p50 %.0f ms, p95 %.0f ms (%s)",
+            len(ordered),
+            p50,
+            p95,
+            self._voice,
+        )
+
     async def _cancel_spawned(self) -> None:
         for task in list(self._tasks):
             task.cancel()
@@ -809,7 +828,11 @@ async def run(grant: AgentGrant, config: AgentConfig) -> None:
     room = MeetingRoom()
     agent: Agent | None = None
     ended = False
-    async with aiohttp.ClientSession() as http, httpx.AsyncClient() as mooz:
+    async with (
+        aiohttp.ClientSession() as http,
+        httpx.AsyncClient() as mooz,
+        httpx.AsyncClient() as speech,
+    ):
         turns = (
             Turns(
                 mooz,
@@ -827,9 +850,15 @@ async def run(grant: AgentGrant, config: AgentConfig) -> None:
                 raise ClaimError(
                     "connect_failed", f"Could not join the meeting's media server: {err}"
                 ) from err
-            stt, tts, brain = build_providers(http=http, me=room.me, config=config)
+            stt, tts, brain = build_providers(
+                http=http, me=room.me, config=config, speech_http=speech
+            )
             agent = Agent(room=room, stt=stt, tts=tts, brain=brain, turns=turns)
             agent.wire()
+            warm = getattr(tts, "warm", None)
+            if warm is not None:
+                # Said often: prepared once (on a local server this also wakes the model).
+                agent._spawn(warm(["Yes?", FILLER.spoken]))
             await room.wait_closed()
             log.info("left the meeting")
             ended = True

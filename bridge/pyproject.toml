@@ -45,7 +45,7 @@ asyncio_mode = "auto"
 markers = [
   "unit: fast, no network",
   "integration: needs a running LiveKit dev server and mooz web app",
-  "live: hits real Anthropic/ElevenLabs APIs (MOOZ_LIVE_TESTS=1)",
+  "live: real Anthropic, xAI, ElevenLabs, GitHub or local speech servers (MOOZ_LIVE_TESTS=1)",
 ]
 addopts = "-m 'not integration and not live'"
 

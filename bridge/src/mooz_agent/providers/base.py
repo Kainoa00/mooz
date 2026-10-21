@@ -21,7 +21,7 @@ class SpeechToText(Protocol):
 
 class TextToSpeech(Protocol):
     def synthesize(self, text: str) -> AsyncIterator[rtc.AudioFrame]:
-        """Yield audio frames (48 kHz mono) speaking `text`."""
+        """Yield mono audio frames speaking `text` (any rate: the agent resamples to 48 kHz)."""
         ...
 
 

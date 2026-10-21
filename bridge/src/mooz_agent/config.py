@@ -13,6 +13,9 @@ import tomli_w
 
 Brain = Literal["claude", "grok"]
 BRAINS: tuple[Brain, ...] = ("claude", "grok")
+# How the agent hears and speaks: ElevenLabs (the owner's key), or a speech server on their side.
+VoiceProvider = Literal["elevenlabs", "local"]
+VOICE_PROVIDERS: tuple[VoiceProvider, ...] = ("elevenlabs", "local")
 _NAME = re.compile(r"^[A-Za-z][A-Za-z0-9' -]{2,23}$")
 _LABEL = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 _REPO = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]{1,100}$")
@@ -59,6 +62,8 @@ class AgentConfig:
     brain: Brain = "claude"
     model: str | None = None
     voice_id: str | None = None
+    # None: MOOZ_VOICE in the environment decides (ElevenLabs if that isn't set either).
+    voice_provider: VoiceProvider | None = None
     language: str = "en"
     sources: list[Source] = field(default_factory=list)
     github: list[GitHubRepo] = field(default_factory=list)
@@ -88,6 +93,10 @@ class AgentConfig:
             )
         if self.brain not in BRAINS:
             raise ConfigError(f"brain must be claude or grok, not {self.brain!r}")
+        if self.voice_provider is not None and self.voice_provider not in VOICE_PROVIDERS:
+            raise ConfigError(
+                f"voice_provider must be elevenlabs or local, not {self.voice_provider!r}"
+            )
         labels = self._labels()
         if len(labels) != len(set(labels)):
             raise ConfigError("source labels must be unique")
@@ -160,6 +169,8 @@ class AgentConfig:
             data["model"] = self.model
         if self.voice_id:
             data["voice_id"] = self.voice_id
+        if self.voice_provider:
+            data["voice_provider"] = self.voice_provider
         if self.web_search is not None:
             data["web_search"] = self.web_search
         data["sources"] = [
@@ -191,6 +202,7 @@ class AgentConfig:
             brain=data.get("brain", "claude"),
             model=data.get("model"),
             voice_id=data.get("voice_id"),
+            voice_provider=data.get("voice_provider"),
             language=str(data.get("language", "en")),
             sources=[
                 Source(label=str(s["label"]), path=Path(s["path"]), public=bool(s.get("public")))

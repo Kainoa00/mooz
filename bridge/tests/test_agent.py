@@ -442,3 +442,18 @@ def test_tells_the_brain_about_the_other_agents_here() -> None:
     room, _agent = with_floor(FakeFloor(), brain)
     room.people = [ME, KAI, GROK]
     assert list(brain.agents_here()) == ["Grok"]
+
+
+async def test_says_how_quickly_it_answered_when_it_leaves(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level("INFO", logger="mooz_agent.agent")
+    _room, agent = make()
+    for i in range(3):
+        hear(agent, ZACH, f"@Atlas question {i}", via="chat")
+        await settle(agent)
+    await agent.aclose()
+    assert any(
+        "heard→voice over 3 answers: p50" in r.message and "FakeTTS" in r.message
+        for r in caplog.records
+    )

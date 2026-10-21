@@ -7,8 +7,9 @@ import os
 from typing import TYPE_CHECKING
 
 import aiohttp
+import httpx
 
-from ..config import AgentConfig
+from ..config import VOICE_PROVIDERS, AgentConfig
 from ..room import Speaker
 from .base import Brain, SpeechToText, TextToSpeech
 
@@ -16,6 +17,7 @@ log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ..brain import Model, ToolLoopBrain
+    from .local import LocalSpeech
 
 
 class ProviderConfigError(Exception):
@@ -25,17 +27,46 @@ class ProviderConfigError(Exception):
 BRAIN_KEYS = {"claude": "ANTHROPIC_API_KEY", "grok": "XAI_API_KEY"}
 
 
-def check_environment(brain: str = "claude") -> None:
+def voice_provider(config: AgentConfig) -> str:
+    """The agent's own setting, else MOOZ_VOICE, else ElevenLabs."""
+    choice = config.voice_provider or os.environ.get("MOOZ_VOICE") or "elevenlabs"
+    if choice not in VOICE_PROVIDERS:
+        raise ProviderConfigError(f"MOOZ_VOICE is elevenlabs or local, not {choice!r}")
+    return choice
+
+
+def offline_brain() -> bool:
+    """MOOZ_BRAIN=offline: the scripted brain with real voice (no AI key at all)."""
+    return os.environ.get("MOOZ_BRAIN") == "offline"
+
+
+def check_environment(brain: str = "claude", voice: str = "elevenlabs") -> None:
     """Fail before joining a meeting rather than after, if keys are missing."""
     if os.environ.get("MOOZ_PROVIDERS") == "fake":
         return
-    needed = (BRAIN_KEYS.get(brain, "ANTHROPIC_API_KEY"), "ELEVEN_API_KEY")
+    needed = [] if offline_brain() else [BRAIN_KEYS.get(brain, "ANTHROPIC_API_KEY")]
+    if voice == "elevenlabs":
+        needed.append("ELEVEN_API_KEY")
     missing = [k for k in needed if not os.environ.get(k)]
     if missing:
         raise ProviderConfigError(
-            f"Set {' and '.join(missing)} in your environment or bridge/.env "
-            "(or MOOZ_PROVIDERS=fake for an offline demo)."
+            f"Set {' and '.join(missing)} in your environment or bridge/.env (or MOOZ_VOICE=local "
+            "for a speech server on your machine, or MOOZ_PROVIDERS=fake for an offline demo)."
         )
+
+
+def local_speech(config: AgentConfig) -> LocalSpeech:
+    """The local speech server settings from the environment, checked."""
+    from .local import LocalSpeech, SpeechServerError, speech_problem
+
+    try:
+        settings = LocalSpeech.from_env(os.environ, voice=config.voice_id, language=config.language)
+    except SpeechServerError as err:
+        raise ProviderConfigError(str(err)) from err
+    problem = speech_problem(settings)
+    if problem:
+        raise ProviderConfigError(problem)
+    return settings
 
 
 def _model(config: AgentConfig) -> Model:
@@ -81,18 +112,35 @@ def build_brain(model: Model, me: Speaker, config: AgentConfig) -> ToolLoopBrain
 
 
 def build_providers(
-    *, http: aiohttp.ClientSession, me: Speaker, config: AgentConfig
+    *,
+    http: aiohttp.ClientSession,
+    me: Speaker,
+    config: AgentConfig,
+    speech_http: httpx.AsyncClient | None = None,
 ) -> tuple[SpeechToText, TextToSpeech, Brain]:
-    if os.environ.get("MOOZ_PROVIDERS") == "fake":
-        from .fakes import FakeSTT, FakeTTS, OfflineModel
+    """`speech_http` carries a local speech server's requests (it's needed for local voice)."""
+    from .fakes import FakeSTT, FakeTTS, OfflineModel
 
+    if os.environ.get("MOOZ_PROVIDERS") == "fake":
         return FakeSTT({}), FakeTTS(), build_brain(OfflineModel(), me, config)
 
-    from .elevenlabs import ElevenLabsSTT, ElevenLabsTTS
+    voice = voice_provider(config)
+    check_environment(config.brain, voice)
+    stt: SpeechToText
+    tts: TextToSpeech
+    if voice == "local":
+        from .local import LocalSTT, LocalTTS
 
-    check_environment(config.brain)
-    eleven_key = os.environ["ELEVEN_API_KEY"]
-    stt = ElevenLabsSTT(api_key=eleven_key, http=http, keyterms=[me.name], language=config.language)
-    voice = config.voice_id or os.environ.get("MOOZ_VOICE_ID")
-    tts = ElevenLabsTTS(api_key=eleven_key, voice_id=voice, http=http)
-    return stt, tts, build_brain(_model(config), me, config)
+        if speech_http is None:
+            raise ProviderConfigError("local voice needs an HTTP client")
+        settings = local_speech(config)
+        stt, tts = LocalSTT(settings, speech_http), LocalTTS(settings, speech_http)
+    else:
+        from .elevenlabs import ElevenLabsSTT, ElevenLabsTTS
+
+        key = os.environ["ELEVEN_API_KEY"]
+        stt = ElevenLabsSTT(api_key=key, http=http, keyterms=[me.name], language=config.language)
+        voice_id = config.voice_id or os.environ.get("MOOZ_VOICE_ID")
+        tts = ElevenLabsTTS(api_key=key, voice_id=voice_id, http=http)
+    model = OfflineModel() if offline_brain() else _model(config)
+    return stt, tts, build_brain(model, me, config)
