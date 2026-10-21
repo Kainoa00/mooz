@@ -42,8 +42,8 @@ M6 gets mooz ready for other people to run it.
    - Either can be added later behind the same provider seam.
 
 2. **How an owner turns it on (bridge).**
-   - **Switch:** `MOOZ_VOICE=local` in `bridge/.env`, or `voice_provider = "local"` in `agent.toml` (written by `mooz-agent init --voice-provider local`). The toml wins, as `model` does today.
-   - **Settings, in `bridge/.env`:**
+   - **Switch:** `MOOZ_VOICE=local` in `~/.mooz/.env`, or `voice_provider = "local"` in `agent.toml` (written by `mooz-agent init --voice-provider local`). The toml wins, as `model` does today.
+   - **Settings, in `~/.mooz/.env`:**
      - `MOOZ_SPEECH_URL`, default `http://127.0.0.1:3900/v1`
      - `MOOZ_STT_URL` and `MOOZ_TTS_URL`, optional, for separate servers
      - `MOOZ_STT_MODEL`, default `whisper-1`
@@ -452,7 +452,7 @@ Anything outward-facing beyond pushing `main` is marked **[needs your go-ahead]*
     - `__version__` comes from `importlib.metadata`, and the CLI gets `mooz-agent --version`.
     - `scripts/check-version.mjs` checks that `apps/web/package.json`, `bridge/pyproject.toml`, `apps/web/lib/mcp.ts:89`, the top `CHANGELOG.md` entry and the tag (if any) all agree. CI runs it.
   - Bridge package:
-    - `.env` is read from the current directory, then `$MOOZ_HOME/.env` (`~/.mooz/.env`). Today `load_dotenv()` at `cli.py:243` searches from the module's folder.
+    - Keys come only from `$MOOZ_HOME/.env` (`~/.mooz/.env`) or the environment, never a `.env` in the folder it runs in (changed at the M6 review gate: one there could point the AI SDKs, a proxy or the speech server elsewhere). Before, `load_dotenv()` at `cli.py:243` searched from the module's folder.
     - Update the error text at `providers/__init__.py:35-37`.
     - Add `bridge/LICENSE`, and make `bridge/README.md` the PyPI page (install, connect, local voice, absolute links).
     - pyproject gets authors, URLs, keywords and Python classifiers for 3.11–3.13.
@@ -571,7 +571,8 @@ pnpm -C apps/web lint && pnpm -C apps/web typecheck && pnpm -C apps/web exec vit
 pnpm -C apps/web exec playwright test
 cd bridge && uv run ruff check && uv run ruff format --check && uv run mypy && uv run pytest -m "not live" --cov --cov-fail-under=80
 node scripts/check-version.mjs
-docker compose -f deploy/compose.yaml --env-file deploy/.env.example config --quiet
+LIVEKIT_API_SECRET="$(openssl rand -base64 48)" docker compose -f deploy/compose.yaml --env-file deploy/.env.example config --quiet
+! docker compose -f deploy/compose.yaml --env-file deploy/.env.example config --quiet 2>/dev/null  # refused with no secret
 # In CI (the dev sandbox can't reach npm): image build + smoke run
 docker build -f apps/web/Dockerfile -t mooz-web:ci .
 # Opt-in, needs a running speech server:

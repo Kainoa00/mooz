@@ -258,7 +258,7 @@ def server_problem(server: str, *, allow_http: bool = False) -> str | None:
 
 
 def cmd_connect(args: argparse.Namespace) -> int:
-    from .providers import ProviderConfigError, check_environment, voice_provider
+    from .providers import ProviderConfigError, check_environment, local_speech, voice_provider
 
     problem = server_problem(args.server, allow_http=args.allow_http)
     if problem:
@@ -278,8 +278,11 @@ def cmd_connect(args: argparse.Namespace) -> int:
     try:
         voice = voice_provider(config)
         check_environment(config.brain, voice)
-        # The offline demo (MOOZ_PROVIDERS=fake) makes no sound, so it needs no speech server.
-        if voice == "local" and os.environ.get("MOOZ_PROVIDERS") != "fake":
+        if voice == "local" and os.environ.get("MOOZ_PROVIDERS") == "fake":
+            # The offline demo makes no sound, so it needs no speech server, but the meeting
+            # reads the settings: a mistake in them is refused now, not after the host approves.
+            local_speech(config)
+        elif voice == "local":
             asyncio.run(check_local_voice(config))
     except ProviderConfigError as err:
         print(f"mooz-agent: {err}", file=sys.stderr)

@@ -167,11 +167,11 @@ cd bridge && uv run ruff check && uv run ruff format --check && uv run mypy && u
 | Long-poll requests pile up | Low | One open request per agent; rate limits; 25 s poll windows |
 
 ## Acceptance
-- [ ] All tasks complete, each a conventional commit merged to `main`
-- [ ] Validation passes in CI, coverage at 80% or higher for web and bridge
-- [ ] Never two agents speaking at once; people first
-- [ ] Agent-to-agent exchanges pause after 3 turns until a person clicks Continue, and the held reply goes out
-- [ ] Names that the detector could confuse are refused, for agents and people
-- [ ] Bridge and web escape meeting text identically (shared cases)
-- [ ] `security-reviewer` and `code-reviewer` gates passed, every finding fixed and re-reviewed
-- [ ] Live check with two real agents (needs your keys)
+- [x] All tasks complete, each a conventional commit merged to `main`
+- [x] Validation passes in CI, coverage at 80% or higher for web and bridge
+- [x] Never two agents speaking at once; people first
+- [x] Agent-to-agent exchanges pause after 3 turns until a person clicks Continue, and the held reply goes out
+- [x] Names that the detector could confuse are refused, for agents and people
+- [x] Bridge and web escape meeting text identically (shared cases)
+- [x] `security-reviewer` and `code-reviewer` gates passed, every finding fixed and re-reviewed
+- [ ] Live check with two real agents (needs your keys): moved to the release's live checks ([docs/releasing.md](../../docs/releasing.md#5-two-real-agents), check 5)

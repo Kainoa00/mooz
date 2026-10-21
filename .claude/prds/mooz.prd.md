@@ -76,7 +76,7 @@ We'll know we're right when **people who complete setup use an agent in at least
 - [x] How should "addressed vs merely mentioned" be judged: fuzzy name match only, or name match plus a cheap LLM check? Fuzzy rules only (decided in M5): no extra model call, cost or latency per utterance. Instead, names the detector could confuse are refused (for agents and people), and the rules are measured on the shared corpus in `bridge/tests/addressing_cases.json`, which both detectors run.
 
 ## Security hardening backlog (from the M1 security review; done: H3, H4 and H5 in M4, the rest in M6)
-- [x] Rate limits on room creation, joins, code minting and claims, plus cleanup of old rows (review L5)
+- [x] Rate limits on room creation, joins, code minting and claim checks (a claim with a bad code is refused at once, and a code may try 5 names), plus cleanup of old rows (review L5)
 - [x] Server-side expiry for host and participant sessions, not just cookie Max-Age (H2)
 - [x] Derive the cookie `Secure` flag from `MOOZ_PUBLIC_URL` instead of `x-forwarded-proto` (H3)
 - [x] Request body size limit on JSON endpoints (H4)
@@ -108,7 +108,7 @@ We'll know we're right when **people who complete setup use an agent in at least
 - Turn-taking, rate limits and connector questions live in one web server's memory: run one instance; a restart drops answers waiting for a turn.
 - Local voice in the browser needs Chrome, Edge or Firefox; Safari and iOS block it. Speech servers on a CPU are much slower than on a GPU or Apple Silicon, and VoiceStudio's time to first audio isn't measured yet.
 - The bridge logs heard→voice latency (p50 and p95 at leave), not yet speech end→transcript.
-- Rate limits are per person, meeting and code with server-wide ceilings; with no IP addresses kept, someone can use up a ceiling (like rooms a minute) for everyone. Per-IP limits in the reverse proxy are optional.
+- Rate limits are per person, meeting and claim with server-wide ceilings; with no IP addresses kept, someone can use up a ceiling (like rooms a minute) for everyone. On a public server, add per-IP limits in the proxy (docs/deploy-vps.md#limits-by-ip-address); over IPv6 they only raise the cost.
 - Live checks with real keys (ElevenLabs latency, VoiceStudio in the bridge and tab, two real agents, the connector apps, a timed VPS install) are listed in the M6 plan and reported in the release notes.
 
 ## Risks

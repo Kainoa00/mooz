@@ -27,6 +27,7 @@ import { MoozTile } from "./MoozTile";
 import { NotesBanner } from "./NotesBanner";
 import { NotesPolicyToggle } from "./NotesPolicyToggle";
 import { TaskPanel } from "./TaskPanel";
+import { decodeLegacyChat } from "@/lib/chat-decode";
 
 function Stage() {
   const tracks = useTracks(
@@ -54,9 +55,12 @@ function Stage() {
   );
 }
 
+// Module-level: useChat sets chat up again whenever its options object changes.
+const CHAT_OPTIONS = { messageDecoder: decodeLegacyChat };
+
 /** The room's one chat: the panel shows it, and the host's tab records agents' public words from it. */
 function Chat({ record }: { record: Dispatch<RecordEvent> | null }) {
-  const chat = useChat();
+  const chat = useChat(CHAT_OPTIONS);
   return (
     <>
       <ChatPanel chat={chat} />

@@ -1,7 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAgentCode, decideAgentRequest } from "@/lib/agents";
 import { getDb } from "@/lib/db";
-import { MAX_PARTICIPANT_ROWS, UNCONNECTED_PLACE_MS, addParticipant, createRoom, notePersonPresence } from "@/lib/rooms";
+import {
+  HOST_SESSIONS,
+  MAX_PARTICIPANT_ROWS,
+  MAX_ROOM_SESSIONS,
+  UNCONNECTED_PLACE_MS,
+  addParticipant,
+  createRoom,
+} from "@/lib/rooms";
+import { noteWebhook } from "@/lib/webhook-seen";
 import { jsonRequest, params, setCookies, useTestEnv } from "@/test/helpers";
 import { POST as claim } from "./agent/claim/route";
 import { GET as poll, POLLS_PER_MINUTE } from "./agent/claim/[id]/route";
@@ -99,11 +107,49 @@ describe("rate limits", () => {
     const db = getDb();
     const { slug } = createRoom(db);
     const url = `http://localhost:3000/api/rooms/${slug}/join`;
-    const zach = addParticipant(db, { slug, name: "Zach", isHost: false });
-    notePersonPresence(db, zach.identity, "PA_zach", true); // the webhook works here
+    noteWebhook(db); // in any meeting: this one has nobody in it yet (a new link, or one that ended)
     const long = Date.now() - UNCONNECTED_PLACE_MS - 1;
-    for (let i = 1; i < MAX_PARTICIPANT_ROWS; i++) addParticipant(db, { slug, name: "Ghost", isHost: false }, long);
+    for (let i = 0; i < MAX_PARTICIPANT_ROWS; i++) addParticipant(db, { slug, name: "Ghost", isHost: false }, long);
     expect((await join(jsonRequest(url, { name: "Kainoa" }), params({ slug }))).status).toBe(200);
+  });
+
+  it("always lets the host in", async () => {
+    const db = getDb();
+    const { slug, hostSecret } = createRoom(db);
+    const url = `http://localhost:3000/api/rooms/${slug}/join`;
+    for (let i = 0; i < MAX_PARTICIPANT_ROWS; i++) addParticipant(db, { slug, name: "Ghost", isHost: false });
+    expect(await code(await join(jsonRequest(url, { name: "Lee" }), params({ slug })))).toBe("room_full");
+    const host = await join(jsonRequest(url, { name: "Kainoa" }, { cookie: `mooz_host_${slug}=${hostSecret}` }), params({ slug }));
+    expect(host.status).toBe(200);
+  });
+
+  it("holds at most 2000 sessions a meeting, places or not", async () => {
+    const db = getDb();
+    const { slug } = createRoom(db);
+    const url = `http://localhost:3000/api/rooms/${slug}/join`;
+    noteWebhook(db);
+    const insert = db.prepare(
+      "INSERT INTO participants (identity, room_slug, name, is_host, secret_hash, created_at, expires_at) VALUES (?, ?, 'Ghost', 0, 's', ?, ?)",
+    );
+    const long = Date.now() - UNCONNECTED_PLACE_MS - 1;
+    for (let i = 0; i < MAX_ROOM_SESSIONS; i++) insert.run(`p_ghost${i}`, slug, long, Date.now() + 60_000);
+    expect(await code(await join(jsonRequest(url, { name: "Lee" }), params({ slug })))).toBe("room_full");
+    // Sessions that have ended don't count, swept or not.
+    db.prepare("UPDATE participants SET expires_at = ? WHERE identity = 'p_ghost0'").run(Date.now());
+    expect((await join(jsonRequest(url, { name: "Lee" }), params({ slug }))).status).toBe(200);
+  });
+
+  it("lets the host past a full meeting, though not without end", () => {
+    const db = getDb();
+    const { slug } = createRoom(db);
+    const insert = db.prepare(
+      "INSERT INTO participants (identity, room_slug, name, is_host, secret_hash, created_at, expires_at) VALUES (?, ?, 'Ghost', 0, 's', ?, ?)",
+    );
+    for (let i = 0; i < MAX_ROOM_SESSIONS; i++) insert.run(`p_ghost${i}`, slug, Date.now(), Date.now() + 60_000);
+    expect(() => addParticipant(db, { slug, name: "Lee", isHost: false })).toThrow("full");
+    for (let i = 1; i < HOST_SESSIONS; i++) addParticipant(db, { slug, name: "Kainoa", isHost: true });
+    expect(addParticipant(db, { slug, name: "Kainoa", isHost: true }).isHost).toBe(true);
+    expect(() => addParticipant(db, { slug, name: "Kainoa", isHost: true })).toThrow("full");
   });
 
   it("refuses made-up codes without counting them, so a flood of them can't hold up a real one", async () => {

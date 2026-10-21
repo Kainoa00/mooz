@@ -255,8 +255,10 @@ class MeetingRoom:
         self, message: dict[str, object], to: list[str] | None = None
     ) -> None:
         """A task update on mooz.tasks, to everyone or only to `to`."""
+        # As written, not \uXXXX: escaped, a long result in another alphabet outgrows what
+        # the task panel reads.
         await self._room.local_participant.send_text(
-            json.dumps(message), topic=TASKS_TOPIC, destination_identities=to
+            json.dumps(message, ensure_ascii=False), topic=TASKS_TOPIC, destination_identities=to
         )
 
     async def disconnect(self) -> None:

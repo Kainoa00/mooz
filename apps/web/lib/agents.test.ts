@@ -20,7 +20,9 @@ import {
   requireBridgeAgent,
 } from "./agents";
 import { getDb } from "./db";
+import { AGENT_TOKEN_TTL_MS, TOKEN_TTL_MS } from "./livekit";
 import { SESSION_TTL_MS, addParticipant, createRoom, notePersonPresence } from "./rooms";
+import { noteWebhook } from "./webhook-seen";
 import { useTestEnv } from "@/test/helpers";
 
 beforeEach(useTestEnv);
@@ -337,10 +339,12 @@ describe("who holds a name", () => {
     // Away for a moment (a reload), they keep their name, as an agent would.
     expect(participantNames(db, slug).sort()).toEqual(["Kainoa", "Zach"]);
     expect(() => claimAgentCode(db, { code: createAgentCode(db, meetingHost(db, slug)).code, name: "Zack" })).toThrow();
-    // LiveKit's webhook reaches this server (it said Zach came in), so someone who joined by the
-    // link but never came into the call (Kainoa here, and Lee, who made the code) holds their
-    // name only for a moment.
-    expect(participantNames(db, slug, Date.now() + LEFT_GRACE_MS + 1)).toEqual([]);
+    // Where LiveKit's webhook reaches this server, someone who joined by the link but never came
+    // into the call (Kainoa here, and Lee, who made the code) holds their name only while their
+    // join token could still bring them in.
+    noteWebhook(db);
+    expect(participantNames(db, slug, Date.now() + LEFT_GRACE_MS + 1).sort()).toEqual(["Kainoa", "Lee"]);
+    expect(participantNames(db, slug, Date.now() + TOKEN_TTL_MS + 1)).toEqual([]);
   });
 
   it("is everyone whose session is live, where LiveKit's webhook doesn't reach the server", () => {
@@ -349,13 +353,23 @@ describe("who holds a name", () => {
     expect(participantNames(db, slug, Date.now() + SESSION_TTL_MS + 1)).toEqual([]);
   });
 
-  it("keeps an agent's name while its token can be in use, where the webhook doesn't say it's in", () => {
+  it("keeps an agent's name while it could be in the call, where the webhook doesn't say it's in", () => {
     const { db, slug, host } = meeting();
     const claim = claimAgentCode(db, { code: createAgentCode(db, host).code, name: "Atlas" });
     decideAgentRequest(db, { slug, requestId: claim.requestId, approve: true });
     markTokenIssued(db, claim.requestId);
     expect(activeAgentNames(db, slug, Date.now() + APPROVAL_WINDOW_MS + 1)).toEqual(["Atlas"]);
     expect(activeAgentNames(db, slug, Date.now() + SESSION_TTL_MS + 1)).toEqual([]);
+  });
+
+  it("frees a bridge's name once its token can't bring it in, where the webhook would say it's in", () => {
+    const { db, slug, host } = meeting();
+    noteWebhook(db);
+    const claim = claimAgentCode(db, { code: createAgentCode(db, host).code, name: "Atlas" });
+    decideAgentRequest(db, { slug, requestId: claim.requestId, approve: true });
+    markTokenIssued(db, claim.requestId);
+    expect(activeAgentNames(db, slug, Date.now() + AGENT_TOKEN_TTL_MS)).toEqual(["Atlas"]);
+    expect(activeAgentNames(db, slug, Date.now() + APPROVAL_WINDOW_MS + 1)).toEqual([]);
   });
 
   it("keeps a connector agent's name while its approval counts as live", () => {

@@ -50,7 +50,7 @@ The first release: video meetings where everyone can bring their own AI agent.
   relabel themselves.
 - No AI or voice keys on the server. Each owner's keys stay on their machine or in their
   browser.
-- Rate limits per person, meeting and code, with server-wide ceilings, and small caps on
+- Rate limits per person, meeting and claim, with server-wide ceilings, and small caps on
   request bodies. No IP addresses kept.
 - When a meeting ends the server forgets who was in it; sessions expire 24 hours after the
   last join; a room's link and notes policy are kept for 30 days without use. Deleted rows are
@@ -70,7 +70,7 @@ The first release: video meetings where everyone can bring their own AI agent.
   instance, and a restart drops answers waiting for a turn.
 - Server-wide ceilings (new meetings and new connectors a minute, the number of connectors) can
   be used up by one client, since mooz keeps no IP addresses: on a public server, add per-IP
-  limits in the proxy (see the server guide).
+  limits in the proxy (see the server guide). Over IPv6 those only raise the cost.
 - Local voice in the browser works in Chrome, Edge and Firefox; Safari and iPhone or iPad
   browsers block it. On a CPU, local speech is much slower than on a GPU or Apple Silicon.
 - The memory file lock uses `fcntl`: on Windows, avoid the CLI's memory commands while the
@@ -83,10 +83,12 @@ The first release: video meetings where everyone can bring their own AI agent.
 For anyone who ran mooz from `main` before this release:
 
 - The database upgrades itself on start. Room links count as used at the upgrade, so they're
-  kept 30 days from then. Sessions from before it end 24 hours after that person first joined
+  kept 30 days from then (if you ran a build from `main` that counted them as used when they
+  were made, links made over 30 days before it are already gone). Sessions from before it end 24 hours after that person first joined
   (so some end at once: join again), and meetings that ended are forgotten at the next sweep.
 - The bridge no longer reads `bridge/.env`: move your keys to `~/.mooz/.env`
-  (`mkdir -p ~/.mooz && mv bridge/.env ~/.mooz/.env && chmod 600 ~/.mooz/.env`).
+  (`mkdir -p ~/.mooz && mv -n bridge/.env ~/.mooz/.env && chmod 600 ~/.mooz/.env`). If
+  `~/.mooz/.env` already exists, `mv -n` leaves both: copy the lines you need across by hand.
 - Bridges from before M5 don't take turns, and ones from before M6 stop if the server says
   they're polling too fast: update (`uv tool upgrade mooz-agent`, or `git pull && uv sync`).
 - A connector made with a name the M5 rules refuse can't join: delete it and make one with

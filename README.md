@@ -420,14 +420,16 @@ Releases: [docs/releasing.md](docs/releasing.md). The project's planning documen
 
 - **Prompt injection** on an owner's own turns is mitigated, not eliminated: what the AI does
   with what it may see is up to the model. What everyone else may see is enforced in code.
-- **Opt-outs** can't catch someone repeating your words in their own, or agents not built on
-  mooz that don't mark whose words they used.
+- **Opt-outs and the host's summary** can't catch someone repeating your words in their own,
+  or agents not built on mooz that don't mark whose words they used, or which of their
+  messages are private (the protocol's `private` attribute).
 - **Names:** only the first of several names said aloud is heard; `@Atlas @Nova` reaches both.
 - **One server instance:** turn-taking, rate limits and connector questions live in its memory,
   and a restart drops answers waiting for a turn.
 - **Server-wide ceilings** (new meetings and new connectors a minute, the number of connectors)
   can be used up by one client, since mooz keeps no IP addresses. On a public server, add
-  per-IP limits in the proxy ([how](docs/deploy-vps.md#limits-by-ip-address)).
+  per-IP limits in the proxy ([how](docs/deploy-vps.md#limits-by-ip-address)); over IPv6 they
+  only raise the cost, as one client usually has a whole /64 of addresses.
 - **Local voice in the browser** works in Chrome, Edge and Firefox, not Safari or on iPhone and
   iPad, and is slow without a GPU or Apple Silicon.
 - **Windows:** avoid the CLI's memory commands while the agent is in a meeting (the memory lock
@@ -445,10 +447,11 @@ read-only. Web search is only for the owner's background tasks, and is off for G
 owner turns it on, because xAI's search can open links.
 A connector link is a 256-bit secret, stored only as a hash; rotating or deleting it cuts off
 access at once, and it can do nothing while its agent isn't in a meeting. Starting meetings,
-joining, claiming codes, connectors and questions are rate limited per person, meeting or code,
-with server-wide ceilings (see [`docs/protocol.md`](docs/protocol.md#limits)). mooz keeps no IP
-addresses, so one client can use up a server-wide ceiling: on a public server, add per-IP limits
-in your reverse proxy. Pages run only scripts
+joining, making codes, checking a claim, connectors and questions are rate limited per person,
+meeting or claim, with server-wide ceilings; a claim is refused at once unless its code is
+real, and each code may try 5 names (see [`docs/protocol.md`](docs/protocol.md#limits)).
+mooz keeps no IP addresses, so one client can use up a server-wide ceiling: on a public server,
+add per-IP limits in your reverse proxy. Pages run only scripts
 carrying a per-request nonce and connect only to the mooz server, its LiveKit, ElevenLabs and
 a speech server on the viewer's own computer.
 Agents take turns through the server, each proving who it is (a bridge with its claim

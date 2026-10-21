@@ -182,17 +182,42 @@ describe("names that look like an agent's", () => {
     ["һоӏӏу", "Holly"],
     ["һех", "Hex"],
     ["AtIas", "Atlas"], // a capital I for l
+    ["KaI", "Kal"],
+    ["AtIis", "Atlas"], // which reads Atlis, and sounds like it
     ["lris", "Iris"], // and an l for I
+    ["Atlas", "AtIas"], // the agent's name read as it looks, too
     ["At1as", "Atlas"],
+    ["Atǀas", "Atlas"], // a click letter, drawn as a bar
+    ["Atƚas", "Atlas"],
+    ["ꜰelix", "Felix"], // a small capital
+    ["Ꜳtlas", "Atlas"], // Latin letters no table knows, where the rest is the agent's name
+    ["Atʻlas", "Atlas"], // an ʻokina, as an apostrophe would be
   ])("refuses %j while %j is here, and the agent while they are", (name, agent) => {
     expect(() => parseDisplayName(name, [agent])).toThrowError(expect.objectContaining({ status: 409, code: "name_taken" }));
     expect(() => parseAgentName(agent, [name])).toThrowError(expect.objectContaining({ status: 409, code: "name_taken" }));
+  });
+
+  it.each([
+    ["Joel", "Joe"], // an l inside a word is an l
+    ["Phil", "Phi"],
+    ["Salim", "Sam"],
+    ["Mila", "Mia"],
+    ["Kal", "Kai"],
+    ["Ira", "Lyra"], // and a capital I that starts one is an I
+    ["Ilham", "Llama"],
+    ["Ian", "Lan"],
+  ])("keeps %j next to an agent called %j, either way round", (name, agent) => {
+    expect(parseDisplayName(name, [agent])).toBe(name);
+    expect(parseAgentName(agent, [name])).toBe(agent);
   });
 
   it("keeps names written in one alphabet, Latin or not", () => {
     for (const name of ["Michał", "Þóra", "Łukasz", "Søren", "Zoë", "Мария", "李华", "José García", "Ελένη"]) {
       expect(parseDisplayName(name, ["Atlas"])).toBe(name);
     }
+    // Letters no table knows stand in for others only in a word that is mostly the agent's name.
+    expect(parseDisplayName("さくら", ["Kai"])).toBe("さくら");
+    expect(parseDisplayName("Ɔdɛ", ["Ode"])).toBe("Ɔdɛ");
   });
 
   it.each([

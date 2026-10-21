@@ -13,6 +13,7 @@
  */
 
 import { NOTES_OPT_OUT_ATTRIBUTE } from "./notes-protocol";
+import { TASK_TITLE_CHARS } from "./tasks-protocol";
 
 /** Agent messages kept; past this the oldest go (the summary says so). */
 export const MAX_ENTRIES = 2000;
@@ -145,9 +146,12 @@ function classify(text: string, attributes: Readonly<Record<string, string>> | u
   return line.startsWith(TASK_DONE) ? "task" : "answer";
 }
 
+/** A task's title as the task panel holds it: cut to length (or a long one would never match). */
+const clipTitle = (title: string) => title.trim().slice(0, TASK_TITLE_CHARS).trim();
+
 /** A task report ("📋 title") for a private task that agent told this tab about. */
 function isPrivateReport(record: MeetingRecord, agent: string, text: string): boolean {
-  const title = text.trim().replace(/^📋\s*/u, "").split("\n", 1)[0].trim();
+  const title = clipTitle(text.trim().replace(/^📋\s*/u, "").split("\n", 1)[0]);
   return record.privateTasks.includes(`${agent}\n${title}`);
 }
 
@@ -188,9 +192,11 @@ export function recordReducer(record: MeetingRecord, event: RecordEvent): Meetin
       return { ...next, noteKeepers: add(next.noteKeepers, event.from.identity) };
     }
     case "private-task": {
-      const key = `${event.agent}\n${event.title.trim()}`;
-      if (record.privateTasks.includes(key)) return record;
-      return { ...record, privateTasks: [...record.privateTasks, key].slice(-MAX_ENTRIES) };
+      const key = `${event.agent}\n${clipTitle(event.title)}`;
+      // Seen again (its last update comes just before its report): to the back, so it's the last to go.
+      if (record.privateTasks.at(-1) === key) return record;
+      const rest = record.privateTasks.filter((k) => k !== key);
+      return { ...record, privateTasks: [...rest, key].slice(-MAX_ENTRIES) };
     }
     case "floor": {
       if (event.paused === record.paused) return record;

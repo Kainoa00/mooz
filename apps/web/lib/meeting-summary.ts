@@ -25,7 +25,7 @@ export const MAX_FILE_BYTES = 500 * 1024;
 export function escapeMarkdown(text: string): string {
   return stripInvisible(text)
     .normalize("NFKC")
-    .replace(/[\\`*_[\]<>#|~]/g, "\\$&")
+    .replace(/[\\`*_[\]<>#|~&]/g, "\\$&") // & too: an entity like &commat; is an @ to GitHub
     .replace(/:\/\//g, ":\\/\\/")
     .replace(/www\./gi, (m) => `${m.slice(0, 3)}\\.`)
     // GitHub links an email even after "\@", so every @ becomes a fullwidth one (after NFKC).

@@ -1,14 +1,21 @@
 import type { Db } from "./db";
 import { HttpError } from "./http";
 import { hashSecret, newId, newRoomSlug, newSecret } from "./ids";
+import { webhookArrives } from "./webhook-seen";
 
 /**
  * People a meeting keeps a place for: those in the call, and those who joined in the last
  * UNCONNECTED_PLACE_MS (everyone who joined, where the webhook doesn't arrive). A rejoin reuses
- * its row.
+ * its row. The host always gets a place.
  */
 export const MAX_PARTICIPANT_ROWS = 200;
 export const UNCONNECTED_PLACE_MS = 5 * 60 * 1000;
+/**
+ * Sessions a meeting holds at all, places or not: past this nobody but the host joins, and the
+ * host only HOST_SESSIONS more (their reloads reuse their session, so that's plenty).
+ */
+export const MAX_ROOM_SESSIONS = 2000;
+export const HOST_SESSIONS = 500;
 /** Host and participant secrets work this long after their last join (as long as their cookies). */
 export const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -81,14 +88,18 @@ export function addParticipant(
 ): Participant & { secret: string } {
   // Where LiveKit's webhook says who came into the call, joins that never did stop holding a
   // place after a few minutes, so a link holder can't fill the meeting with them.
-  const { n } = db
+  const webhook = webhookArrives(db, now) ? 1 : 0;
+  const { places, sessions } = db
     .prepare(
-      `SELECT COUNT(*) AS n FROM participants p WHERE room_slug = ? AND (
-         (session_sid IS NOT NULL AND left_at IS NULL) OR created_at > ?
-         OR NOT EXISTS (SELECT 1 FROM participants q WHERE q.room_slug = p.room_slug AND q.session_sid IS NOT NULL))`,
+      `SELECT COUNT(*) AS sessions,
+         COALESCE(SUM((session_sid IS NOT NULL AND left_at IS NULL) OR created_at > ? OR ? = 0), 0) AS places
+       FROM participants WHERE room_slug = ? AND expires_at > ?`,
     )
-    .get(input.slug, now - UNCONNECTED_PLACE_MS) as { n: number };
-  if (n >= MAX_PARTICIPANT_ROWS) throw new HttpError(409, "room_full", "This meeting is full.");
+    .get(now - UNCONNECTED_PLACE_MS, webhook, input.slug, now) as { places: number; sessions: number };
+  const full = input.isHost
+    ? sessions >= MAX_ROOM_SESSIONS + HOST_SESSIONS
+    : places >= MAX_PARTICIPANT_ROWS || sessions >= MAX_ROOM_SESSIONS;
+  if (full) throw new HttpError(409, "room_full", "This meeting is full.");
   const identity = newId("p");
   const secret = newSecret();
   db.prepare(

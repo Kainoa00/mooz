@@ -9,6 +9,7 @@ import { getDb } from "@/lib/db";
 import { floorView, requestTurn, resetFloorsForTests } from "@/lib/floor";
 import { setNotesPolicy } from "@/lib/notes";
 import { addParticipant, createRoom, getRoom, getRoomByLivekitName } from "@/lib/rooms";
+import { webhookArrives } from "@/lib/webhook-seen";
 import { LK_KEY, LK_SECRET, useTestEnv } from "@/test/helpers";
 
 const removeFromRoom = vi.fn<(room: string, identity: string) => Promise<void>>(async () => {});
@@ -73,6 +74,23 @@ describe("POST /api/livekit/webhook", () => {
     expect(removeFromRoom).not.toHaveBeenCalled();
   });
 
+  it("takes out a person who comes back on their old token under a name an agent took meanwhile", async () => {
+    const db = getDb();
+    const { slug } = createRoom(db);
+    const { livekitRoom } = getRoom(db, slug)!;
+    const maya = addParticipant(db, { slug, name: "Maya", isHost: false });
+    const zach = addParticipant(db, { slug, name: "Zach", isHost: false });
+    // Maya came in and left; minutes later her name is free, and an agent takes it.
+    db.prepare("UPDATE participants SET session_sid = 'PA_1', left_at = ? WHERE identity = ?").run(Date.now() - 3 * 60_000, maya.identity);
+    const claim = claimAgentCode(db, { code: createAgentCode(db, zach).code, name: "Maya" });
+    decideAgentRequest(db, { slug, requestId: claim.requestId, approve: true });
+
+    await POST(await signed(joined(livekitRoom, zach.identity)));
+    expect(removeFromRoom).not.toHaveBeenCalled();
+    await POST(await signed(joined(livekitRoom, maya.identity)));
+    expect(removeFromRoom).toHaveBeenCalledWith(livekitRoom, maya.identity);
+  });
+
   it("rejects an unsigned or forged webhook", async () => {
     const a = agent(true);
     const body = joined(a.livekitRoom, a.identity);
@@ -83,6 +101,10 @@ describe("POST /api/livekit/webhook", () => {
     expect(unsigned.status).toBe(401);
     expect(forged.status).toBe(401);
     expect(removeFromRoom).not.toHaveBeenCalled();
+    // Nor does either count as the webhook reaching this server.
+    expect(webhookArrives(getDb())).toBe(false);
+    await POST(await signed(JSON.stringify({ event: "room_started", room: { name: "lk_none" } })));
+    expect(webhookArrives(getDb())).toBe(true);
   });
 
   it("restores the notes policy when LiveKit starts the room again", async () => {

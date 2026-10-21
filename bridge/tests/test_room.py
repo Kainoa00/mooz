@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass, field
 from typing import Any, cast
 
@@ -61,6 +62,15 @@ async def test_chat_to_some_people_is_marked_private() -> None:
     assert second["attributes"] == {"reply_to": "p_1", "private": "1"}
     assert second["destination_identities"] == ["p_1"]
     assert third["attributes"] is None
+
+
+async def test_task_updates_go_as_written_not_escaped() -> None:
+    fake = _Room()
+    room = MeetingRoom(cast(rtc.Room, fake))
+    await room.send_task_event({"type": "task", "details": "Привет " * 3000}, to=["p_1"])
+    (sent,) = fake.local_participant.sent
+    assert "Привет" in sent["text"] and len(sent["text"]) < 22_000
+    assert json.loads(sent["text"])["details"] == "Привет " * 3000
 
 
 @pytest.mark.parametrize(

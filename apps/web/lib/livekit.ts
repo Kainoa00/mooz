@@ -44,9 +44,10 @@ export function livekitConfig(): LivekitConfig {
   };
 }
 
-const TOKEN_TTL = "1h";
+/** How long a person's join token can be used to come into the call (LiveKit refreshes it after). */
+export const TOKEN_TTL_MS = 60 * 60 * 1000;
 /** Agent tokens are single-use and short-lived; LiveKit refreshes them while connected. */
-const AGENT_TOKEN_TTL = "5m";
+export const AGENT_TOKEN_TTL_MS = 5 * 60 * 1000;
 
 /**
  * A join token for a human participant. Participants cannot edit their own
@@ -66,7 +67,7 @@ export async function mintHumanToken(input: {
   const at = new AccessToken(apiKey, apiSecret, {
     identity: input.identity,
     name: input.name,
-    ttl: TOKEN_TTL,
+    ttl: TOKEN_TTL_MS / 1000,
     attributes,
   });
   at.addGrant({
@@ -96,7 +97,7 @@ export async function mintAgentToken(agent: AgentIdentity): Promise<string> {
   const at = new AccessToken(apiKey, apiSecret, {
     identity: agent.identity,
     name: agent.name,
-    ttl: AGENT_TOKEN_TTL,
+    ttl: AGENT_TOKEN_TTL_MS / 1000,
     attributes,
   });
   at.addGrant({

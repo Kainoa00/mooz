@@ -73,6 +73,9 @@ const CAPITALS: Record<string, string> = {
 const LOOKS: Record<string, string> = {
   ...LATIN,
   ɩ: "i", ȷ: "j", ɵ: "o", "0": "o", "1": "l",
+  // Latin letters drawn like plain ones: Atǀas (a click letter) reads Atlas.
+  ǀ: "l", ǁ: "ll", ƚ: "l", ɭ: "l", ɫ: "l", ȴ: "l", ɨ: "i", ʉ: "u", ꜰ: "f", ꞵ: "b", ƀ: "b",
+  ꭓ: "x", ɲ: "n", ɾ: "r", ɼ: "r", ʂ: "s", ƙ: "k",
   а: "a", в: "b", г: "r", е: "e", ё: "e", к: "k", м: "m", н: "h", о: "o", п: "n", р: "p",
   с: "c", т: "t", у: "y", х: "x", ш: "w", ѕ: "s", і: "i", ї: "i", ј: "j", ԁ: "d", ԛ: "q",
   ԝ: "w", һ: "h", ӏ: "l", ү: "y", α: "a", β: "b", ε: "e", ζ: "z", η: "n", ι: "i", κ: "k",
@@ -87,9 +90,17 @@ const LOOKS: Record<string, string> = {
   ꓫ: "x", ꓬ: "y", ꓜ: "z",
 };
 
-/** Compatibility forms (fullwidth, circled…) and accents gone, joiners dropped. */
+/**
+ * Compatibility forms (fullwidth, circled…) and accents gone, joiners dropped, and the ʻokina
+ * and ʼ written as the apostrophe they look like (so "Atʻlas" is one word, as "At'las" is).
+ */
 function bare(name: string): string {
-  return name.normalize("NFKC").normalize("NFKD").replace(/\p{M}/gu, "").replace(/[\u200c\u200d]/g, "");
+  return name
+    .normalize("NFKC")
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .replace(/[\u200c\u200d]/g, "")
+    .replace(/[\u02bb\u02bc]/g, "'");
 }
 
 const plain = (name: string) => bare(name).toLowerCase();
@@ -111,10 +122,15 @@ export function foldNameByLook(name: string): string {
 
 /**
  * The ways a name can be read: as it sounds, as it looks, and with a capital I read as l (and l
- * as I), which many fonts draw alike ("AtIas").
+ * as I), which many fonts draw alike. Only where they would pass for each other: an I after a
+ * small letter, or before one inside a word ("AtIas", "KaI"), and an l that starts a word
+ * ("lris"). A capital I that starts a word (Ira, Ilham) and an l inside one (Joel) are just
+ * themselves.
  */
 function readings(name: string): string[] {
-  return [foldName(name), foldNameByLook(name), foldNameByLook(name.replace(/I/g, "l")), foldNameByLook(name.replace(/l/g, "I"))];
+  const iAsL = name.replace(/(?<=\p{Ll})I|(?<=\p{L})I(?=\p{Ll})/gu, "l");
+  const lAsI = name.replace(/(?<![\p{L}\p{N}])l/gu, "I");
+  return [foldName(name), foldNameByLook(name), foldNameByLook(iAsL), foldNameByLook(lAsI)];
 }
 
 const LATIN_SCRIPT = /\p{Script=Latin}/u;
@@ -132,11 +148,41 @@ function mixesAlphabets(name: string): boolean {
   });
 }
 
-/** Whether saying any word of `name` would be heard as `agent`'s wake word (read any way). */
+/**
+ * Whether a word with Latin letters the tables don't know ("atǀas", "ꜳtlas") reads as `wake`:
+ * the same length, with those letters (at most half of them) where the rest doesn't match.
+ */
+function readsAs(word: string, wake: string): boolean {
+  const letters = [...word];
+  const target = [...wake];
+  if (letters.length !== target.length) return false;
+  let unknown = 0;
+  for (const [i, c] of letters.entries()) {
+    if (c === target[i]) continue;
+    if (c < "\x80" || !LATIN_SCRIPT.test(c)) return false;
+    unknown++;
+  }
+  return unknown > 0 && unknown * 2 <= letters.length;
+}
+
+/** The words of a folded name that still have letters beyond a to z, possessive and all. */
+const unknownWords = (folded: string) =>
+  (folded.match(/[\p{L}\p{N}']+/gu) ?? [])
+    .filter((w) => /[^\x00-\x7f]/.test(w))
+    .map((w) => w.replace(/'s$/, "").replace(/^'+|'+$/g, ""));
+
+/**
+ * Whether saying any word of `name` would be heard as `agent`'s wake word, either read any way
+ * (an agent called "AtIas" is read as Atlas too).
+ */
 function heardAs(name: string, agent: string): boolean {
-  const wake = wakeWord(foldName(agent));
-  if (wake === undefined) return false;
-  return readings(name).some((folded) => nameWords(folded).some((w) => alike(w, wake)));
+  const wakes = new Set(readings(agent).map((folded) => wakeWord(folded)).filter((w) => w !== undefined));
+  if (wakes.size === 0) return false;
+  return readings(name).some(
+    (folded) =>
+      nameWords(folded).some((w) => [...wakes].some((wake) => alike(w, wake))) ||
+      unknownWords(folded).some((w) => [...wakes].some((wake) => readsAs(w, wake))),
+  );
 }
 
 // An agent wakes up when its name is said, so names that people say all the
@@ -175,7 +221,8 @@ export function parseAgentName(value: unknown, people: readonly string[], agents
   if (wake.replace(/[^a-z]/g, "").length < 3) {
     throw new HttpError(400, "invalid_agent_name", "An agent's name needs a last word with at least 3 letters");
   }
-  if (takenNames.some((taken) => readings(taken.trim()).includes(key))) {
+  const read = readings(name);
+  if (takenNames.some((taken) => readings(taken.trim()).some((r) => read.includes(r)))) {
     throw new HttpError(409, "name_taken", `Someone in this meeting is already called "${name}"`);
   }
   // Which name it clashes with isn't said: the asker may not be able to see everyone who counts.

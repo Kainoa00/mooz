@@ -43,16 +43,22 @@ Request: `{"code": "ABCD-EFGH-JKLM", "name": "Atlas"}` with `content-type: appli
   (`mooz`, `everyone`, `agents`, `hey`, …) or end in a common English word (`notes`, `mark`,
   `can`, …). Its wake word must not sound or look like any word in the name of a person or
   agent in the meeting now. People and agents gone for more than 2 minutes don't count, nor
-  do people whose session has ended, people who joined by the link but never came into the
-  call (after 2 minutes, where the webhook says who's in), or agents approved that never
-  collected their token. A person coming back after 2 minutes can't keep a name that an agent
+  do people whose session has ended, or a bridge approved that never collected its token.
+  Where LiveKit's webhook reaches the server (it has in the last day), nor do people who
+  joined by the link but never came into the call once their join token has run out (an hour
+  after they joined), or a bridge that collected its token but never came in once that has
+  (5 minutes). A connector agent's approval holds its name for a day, as its owner's tab can
+  still bring it in. A person coming back after 2 minutes can't keep a name that an agent
   that came in meanwhile answers to. The detector's
   own same-word test decides, so `Atlis` is refused next to `Atlas`, and `Lee's Grok` next
   to `Zach's Grok`. People's names are compared both as they sound and as they look in plain
   Latin letters: `Атлас`, `Ａｔｌａｓ` and `Atłas` count as `Atlas`, and so do `Сora`
   (a Cyrillic С) as `Cora`, `ΗΑΝΚ` (Greek capitals) as `Hank`, and `AtIas` (a capital I) as
-  `Atlas`. The lookalikes are a list of the common ones, not Unicode's whole confusables
-  table. A person's name can't mix the Latin alphabet with another within a word (every Latin
+  `Atlas`, either way round. A capital I and an l count as each other only where they pass
+  for each other (an I after a small letter, an l that starts a word: `lris` is `Iris`, but
+  `Joel` isn't `Joe` and `Ira` isn't `Lyra`). The lookalikes are a list of the common ones, not
+  Unicode's whole confusables table; in a word otherwise spelled like the wake word, any other
+  Latin letter stands in for the one it replaces (`Atǀas`, `Ꜳtlas`). A person's name can't mix the Latin alphabet with another within a word (every Latin
   letter counts, so `Əliyev`, `Hawaiʻi` and `Ɔdɛɛ` are fine). The error doesn't say whose name
   it clashes with. A person can make 10 codes an hour, and a meeting 50 for people nobody can
   see: the host, and anyone LiveKit says came into the call, aren't held to that.
@@ -102,13 +108,13 @@ safe to show to a person.
 ### Limits
 
 Every limit answers `429 rate_limited`, and the window is a minute unless it says otherwise.
-mooz keeps no IP addresses, so the limits are per person, meeting, code or claim, with
-ceilings across the server.
+mooz keeps no IP addresses, so the limits are per person, meeting or claim, with ceilings
+across the server.
 
 | Route | Limit |
 |---|---|
 | `POST /api/rooms` | 30 new meetings across the server (`MOOZ_ROOMS_PER_MINUTE`) |
-| `POST /api/rooms/{slug}/join` | 30 joins per meeting, counted apart for the host and for each person coming back. A meeting keeps a place for at most 200 people (a rejoin reuses its place; where the webhook arrives, a join that never came into the call stops holding one after 5 minutes); past that it answers `409 room_full` |
+| `POST /api/rooms/{slug}/join` | 30 joins per meeting, counted apart for the host and for each person coming back. A meeting keeps a place for at most 200 people (a rejoin reuses its place; where the webhook arrives, a join that never came into the call stops holding one after 5 minutes) and 2,000 sessions in all; past that it answers `409 room_full`. The host always gets a place, and may add 500 sessions past the 2,000 |
 | `POST /api/rooms/{slug}/agent-codes` | 10 codes an hour per person, and 50 per meeting for people who aren't the host and haven't come into the call |
 | `POST /api/agent/claim` | None: a made-up, used or expired code is refused at once (`400`), and a real one may try 5 names |
 | `GET /api/agent/claim/{id}` | 60 checks per claim, counted only with the right secret. A bridge that gets a 429 waits and polls again |
@@ -321,6 +327,7 @@ ended.
 | Connectors: name, app, a hash of the link | Deleted by their owner, or expired as in [section 5](#the-connector-link) |
 | Questions, the floor | Memory only: gone when the meeting ends or the server restarts |
 | Rate-limit counters (a meeting's link or a random identity, a count and when it started) | Memory only: gone at the first sweep after their window (a minute or an hour), or a restart |
+| When LiveKit's webhook last arrived (a time, nothing about anyone) | Until the next one |
 
 "The meeting ends" is LiveKit's `room_finished`, sent once everyone has left. Without it, a
 sweep (at most once a minute, run by room creation and joins) deletes what has expired.
@@ -343,11 +350,14 @@ server's API keys (`webhook` in `livekit.yaml`). It's how the server knows:
 - when a removed agent, or one from an ended meeting, reconnects, so it can kick it
 - when the meeting ends, so it can forget who was in it
 
-Without the webhook, meetings still work, but the server falls back:
+The server counts the webhook as arriving if one has in the last day (it keeps the time, so a
+restart doesn't forget). Without it, meetings still work, but the server falls back:
 
 - Name checks count everyone whose session is live (a day after their last join), and every
   agent whose token can still be in use (a bridge's for a day, a connector's approval for a
   day).
+- Every join holds one of a meeting's 200 places until its session ends, not just people in
+  the call.
 - The meeting-wide cap on agent codes counts everyone but the host.
 - A removed agent can reconnect while its last token lasts.
 - People's rows stay until the sweep finds them expired.

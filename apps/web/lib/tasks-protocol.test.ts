@@ -115,6 +115,15 @@ describe("task protocol", () => {
     expect(await readCapped(chunks(1_000))).toBeNull();
   });
 
+  it("reads a full update, even one that's all emoji", async () => {
+    // The bridge's longest: 20,000 characters of details and 2,000 of summary, each two UTF-16 units.
+    const event = JSON.stringify({ type: "task", details: "📈".repeat(20_000), summary: "📈".repeat(2_000), title: "x".repeat(120) });
+    async function* stream() {
+      yield event;
+    }
+    expect(await readCapped(stream())).toBe(event);
+  });
+
   it("builds the query and cancel messages agents expect", () => {
     expect(decode(TASKS_QUERY)).toEqual({ type: "tasks?" });
     expect(decode(cancelTaskMessage("t_0a1b2c3d"))).toEqual({ type: "task.cancel", id: "t_0a1b2c3d" });

@@ -17,6 +17,9 @@ export const TASKS_TOPIC = "mooz.tasks";
 export const TASK_STATES = ["queued", "working", "done", "failed", "cancelled"] as const;
 export type TaskState = (typeof TASK_STATES)[number];
 
+/** A task's title is cut to this. */
+export const TASK_TITLE_CHARS = 200;
+
 export interface TaskEvent {
   id: string;
   state: TaskState;
@@ -41,8 +44,12 @@ const encode = (value: unknown): Uint8Array<ArrayBuffer> => new TextEncoder().en
 
 export const TASKS_QUERY = encode({ type: "tasks?" });
 
-/** The longest task update read (a full one is about 21 KB); a longer stream is dropped. */
-export const MAX_EVENT_CHARS = 32_000;
+/**
+ * The longest task update read; a longer stream is dropped. A full one is about 23,000
+ * characters, or twice that in UTF-16 units if it's all emoji (and six times as many from a
+ * bridge that escaped it as \uXXXX, which today's don't).
+ */
+export const MAX_EVENT_CHARS = 64_000;
 /** Rows kept per agent (a mooz agent takes at most 20 tasks a meeting); oldest finished go first. */
 export const MAX_TASKS_PER_AGENT = 30;
 
@@ -74,7 +81,7 @@ export function parseTaskEvent(text: string): TaskEvent | null {
   const m = raw as Record<string, unknown>;
   if (m.type !== "task" || !TASK_STATES.includes(m.state as TaskState)) return null;
   const id = clip(m.id, 40);
-  const title = clip(m.title, 200);
+  const title = clip(m.title, TASK_TITLE_CHARS);
   const owner = clip(m.owner, 100);
   const summary = clip(m.summary ?? "", 2_000);
   const details = clip(m.details ?? "", 20_000);

@@ -145,59 +145,91 @@ waiting for a turn are dropped, and the chat still has them).
 
 ## Limits by IP address
 
-mooz's own limits are per person, meeting and code, with ceilings across the server (new
+mooz's own limits are per person, meeting and claim, with ceilings across the server (new
 meetings and new connectors a minute, and the number of connectors); it keeps no IP addresses.
 So one client that joins over and over can use up a ceiling for everyone. On a server open to
-the internet, add per-IP limits in Caddy, below those ceilings. Build Caddy with the
-`caddy-ratelimit` module (this isn't part of the tested setup yet, so check the module's
-documentation for the current syntax):
+the internet, add per-IP limits in Caddy, below those ceilings. This isn't part of the tested
+setup yet, so check the `caddy-ratelimit` module's documentation for the current syntax.
 
-```dockerfile
-FROM caddy:2.11.7-builder AS builder
-RUN xcaddy build --with github.com/mholt/caddy-ratelimit
-FROM caddy:2.11.7
-COPY --from=builder /usr/bin/caddy /usr/bin/caddy
-```
+1. Build Caddy with the module. Save this as `deploy/Caddy.Dockerfile`:
 
-```caddyfile
-{
-	order rate_limit before reverse_proxy
-}
+   ```dockerfile
+   FROM caddy:2.11.7-builder AS builder
+   RUN xcaddy build --with github.com/mholt/caddy-ratelimit
+   FROM caddy:2.11.7
+   COPY --from=builder /usr/bin/caddy /usr/bin/caddy
+   ```
 
-{$MOOZ_DOMAIN} {
-	rate_limit {
-		# Below the server-wide ceilings, so one address can't use them up.
-		zone new_things {
-			match {
-				method POST
-				path /api/rooms /api/connectors
-			}
-			key {remote_host}
-			events 5
-			window 1m
-		}
-		zone joins {
-			match {
-				method POST
-				path /api/rooms/*/join
-			}
-			key {remote_host}
-			events 20
-			window 1m
-		}
-		zone everything {
-			key {remote_host}
-			events 300
-			window 1m
-		}
-	}
-	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
-	reverse_proxy 127.0.0.1:3000
-}
-```
+2. In `deploy/compose.yaml`, have the `caddy` service build it instead of using the stock image
+   (which refuses the `rate_limit` settings). Replace `image: caddy:2.11.7` with:
+
+   ```yaml
+       build:
+         context: .
+         dockerfile: Caddy.Dockerfile
+   ```
+
+3. Replace `deploy/Caddyfile` with this. Caddy allows only one global block (the `{ … }` at the
+   top), so the `order` line goes in with the log filter; the LiveKit site is unchanged.
+
+   ```caddyfile
+   {
+   	order rate_limit before reverse_proxy
+   	log default {
+   		format filter {
+   			wrap json
+   			request>uri regexp "(^/mcp/|access_token=)[^&/?]+" "${1}REDACTED"
+   		}
+   	}
+   }
+
+   {$MOOZ_DOMAIN} {
+   	rate_limit {
+   		# Below the server-wide ceilings, so one address can't use them up.
+   		zone new_things {
+   			match {
+   				method POST
+   				path /api/rooms /api/connectors
+   			}
+   			key {remote_host}
+   			events 5
+   			window 1m
+   		}
+   		zone joins {
+   			match {
+   				method POST
+   				path /api/rooms/*/join
+   			}
+   			key {remote_host}
+   			events 20
+   			window 1m
+   		}
+   		zone everything {
+   			key {remote_host}
+   			events 300
+   			window 1m
+   		}
+   	}
+   	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+   	reverse_proxy 127.0.0.1:3000
+   }
+
+   {$LIVEKIT_DOMAIN} {
+   	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+   	reverse_proxy 127.0.0.1:7880 {
+   		# Keep meetings' WebSockets open across a Caddy reload.
+   		stream_close_delay 5m
+   	}
+   }
+   ```
+
+4. Check it, then start it: `docker compose run --rm caddy caddy validate --config
+   /etc/caddy/Caddyfile`, then `docker compose up -d --build caddy`.
 
 People behind one address (an office, a school) share these, so raise them if they get in each
-other's way.
+other's way. Over IPv6 they're weaker: one client usually has a whole /64 of addresses, so a
+limit per address only raises the cost. For more, serve the app's name over IPv4 only (no AAAA
+record for `MOOZ_DOMAIN`), or key the zones by address prefix if the module supports it.
 
 ## Appendix: TURN over TLS on 443 (untested)
 

@@ -13,7 +13,9 @@ import respx
 from livekit import rtc
 
 from mooz_agent.providers.local import (
+    MAX_SENTENCE_FETCH_SECONDS,
     MAX_SENTENCE_SECONDS,
+    MAX_WAV_HEADER_BYTES,
     LocalSpeech,
     LocalSTT,
     LocalTTS,
@@ -109,6 +111,19 @@ def test_a_key_never_goes_unencrypted_to_another_machine() -> None:
     # Encrypted, but everyone's audio still leaves this machine: worth a word.
     assert "goes to gpu.example" in (speech_warning(tls) or "")
     assert "unencrypted" not in (speech_warning(tls) or "")
+
+
+def test_the_warning_names_what_goes_where() -> None:
+    speaks = LocalSpeech.from_env({"MOOZ_TTS_URL": "https://gpu.example/v1"})
+    expected = "Your agent's answers go to gpu.example, not just this machine."
+    assert speech_warning(speaks) == expected
+    split = LocalSpeech.from_env(
+        {"MOOZ_STT_URL": "https://stt.example/v1", "MOOZ_TTS_URL": "http://10.0.0.9:3900/v1"}
+    )
+    assert speech_warning(split) == (
+        "Everyone's audio in the meeting goes to stt.example, not just this machine. "
+        "Your agent's answers go to 10.0.0.9 unencrypted (http). Use https://, or an SSH tunnel."
+    )
 
 
 @pytest.mark.parametrize(
@@ -261,6 +276,24 @@ def test_wav_takes_its_rate_from_the_header_and_comes_down_to_mono() -> None:
     assert list(joined[:4]) == [200, 0, 200, 0]
 
 
+def test_a_wav_header_that_arrives_in_pieces_is_not_played() -> None:
+    body = wav_header(16_000, 1) + np.arange(1, 801, dtype=np.int16).tobytes()
+    frames = WavFrames()
+    # The format is complete at byte 36, the data chunk's header isn't until 44.
+    out = [*frames.feed(body[:40]), *frames.feed(body[40:]), *frames.flush()]
+    joined = np.concatenate([np.frombuffer(bytes(f.data), dtype=np.int16) for f in out])
+    assert list(joined[:3]) == [1, 2, 3]
+
+
+def test_a_wav_header_that_never_reaches_its_audio_is_refused() -> None:
+    frames = WavFrames()
+    head = b"RIFF\xff\xff\xff\xffWAVELIST" + struct.pack("<I", 0xFFFFFFF0)
+    frames.feed(head)
+    with pytest.raises(SpeechServerError, match="header is too long"):
+        for _ in range(MAX_WAV_HEADER_BYTES // 4096 + 2):
+            frames.feed(b"\0" * 4096)
+
+
 def test_wav_must_be_16_bit() -> None:
     header = bytearray(wav_header(16_000, 1))
     header[34:36] = struct.pack("<H", 8)
@@ -340,6 +373,19 @@ async def test_a_sentence_that_never_ends_is_cut_off() -> None:
         with pytest.raises(SpeechServerError, match="too long"):
             async for _ in LocalTTS(settings, http).synthesize("Hello there everyone."):
                 pass
+
+
+@respx.mock
+async def test_a_sentence_that_trickles_in_is_cut_off() -> None:
+    clock = iter(range(0, 10_000, 10))  # ten seconds a chunk, two bytes (no frame) each
+    trickle = _Repeat(b"\0\0", 1000)
+    respx.post(f"{URL}/audio/speech").respond(200, stream=trickle)
+    async with httpx.AsyncClient() as http:
+        tts = LocalTTS(LocalSpeech(), http, clock=lambda: float(next(clock)))
+        with pytest.raises(SpeechServerError, match="took too long"):
+            async for _ in tts.synthesize("Hello there everyone."):
+                pass
+    assert trickle.sent == int(MAX_SENTENCE_FETCH_SECONDS / 10) + 1
 
 
 @respx.mock

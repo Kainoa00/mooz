@@ -1,5 +1,5 @@
 import { WebhookReceiver } from "livekit-server-sdk";
-import { isUnwelcomeAgent, noteBridgePresence } from "@/lib/agents";
+import { isUnwelcomeAgent, isUnwelcomePerson, noteBridgePresence } from "@/lib/agents";
 import { endMeeting } from "@/lib/cleanup";
 import { endRoomConnectors, noteConnectorPresence } from "@/lib/connector-agents";
 import { forgetAgent } from "@/lib/connector-queue";
@@ -10,11 +10,12 @@ import { livekitConfig, removeFromRoom } from "@/lib/livekit";
 import { getNotesPolicy } from "@/lib/notes";
 import { publishRoomState } from "@/lib/room-state";
 import { getRoomByLivekitName, notePersonPresence } from "@/lib/rooms";
+import { noteWebhook } from "@/lib/webhook-seen";
 
 /**
  * LiveKit calls this for room events (configured in livekit.yaml). A removed agent (or one
  * from a meeting that ended) that reconnects with a token it still holds is kicked the moment
- * it joins, and a
+ * it joins, as is a person coming in under a name an agent took while they were away. And a
  * room LiveKit starts again (after everyone left) gets its notes policy back. A
  * connector agent whose tab leaves may come back for a couple of minutes (a reload);
  * after that it's out, with its questions. An agent that leaves gives up its turns (a bridge
@@ -48,10 +49,11 @@ export async function POST(req: Request): Promise<Response> {
     const sid = event.participant?.sid;
     const room = event.room?.name;
     const db = getDb();
+    noteWebhook(db);
     if (event.event === "participant_joined" && identity && room) {
       noteBridgePresence(db, identity, sid, true);
       notePersonPresence(db, identity, sid, true);
-      if (isUnwelcomeAgent(db, identity)) await removeFromRoom(room, identity);
+      if (isUnwelcomeAgent(db, identity) || isUnwelcomePerson(db, identity)) await removeFromRoom(room, identity);
       else if (noteConnectorPresence(db, identity, sid, true) === "expired") {
         forgetAgent(identity);
         await removeFromRoom(room, identity);

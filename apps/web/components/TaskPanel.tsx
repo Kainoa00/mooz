@@ -63,7 +63,10 @@ export function TaskPanel({ onPrivateTask }: { onPrivateTask?: (agent: string, t
       const from = room.remoteParticipants.get(info.identity);
       const event = parseTaskEvent(text);
       if (!from || !event) return;
-      if (event.private && isAgent(from)) privateTask.current?.(from.identity, event.title);
+      // Only a private task this tab's own agent runs for this person can send a report here.
+      if (event.private && isAgent(from) && from.attributes.owner_id === event.owner && event.owner === room.localParticipant.identity) {
+        privateTask.current?.(from.identity, event.title);
+      }
       setTasks((prev) => {
         const next = new Map(prev);
         return applyTaskEvent(next, from, event) ? next : prev;

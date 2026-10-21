@@ -26,11 +26,11 @@ export function ChatPanel({ chat }: { chat: ReturnType<typeof useChat> }) {
   return (
     <section aria-label="Chat" className="flex min-h-0 flex-1 flex-col">
       <ol ref={listRef} data-testid="chat-messages" className="flex flex-1 flex-col gap-3 overflow-y-auto p-3">
-        {chatMessages.map((m) => {
+        {chatMessages.map((m, i) => {
           const who = { name: m.from?.name, attributes: m.from?.attributes ?? {} };
           const agent = isAgent(who);
           return (
-            <li key={m.id} data-testid="chat-message" data-kind={agent ? "agent" : "human"} className="flex flex-col gap-1">
+            <li key={typeof m.id === "string" ? m.id : `m${i}`} data-testid="chat-message" data-kind={agent ? "agent" : "human"} className="flex flex-col gap-1">
               <span className="flex items-center gap-2 text-xs text-muted">
                 {agent && <AgentBadge />}
                 <span data-testid="chat-sender">{participantLabel(who)}</span>

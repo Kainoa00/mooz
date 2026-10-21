@@ -272,6 +272,22 @@ def test_local_voice_is_checked_before_joining(
     assert "unencrypted" in err and "Is it running?" in err and joined == []
 
 
+def test_the_offline_demo_refuses_bad_local_voice_settings_before_claiming(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cli.main(["init", "Atlas", "--voice-provider", "local"])
+    monkeypatch.setenv("MOOZ_TTS_FORMAT", "mp3")
+    claimed: list[bool] = []
+
+    async def approve(**_: object) -> AgentGrant:
+        claimed.append(True)
+        return AgentGrant(token="t", url="ws://lk", room="r", identity="a_1", name="Atlas")
+
+    monkeypatch.setattr(cli, "obtain_grant", approve)
+    assert cli.main(["connect", "X", "--server", "https://s", "--agent", "Atlas"]) == 2
+    assert "MOOZ_TTS_FORMAT" in capsys.readouterr().err and claimed == []
+
+
 def test_grok_needs_an_xai_key(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

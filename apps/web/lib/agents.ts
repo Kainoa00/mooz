@@ -2,8 +2,10 @@ import { randomInt } from "node:crypto";
 import type { Db } from "./db";
 import { HttpError } from "./http";
 import { hashSecret, newId, newSecret } from "./ids";
-import { parseAgentName } from "./names";
+import { AGENT_TOKEN_TTL_MS, TOKEN_TTL_MS } from "./livekit";
+import { parseAgentName, parseDisplayName } from "./names";
 import { SESSION_TTL_MS, type Participant } from "./rooms";
+import { webhookArrives } from "./webhook-seen";
 
 export const AGENT_CODE_TTL_MS = 10 * 60 * 1000;
 /** After approval, the bridge must collect its token within this window. */
@@ -83,11 +85,15 @@ export function createAgentCode(db: Db, owner: Participant): { code: string; exp
 /**
  * Names of agents that are waiting, in the meeting, or away for a moment (their wake words). One
  * that left for good no longer holds its name, and nor does a bridge approved that never
- * collected its token (its owner stopped it) once its approval has lapsed. Without LiveKit's
- * webhook nothing says an agent joined, so one keeps its name while its token can be in use (a
- * bridge's lasts a day), or while a connector's approval counts as live.
+ * collected its token (its owner stopped it) once its approval has lapsed. Where LiveKit's
+ * webhook arrives, a bridge that collected its token and never came in holds its name only while
+ * that token works. Without the webhook nothing says an agent joined, so one keeps its name while
+ * it could be in the call (a bridge's session can last a day), or while a connector's approval
+ * counts as live.
  */
 export function activeAgentNames(db: Db, slug: string, now = Date.now()): string[] {
+  // A minute's slack for clocks: the token's expiry is LiveKit's to check.
+  const tokenWorks = webhookArrives(db, now) ? AGENT_TOKEN_TTL_MS + 60_000 : SESSION_TTL_MS;
   const rows = db
     .prepare(
       `SELECT agent_name FROM agent_requests
@@ -101,7 +107,7 @@ export function activeAgentNames(db: Db, slug: string, now = Date.now()): string
       slug,
       now - LEFT_GRACE_MS,
       now - APPROVAL_WINDOW_MS,
-      now - SESSION_TTL_MS,
+      now - tokenWorks,
       now - UNJOINED_APPROVAL_MS,
       now - PENDING_TTL_MS,
     ) as { agent_name: string }[];
@@ -112,19 +118,19 @@ export function activeAgentNames(db: Db, slug: string, now = Date.now()): string
  * Names of the people in the meeting now, or away for a moment (a reload, a dropped connection),
  * as agents are: not everyone who ever joined by its link, and nobody whose session has ended.
  * Where LiveKit's webhook says who's in the meeting, someone who joined by the link but never
- * came into the call holds their name only for a moment. Without the webhook, everyone whose
- * session is live counts.
+ * came into the call holds their name while their join token could still bring them in.
+ * Without the webhook, everyone whose session is live counts.
  */
 export function participantNames(db: Db, slug: string, now = Date.now()): string[] {
+  const webhook = webhookArrives(db, now) ? 1 : 0;
   const rows = db
     .prepare(
-      `SELECT name FROM participants p
+      `SELECT name FROM participants
        WHERE room_slug = ? AND (left_at IS NULL OR left_at > ?) AND expires_at > ?
-         AND (session_sid IS NOT NULL OR expires_at > ?
-           OR NOT EXISTS (SELECT 1 FROM participants q WHERE q.room_slug = p.room_slug AND q.session_sid IS NOT NULL))`,
+         AND (session_sid IS NOT NULL OR expires_at > ? OR ? = 0)`,
     )
-    // A session's expiry is SESSION_TTL_MS after its last /join.
-    .all(slug, now - LEFT_GRACE_MS, now, now + SESSION_TTL_MS - LEFT_GRACE_MS) as { name: string }[];
+    // A session's expiry is SESSION_TTL_MS after its last /join, which minted its token.
+    .all(slug, now - LEFT_GRACE_MS, now, now + SESSION_TTL_MS - TOKEN_TTL_MS, webhook) as { name: string }[];
   return rows.map((r) => r.name);
 }
 
@@ -312,6 +318,24 @@ export function isUnwelcomeAgent(db: Db, identity: string): boolean {
   return (
     db.prepare("SELECT 1 FROM agent_requests WHERE agent_identity = ? AND status = 'approved'").get(identity) === undefined
   );
+}
+
+/**
+ * A person LiveKit says came in under a name that an agent who arrived while they were away (or
+ * before they first came in) now answers to: they kept their join token, so no join checked it
+ * again. Their own words would wake that agent.
+ */
+export function isUnwelcomePerson(db: Db, identity: string): boolean {
+  const row = db.prepare("SELECT room_slug, name FROM participants WHERE identity = ?").get(identity) as
+    | { room_slug: string; name: string }
+    | undefined;
+  if (!row) return false;
+  try {
+    parseDisplayName(row.name, activeAgentNames(db, row.room_slug));
+    return false;
+  } catch (err) {
+    return err instanceof HttpError && err.code === "name_taken";
+  }
 }
 
 /** Record that an approval's single token was handed out. False if it already was. */

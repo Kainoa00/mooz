@@ -62,7 +62,12 @@ test("the host downloads a summary of the agents' public words, and nothing of a
     expect(text).toContain("March 30th");
     expect(text).toContain("- Kept notes: 🤖 Kainoa's Atlas");
     // Not here: anyone's own words, the private result, or anything of Lee's.
-    for (const absent of ["@Atlas", "Find out the launch date", "pineapple", "Lee", slug]) expect(text).not.toContain(absent);
+    // (The summary writes "@" as "＠" so it can't ping anyone, so look for either, and for the
+    // host's own words without it.)
+    expect(text).not.toMatch(/[@＠]Atlas/);
+    for (const absent of ["find out the launch date privately", "keep notes", "Find out the launch date", "pineapple", "Lee", slug]) {
+      expect(text).not.toContain(absent);
+    }
     expect(text).toContain("- and 1 more left out");
 
     // After leaving, the summary is still there until the host discards it.

@@ -93,19 +93,22 @@ export const MIGRATIONS = [
    ALTER TABLE participants ADD COLUMN session_sid TEXT;`,
   // Nothing outlives its use: sessions expire on the server (24 h after the last join, like their
   // cookies), and a room is a setting kept 30 days after its last join (lib/cleanup.ts). Old rows
-  // never recorded their last join: a room counts as used at the upgrade (a link people still
-  // meet on isn't deleted), and a session as joined when it was made, as its cookie was.
+  // never recorded their last join: a session counts as joined when it was made, as its cookie was.
   `ALTER TABLE rooms ADD COLUMN last_active_at INTEGER;
    ALTER TABLE rooms ADD COLUMN host_expires_at INTEGER;
    ALTER TABLE participants ADD COLUMN expires_at INTEGER;
-   UPDATE rooms SET last_active_at = CAST(strftime('%s', 'now') AS INTEGER) * 1000,
-     host_expires_at = created_at + 86400000;
+   UPDATE rooms SET last_active_at = created_at, host_expires_at = created_at + 86400000;
    UPDATE participants SET expires_at = created_at + 86400000;
    CREATE INDEX rooms_by_last_active ON rooms(last_active_at);
    CREATE INDEX participants_by_expiry ON participants(expires_at);
    CREATE INDEX agent_codes_by_expiry ON agent_codes(expires_at);
    CREATE INDEX agent_codes_by_owner ON agent_codes(owner_identity);
    CREATE INDEX agent_requests_by_owner ON agent_requests(owner_identity);`,
+  // The one above counted a room as last used when it was made, so the first sweep deleted links
+  // people may still meet on. Every room left counts as used at this upgrade instead.
+  `UPDATE rooms SET last_active_at = MAX(COALESCE(last_active_at, 0), CAST(strftime('%s', 'now') AS INTEGER) * 1000);`,
+  // What the server has noticed about itself (when LiveKit's webhook last got through: lib/webhook-seen.ts).
+  `CREATE TABLE server_state (key TEXT PRIMARY KEY, value INTEGER NOT NULL);`,
 ];
 
 function migrate(db: Db): void {

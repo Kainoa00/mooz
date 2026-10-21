@@ -49,6 +49,9 @@ SILENCE_PHRASES = frozenset(
 SILENCE_CLIP_SECONDS = 1.5
 # More audio than this for one sentence means the speech server has gone wrong.
 MAX_SENTENCE_SECONDS = 60.0
+MAX_WAV_HEADER_BYTES = 64 * 1024
+# However slowly it comes: a reply that trickles in would hold the voice with no turn to end it.
+MAX_SENTENCE_FETCH_SECONDS = 180.0
 
 
 class SpeechServerError(Exception):
@@ -133,17 +136,24 @@ def speech_problem(settings: LocalSpeech) -> str | None:
 
 
 def speech_warning(settings: LocalSpeech) -> str | None:
-    """Everyone's audio leaving this machine: worth saying, and more so unencrypted."""
-    remote = [u for u in settings.urls if not _loopback(u)]
-    if not remote:
-        return None
-    plain = [u for u in remote if urlsplit(u).scheme == "http"]
-    host = urlsplit((plain or remote)[0]).hostname
-    if plain:
-        return (
-            f"Everyone's audio goes to {host} unencrypted (http). Use https://, or an SSH tunnel."
+    """What leaves this machine, and where to: worth saying, and more so unencrypted."""
+    parts, plain = [], False
+    for url, what in (
+        (settings.stt_url, "Everyone's audio in the meeting goes"),
+        (settings.tts_url, "Your agent's answers go"),
+    ):
+        if _loopback(url):
+            continue
+        unencrypted = urlsplit(url).scheme == "http"
+        plain = plain or unencrypted
+        parts.append(
+            f"{what} to {urlsplit(url).hostname}"
+            + (" unencrypted (http)" if unencrypted else ", not just this machine")
+            + "."
         )
-    return f"Everyone's audio in the meeting goes to {host}, not just this machine."
+    if plain:
+        parts.append("Use https://, or an SSH tunnel.")
+    return " ".join(parts) or None
 
 
 async def check_speech_server(http: httpx.AsyncClient, settings: LocalSpeech) -> None:
@@ -309,6 +319,10 @@ class WavFrames:
             self._head += chunk
             data = self._parse_header()
             if data is None:
+                # A header is a few dozen bytes, a few KiB with metadata: one that never
+                # reaches its audio is a broken server, and would fill memory.
+                if len(self._head) > MAX_WAV_HEADER_BYTES:
+                    raise SpeechServerError("Your speech server's WAV header is too long")
                 return []
             chunk = data
         assert self._pcm is not None
@@ -332,12 +346,14 @@ class WavFrames:
             return None
         if head[:4] != b"RIFF" or head[8:12] != b"WAVE":
             raise SpeechServerError("Your speech server's audio isn't WAV")
-        pos = 12
+        pos, rate, channels = 12, 0, 0
         while len(head) >= pos + 8:
             kind, size = head[pos : pos + 4], struct.unpack("<I", head[pos + 4 : pos + 8])[0]
             if kind == b"data":
-                if not self._channels:
+                if not channels:
                     raise SpeechServerError("Your speech server's WAV has no format")
+                # Only now: before this, the rest of the header is still on its way.
+                self._channels, self._pcm = channels, PcmFrames(rate)
                 return head[pos + 8 :]
             if len(head) < pos + 8 + size:
                 return None
@@ -353,8 +369,6 @@ class WavFrames:
                     raise SpeechServerError(
                         f"Your speech server's WAV is {rate} Hz, {channels} channels"
                     )
-                self._channels = channels
-                self._pcm = PcmFrames(rate)
             pos += 8 + size + (size & 1)
         return None
 
@@ -389,9 +403,15 @@ class LocalTTS:
 
     provider = "local"
 
-    def __init__(self, settings: LocalSpeech, http: httpx.AsyncClient) -> None:
+    def __init__(
+        self,
+        settings: LocalSpeech,
+        http: httpx.AsyncClient,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self._settings = settings
         self._http = http
+        self._clock = clock
         self._cache: dict[str, list[rtc.AudioFrame]] = {}
 
     async def warm(self, phrases: Sequence[str]) -> None:
@@ -462,8 +482,12 @@ class LocalTTS:
                 frames: PcmFrames | WavFrames = (
                     PcmFrames(s.tts_rate) if s.tts_format == "pcm" else WavFrames()
                 )
-                seconds = 0.0
+                seconds, until = 0.0, self._clock() + MAX_SENTENCE_FETCH_SECONDS
                 async for chunk in res.aiter_bytes():
+                    if self._clock() > until:
+                        raise SpeechServerError(
+                            "Your speech server took too long to say one sentence"
+                        )
                     for frame in frames.feed(chunk):
                         # A sentence is a few seconds: an answer that never ends is a broken
                         # server, and would fill memory while the next sentence waits for it.

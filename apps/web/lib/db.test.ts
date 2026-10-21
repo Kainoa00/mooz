@@ -37,4 +37,23 @@ describe("upgrading to session expiry", () => {
     expect(person.expires_at).toBe(made + 2 * DAY);
     db.close();
   });
+
+  it("counts every room as used at the upgrade, for databases that already had session expiry", () => {
+    dir = mkdtempSync(path.join(tmpdir(), "mooz-db-"));
+    const file = path.join(dir, "mooz.db");
+    const after = MIGRATIONS.findIndex((m) => m.includes("ADD COLUMN last_active_at")) + 1;
+    const before = new DatabaseSync(file);
+    for (const m of MIGRATIONS.slice(0, after)) before.exec(m);
+    before.exec(`PRAGMA user_version = ${after}`);
+    const made = Date.now() - 20 * DAY;
+    before
+      .prepare("INSERT INTO rooms (slug, host_secret_hash, created_at, livekit_room, last_active_at) VALUES ('abc-defg-hij', 'h', ?, 'lk', ?)")
+      .run(made, made);
+    before.close();
+
+    const db = openDb(file);
+    const room = db.prepare("SELECT last_active_at FROM rooms").get() as { last_active_at: number };
+    expect(room.last_active_at).toBeGreaterThan(Date.now() - 60_000);
+    db.close();
+  });
 });

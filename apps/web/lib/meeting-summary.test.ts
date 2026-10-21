@@ -76,6 +76,29 @@ describe("the meeting record", () => {
     expect(r.entries.map((e) => e.text)).toEqual(["📋 Find out the launch date\n\nA public one, from another agent."]);
   });
 
+  it("keeps the private task it heard of last, however many others came before", () => {
+    const flood = (from: number, n: number) =>
+      Array.from({ length: n }, (_, i): RecordEvent => ({ type: "private-task", agent: grok.identity, title: `t${from + i}` }));
+    const task: RecordEvent = { type: "private-task", agent: atlas.identity, title: "Find out the launch date" };
+    const r = meeting(
+      task,
+      ...flood(0, 10),
+      task, // its last update, just before its report: to the back of the list
+      ...flood(10, MAX_ENTRIES - 1),
+      chat(atlas, "📋 Find out the launch date\n\nMarch 30th.", { reply_to: zach.identity }),
+    );
+    expect(r.entries).toEqual([]);
+  });
+
+  it("drops a private task's report when its title is longer than the task panel keeps", () => {
+    const long = `Compare ${"the vendors ".repeat(30)}`.trim();
+    const r = meeting(
+      { type: "private-task", agent: atlas.identity, title: long.slice(0, 200) },
+      chat(atlas, `📋 ${long}\n\nVendor B.`, { reply_to: zach.identity }),
+    );
+    expect(r.entries).toEqual([]);
+  });
+
   it("takes a message once, and only from an agent LiveKit says sent it", () => {
     const once = chat(atlas, "March 30th.");
     const r = meeting(once, once, { ...(chat(atlas, "spoofed") as Extract<RecordEvent, { type: "chat" }>), from: undefined }, chat({ ...zach, name: "🤖 Atlas" }, "fake"));
@@ -182,8 +205,8 @@ describe("toMarkdown", () => {
 
   it("leaves no www. or @ for GitHub's own autolinks to find", () => {
     // cmark-gfm links "me\\@evil.test" though marked doesn't, so check the text itself.
-    const text = escapeMarkdown("_www.evil.test me@evil.test mailto:me@evil.test xmpp:a@b_c.test");
-    expect(text).not.toMatch(/www\.|@/i);
+    const text = escapeMarkdown("_www.evil.test me@evil.test mailto:me@evil.test xmpp:a@b_c.test me&commat;evil.test");
+    expect(text).not.toMatch(/www\.|@|(?<!\\)&/i);
   });
 
   it("has no meeting link, slug or internal identity in it", () => {
