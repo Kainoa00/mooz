@@ -1,8 +1,18 @@
 # mooz
 
+[![CI](https://github.com/kainoa00/mooz/actions/workflows/ci.yml/badge.svg)](https://github.com/kainoa00/mooz/actions/workflows/ci.yml)
+
 **Video meetings where everyone can bring their own AI agent.** Ask it out loud ("Hey Atlas,
 what's blocking the deploy?") and it answers in the call, by voice and in chat, using what it
 heard in the meeting.
+
+![Kainoa hosts a meeting (left) and Zach brings his agent (right): the host approves it, it
+answers from Zach's files, a mention doesn't wake it, it researches in the background, a second
+agent joins and they pause after going back and forth, and the host downloads the
+summary](docs/media/demo.gif)
+
+*Offline demo: scripted agent, no voice. The real bridge and meeting, with `MOOZ_PROVIDERS=fake`
+in place of Claude and ElevenLabs.*
 
 - **Your agent, your keys.** Each agent runs on its owner's machine and connects out to the
   meeting. The mooz server never holds anyone's AI or voice keys.
@@ -18,46 +28,78 @@ heard in the meeting.
   and anyone can leave themselves out.
 - **Self-hosted and open source** under the MIT license.
 
-> **Status: v0.1 in progress.** Milestones 1–5 are done: people meet by link, anyone can bring
-> a personal agent (Claude or Grok) that reads their folders, repos and GitHub, remembers what
-> they tell it, keeps meeting notes when everyone agrees, and researches in the background while
-> the meeting goes on, or bring the Grok, Claude or ChatGPT app they already use through a
-> private connector link, and several agents take turns in one meeting. Now: local voice and
-> the launch (M6). See the [roadmap](#roadmap).
+> **Status: v0.1.0, being released.** Everything here is built and tested: unit tests, plus
+> browser tests that run the real bridge against a real LiveKit with a scripted brain, on every
+> push. **Not yet checked live with real keys:** Claude and Grok answers, ElevenLabs voice and its
+> latency, VoiceStudio in the bridge and in Chrome and Firefox, two real agents in one meeting,
+> the Grok, Claude and ChatGPT connector apps, and a fresh install on a server. See the
+> [changelog](CHANGELOG.md) and the [roadmap](#roadmap).
 
 ## Quickstart (local)
 
-You need Docker, Node 22 with pnpm, and [uv](https://docs.astral.sh/uv/).
+The server needs only [Docker](https://docs.docker.com/get-docker/):
 
 ```bash
 git clone https://github.com/kainoa00/mooz && cd mooz
 cp .env.example .env
 docker compose up -d            # LiveKit media server + the mooz web app
-open http://localhost:3000      # start a meeting and share the link
 ```
+
+Open http://localhost:3000 in your browser, start a meeting and share the link. This setup is
+for your own machine; to run mooz for others, see [Run mooz on a server](docs/deploy-vps.md).
 
 ### Bring your agent
 
-In the meeting, click **Bring my agent** and copy the command. On the machine where your
-agent will run:
+On the machine where your agent will run, install the bridge with
+[uv](https://docs.astral.sh/uv/) and put your keys in `~/.mooz/.env` (your keys, your machine):
 
 ```bash
-cd bridge
-cp .env.example .env            # add ANTHROPIC_API_KEY and ELEVEN_API_KEY (your keys, your machine)
-uv sync
-uv run mooz-agent connect ABCD-EFGH-JKLM --server http://localhost:3000 --name Atlas
+uv tool install mooz-agent
+mkdir -p ~/.mooz && touch ~/.mooz/.env && chmod 600 ~/.mooz/.env
+# then add ANTHROPIC_API_KEY=… and ELEVEN_API_KEY=… to ~/.mooz/.env
 ```
+
+In the meeting, click **Bring my agent** and run the command it shows:
+
+```bash
+mooz-agent connect ABCD-EFGH-JKLM --server http://localhost:3000 --name Atlas
+```
+
+From a checkout instead (before the package is out, or to change it): `cd bridge && uv sync`,
+then `uv run mooz-agent …` wherever this README says `mooz-agent …`.
 
 The host approves the agent. Then say **"Hey Atlas, …"** or type **`@Atlas …`** in chat.
 While your code is out, mooz shows you what was done with it: "Atlas is waiting for the host.
 Not yours? **Cancel it**." So if someone else used your code, you can stop their agent coming in
 under your name.
 
-- **No keys yet?** Run the bridge with `MOOZ_PROVIDERS=fake` for an offline demo. It makes no
-  audio and understands a few fixed phrases ("read FILE from SOURCE", "remember that …",
-  "what do you remember?", "keep notes") using your real files and memory. Anything else is
-  repeated back. Its meeting-notes "summary" is just the kept lines, word for word.
 - **Choosing a voice:** set `MOOZ_VOICE_ID` to any voice in your ElevenLabs library.
+
+### Try it without keys
+
+```bash
+MOOZ_PROVIDERS=fake mooz-agent connect ABCD-EFGH-JKLM --server http://localhost:3000 --name Atlas
+```
+
+This is the agent in the demo above. It makes no audio and understands a few fixed phrases
+("read FILE from SOURCE", "remember that …", "what do you remember?", "keep notes", "look into
+…") using your real files and memory. Anything else is repeated back. Its meeting-notes
+"summary" is just the kept lines, word for word.
+
+### Local voice
+
+Hear and speak through a speech server on your own computer instead of ElevenLabs:
+[VoiceStudio](https://github.com/debpalash/VoiceStudio), or any server with OpenAI's
+`/v1/audio/transcriptions` and `/v1/audio/speech`. Nobody's speech leaves your computer, and
+there's no voice bill.
+
+```bash
+echo "MOOZ_VOICE=local" >> ~/.mooz/.env       # VoiceStudio at http://127.0.0.1:3900/v1 by default
+```
+
+`MOOZ_BRAIN=offline` adds the scripted brain to that: a talking agent with no keys at all.
+Connectors can use it too, from Chrome, Edge or Firefox. Setup, settings and troubleshooting:
+[docs/local-voice.md](docs/local-voice.md).
 
 `--name Atlas` brings a basic agent with no folders or settings. To give it your folders,
 memory and a choice of brain, see [Your personal agent](#your-personal-agent).
@@ -67,7 +109,8 @@ memory and a choice of brain, see [Your personal agent](#your-personal-agent).
 **Each agent owner pays for their own agent.** People who don't bring an agent pay nothing.
 
 - **Hearing:** the agent transcribes every person in the meeting, all the time, so it can
-  notice its name. Scribe v2 Realtime bills per minute of audio.
+  notice its name. Scribe v2 Realtime bills per minute of audio. With
+  [local voice](#local-voice), hearing and speaking cost only your computer's time.
 - **Answering:** the brain (Claude or Grok) and ElevenLabs voice are billed only when someone
   actually talks to the agent. A question that reads files costs a few model calls.
 - **Notes:** one summary call every 15 minutes while notes are on.
@@ -84,14 +127,13 @@ mode to enterprise accounts; on other plans your account's own history settings 
 Set it up once, then bring it to any meeting:
 
 ```bash
-cd bridge
-uv run mooz-agent init Atlas --source ~/code/myapp --public-source ~/notes/team
-uv run mooz-agent connect ABCD-EFGH-JKLM --server http://localhost:3000 --agent Atlas
+mooz-agent init Atlas --source ~/code/myapp --public-source ~/notes/team
+mooz-agent connect ABCD-EFGH-JKLM --server http://localhost:3000 --agent Atlas
 ```
 
 Its settings and memory live on your machine, in `~/.mooz/agents/atlas/` (`agent.toml` and
-`memory.jsonl`, readable only by you). Your API keys stay in your environment or `bridge/.env`,
-never in that folder.
+`memory.jsonl`, readable only by you). Your API keys stay in your environment or a `.env` file
+(`~/.mooz/.env`, or one in the folder you run it from), never in the agent's folder.
 
 **Folders and repos.** The agent can list, read and search files, and read git history
 (`status`, `log`, `show`, `diff`). It can't write, run anything, or reach outside the folders
@@ -99,9 +141,9 @@ you gave it. Secrets files (`.env`, keys, credentials) are invisible to it, even
 history, and anything that looks like a password or token is redacted from what it reads.
 
 ```bash
-uv run mooz-agent sources list --agent Atlas
-uv run mooz-agent sources add ~/code/site --public --agent Atlas    # anyone in a meeting may ask
-uv run mooz-agent sources remove site --agent Atlas
+mooz-agent sources list --agent Atlas
+mooz-agent sources add ~/code/site --public --agent Atlas    # anyone in a meeting may ask
+mooz-agent sources remove site --agent Atlas
 ```
 
 **Memory.** Say "Atlas, remember that the deploy freeze starts Friday", or use the CLI (safe to
@@ -109,9 +151,9 @@ use while the agent is in a meeting). Only you can add to or change its memory, 
 asking: a note is private unless you say anyone may know it ("remember publicly that…").
 
 ```bash
-uv run mooz-agent memory list --agent Atlas
-uv run mooz-agent memory add "Our office is in Honolulu" --public --agent Atlas
-uv run mooz-agent memory forget m_1a2b3c4d --agent Atlas
+mooz-agent memory list --agent Atlas
+mooz-agent memory add "Our office is in Honolulu" --public --agent Atlas
+mooz-agent memory forget m_1a2b3c4d --agent Atlas
 ```
 
 **Who gets what.** The agent knows who is asking from the meeting server (it can't be faked).
@@ -184,8 +226,8 @@ changed files and checks) and CI runs. It can't change anything there. Set `GITH
 GitHub's lower rate limit. The same public/private rules as folders apply.
 
 ```bash
-uv run mooz-agent sources add github:acme/site --agent Atlas            # only you
-uv run mooz-agent sources add github:acme/docs --public --agent Atlas   # anyone may ask
+mooz-agent sources add github:acme/site --agent Atlas            # only you
+mooz-agent sources add github:acme/docs --public --agent Atlas   # anyone may ask
 ```
 
 **Web search.** With Claude, your tasks may search the web, about 5 searches each (a step that
@@ -313,8 +355,8 @@ The same goes for people: you can't join as "Atlis" (or "Атлас") while Atla
 who's in the meeting now counts. A connector made before M5 with a name these rules refuse has
 to be made again under another name.
 
-Bridge agents from before M5 still join, but they don't take turns: pull the latest code and
-run `uv sync` in `bridge`.
+Bridge agents from before M5 still join, but they don't take turns: update the bridge
+(`uv tool upgrade mooz-agent`, or `git pull` and `uv sync` in `bridge`).
 
 **The host's summary.** The host can **Download summary** (a Markdown file) at any time, and
 again after leaving, until they discard it. It has what the agents said in public, their public
@@ -352,10 +394,14 @@ pnpm -C apps/web dev                                  # http://localhost:3000
 pnpm -C apps/web test && pnpm -C apps/web test:e2e    # unit + Playwright (uses the bridge)
 cd bridge && uv run pytest -m "not live"              # unit + integration (needs LiveKit)
 MOOZ_LIVE_TESTS=1 uv run pytest -m live               # real Claude/Grok/ElevenLabs calls (costs money)
+node scripts/check-version.mjs                        # every version agrees
+pnpm -C apps/web demo:record && scripts/demo-gif.sh   # re-record the demo (needs ffmpeg)
 ```
 
-The project's planning documents are in `.claude/prds/` (requirements) and `.claude/plans/`
-(milestone plans).
+Recording the demo also needs Playwright's own ffmpeg: `pnpm -C apps/web exec playwright install ffmpeg`.
+
+Releases: [docs/releasing.md](docs/releasing.md). The project's planning documents are in
+`.claude/prds/` (requirements) and `.claude/plans/` (milestone plans).
 
 ## Roadmap
 
@@ -366,7 +412,23 @@ The project's planning documents are in `.claude/prds/` (requirements) and `.cla
 | **M3 ✅ Async research tasks** | "On it". It works in the background (your files, GitHub, the web) and reports back mid-meeting |
 | **M4 ✅ Connector** | Bring the Grok / Claude / ChatGPT app you already use, with its memory, via a private MCP link |
 | **M5 ✅ Many agents** | One speaker at a time, people first, agent-to-agent conversations that pause for **Continue**, names that can't be confused |
-| M6 Local voice and launch | VoiceStudio / any OpenAI-compatible local speech server, VPS guide, security hardening |
+| M6 Local voice and launch (release pending) | VoiceStudio or any OpenAI-compatible speech server on your own computer, the host's summary, rate limits and cleanup, the [server guide](docs/deploy-vps.md), v0.1.0 on PyPI and GHCR |
+
+## Known limits
+
+- **Prompt injection** on an owner's own turns is mitigated, not eliminated: what the AI does
+  with what it may see is up to the model. What everyone else may see is enforced in code.
+- **Opt-outs** can't catch someone repeating your words in their own, or agents not built on
+  mooz that don't mark whose words they used.
+- **Names:** only the first of several names said aloud is heard; `@Atlas @Nova` reaches both.
+- **One server instance:** turn-taking, rate limits and connector questions live in its memory,
+  and a restart drops answers waiting for a turn.
+- **Local voice in the browser** works in Chrome, Edge and Firefox, not Safari or on iPhone and
+  iPad, and is slow without a GPU or Apple Silicon.
+- **Windows:** avoid the CLI's memory commands while the agent is in a meeting (the memory lock
+  uses `fcntl`).
+
+Upgrading from an earlier build: see the [changelog's upgrade notes](CHANGELOG.md#upgrade-notes).
 
 ## Security
 
@@ -394,6 +456,8 @@ local `docker compose` setup uses LiveKit's public dev keys and listens only on 
 **Don't expose it to a network as-is.** To run mooz for others, follow
 [`docs/deploy-vps.md`](docs/deploy-vps.md) (HTTPS with Caddy, LiveKit without its dev mode,
 and a server that refuses to start with weak settings).
+
+Found a vulnerability? Report it privately: see [SECURITY.md](SECURITY.md).
 
 ## License
 

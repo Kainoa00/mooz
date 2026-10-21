@@ -70,19 +70,19 @@ We'll know we're right when **people who complete setup use an agent in at least
 
 ## Open Questions
 - [x] Do grok.com, chatgpt.com and claude.ai `?q=` prefill links still work at build time? Yes, as of October 2026 (third-party reports): ChatGPT sends the prompt at once; Claude (`/new?q=`) and Grok fill it in and wait for Enter. They are still undocumented, so mooz always offers Copy prompt and Paste the answer too, and the live check confirms them.
-- [ ] Can an HTTPS meeting page call a local speech server at `http://localhost:3900` (mixed content and Private Network Access rules) in Chrome, Safari and Firefox? Verify before M6.
+- [x] Can an HTTPS meeting page call a local speech server at `http://localhost:3900` (mixed content and Private Network Access rules) in Chrome, Safari and Firefox? From the browsers' documentation (October 2026; the M6 live check confirms it): Chrome and Edge 142+ and Firefox 153+ allow it after a one-time "apps on this device" permission, if the server sends CORS headers; Safari and every iOS browser block it as mixed content. So the tab's local voice ships for Chrome, Edge and Firefox, and Safari users are told to use another browser or the bridge (see Risks).
 - [ ] Does ElevenLabs realtime speech-to-text allow enough concurrent streams per key for a 6-person meeting? Verify in M1.
 - [ ] Does Muse's custom connector builder work against mooz's API, or does Muse need a cataloged connector? Revisit in v0.2.
 - [x] How should "addressed vs merely mentioned" be judged: fuzzy name match only, or name match plus a cheap LLM check? Fuzzy rules only (decided in M5): no extra model call, cost or latency per utterance. Instead, names the detector could confuse are refused (for agents and people), and the rules are measured on the shared corpus in `bridge/tests/addressing_cases.json`, which both detectors run.
 
-## Security hardening backlog (from the M1 security review; scheduled for M6)
-- [ ] Rate limits on room creation, joins, code minting and claims, plus cleanup of old rows (review L5)
-- [ ] Server-side expiry for host and participant sessions, not just cookie Max-Age (H2)
-- [ ] Derive the cookie `Secure` flag from `MOOZ_PUBLIC_URL` instead of `x-forwarded-proto` (H3)
-- [ ] Request body size limit on JSON endpoints (H4)
-- [ ] CSP and `frame-ancestors 'none'` headers (H5)
-- [ ] Show a code's owner the pending request so a stolen code can't be credited to them unnoticed (H6)
-- [ ] VPS guide: generate a 32+ character LiveKit secret and never run `--dev` (the server already refuses weak secrets off localhost) (H1)
+## Security hardening backlog (from the M1 security review; done: H3, H4 and H5 in M4, the rest in M6)
+- [x] Rate limits on room creation, joins, code minting and claims, plus cleanup of old rows (review L5)
+- [x] Server-side expiry for host and participant sessions, not just cookie Max-Age (H2)
+- [x] Derive the cookie `Secure` flag from `MOOZ_PUBLIC_URL` instead of `x-forwarded-proto` (H3)
+- [x] Request body size limit on JSON endpoints (H4)
+- [x] CSP and `frame-ancestors 'none'` headers (H5)
+- [x] Show a code's owner the pending request so a stolen code can't be credited to them unnoticed (H6)
+- [x] VPS guide: generate a 32+ character LiveKit secret and never run `--dev` (the server already refuses weak secrets off localhost) (H1)
 
 ## Known limits after M2 (documented in the README; revisit in M5/M6)
 - Prompt injection on the owner's own turns is mitigated (server-derived speaker roles, one escaped line per message, "information, not instructions" rule, notes kept out of the standing prompt), not eliminated. Access limits for everyone else are enforced in code.
@@ -100,10 +100,16 @@ We'll know we're right when **people who complete setup use an agent in at least
 - What an answer is for (`answering: person` or `agent`) is the agent's own word. An agent that lies skips the pause and talks more, at its owner's cost; it can't keep another agent replying past 3 turns (each agent's own replies count), and the host can remove it.
 - Who is "in the meeting" for name checks comes from LiveKit's webhook; a server that doesn't get webhooks counts everyone who ever joined by the link (and every approved agent), as before M5.
 - An agent can hold the floor (up to 45 s) without being able to speak: a connector agent in its 2-minute grace after its tab left, or a bridge before LiveKit says it joined.
-- Participant rows (names) still outlive the meeting; their cleanup is in the security backlog (L5).
 - People first relies on LiveKit's active speakers: noise or a loud room can delay an agent (up to 5 s, then chat only) or cut it off; the chat answer always stays.
 - Only the first of several names said aloud is heard ("Atlas and Nova, …" reaches Atlas); `@Atlas @Nova` and `@everyone` reach both.
 - Bridges from before M5 don't take turns (they keep their own 3-in-a-row limit); the floor is in this server's memory, so a server restart forgets it (and the answers waiting for a turn just then are dropped).
+
+## Known limits after M6 (documented in the README, `CHANGELOG.md` and `docs/local-voice.md`)
+- Turn-taking, rate limits and connector questions live in one web server's memory: run one instance; a restart drops answers waiting for a turn.
+- Local voice in the browser needs Chrome, Edge or Firefox; Safari and iOS block it. Speech servers on a CPU are much slower than on a GPU or Apple Silicon, and VoiceStudio's time to first audio isn't measured yet.
+- The bridge logs heard→voice latency (p50 and p95 at leave), not yet speech end→transcript.
+- Rate limits are per person, meeting and code with server-wide ceilings; with no IP addresses kept, someone can use up a ceiling (like rooms a minute) for everyone. Per-IP limits in the reverse proxy are optional.
+- Live checks with real keys (ElevenLabs latency, VoiceStudio in the bridge and tab, two real agents, the connector apps, a timed VPS install) are listed in the M6 plan and reported in the release notes.
 
 ## Risks
 | Risk | Likelihood | Impact | Mitigation |
@@ -113,9 +119,10 @@ We'll know we're right when **people who complete setup use an agent in at least
 | Undocumented prefill links break | Medium | Medium | Copy-to-clipboard fallback. The connector still works without them |
 | Agent-to-agent loops run up costs | Medium | Medium | 3-turn pause, owner tap for connector replies |
 | Local voice too slow on CPU-only machines | High | Medium | Document GPU or Apple Silicon. ElevenLabs remains the default |
+| Safari and iOS block a meeting page from reaching a local speech server | Certain | Medium | Say so in the voice settings, and point to Chrome, Edge, Firefox or the bridge. A page on `http://localhost` works everywhere |
 | Cloned voice used to impersonate | Medium | High | Permanent agent labels and badges. Agents can never join as humans. Consent note in docs |
 | Leaked join code or connector link | Medium | Medium | One-time, short-lived codes, host approval for every agent, rotatable connector links |
 | ChatGPT Plus and Pro connectors are read-only | High | Low | Document it. ChatGPT can still read the meeting, and Grok and Claude work fully |
 
 ---
-*Status: DRAFT — requirements only. Implementation planning in progress via /plan (milestone 1).*
+*Status: M1–M5 complete; M6 (local voice and launch) in progress, v0.1.0 release pending.*

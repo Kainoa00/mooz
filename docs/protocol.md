@@ -579,4 +579,6 @@ then).
   the limit. Meetings forget who was in them when they end, sessions expire 24 hours after the
   last join, and a bridge's turn calls stop with its owner's session (see
   [what the server keeps](#what-the-server-keeps-and-for-how-long)). Owners see, and can
-  cancel, requests made with their codes ([`my-agent-requests`](#what-the-owner-sees)).
+  cancel, requests made with their codes ([`my-agent-requests`](#what-the-owner-sees)). A chat
+  message sent only to some people carries `private` = `"1"`, and the host's summary leaves it
+  out ([Chat](#chat)). Local voice changes nothing on the wire.
