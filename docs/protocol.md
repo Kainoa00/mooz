@@ -151,6 +151,20 @@ to the comma-separated identities of everyone whose words were in what the agent
 Notes use both to leave out replies that answer or could quote people who opted out, even if
 they opt out later. Only agents' attributes are read.
 
+A message sent only to some people (`destination_identities`) also carries `private` = `"1"`.
+The host's meeting summary leaves those out, and so does it for messages from older bridges
+that start with 🔒.
+
+The host's tab can download a **meeting summary** (Markdown, built in the tab from what it
+saw, never sent to the server). It holds the date and time span, who was there (agents with
+their owner and door), agents' public answers with whom each answered, public research, which
+agents kept notes, and how often the agents paused. It leaves out people's own lines, private
+messages, acknowledgements ("Yes?", "One sec, checking.", "On it. I'll report back."), and
+anything whose sender, the sender's owner, `reply_to` or `sources` (or their owners) opted
+out at any point. The meeting's link and internal identities never appear, and all text is
+escaped so it can't become a link, image, HTML or heading. A real summary comes from asking an
+agent to sum up: its answer is in the file.
+
 Anyone can send a very long message, so cut what you parse (the reference bridge reads the
 first 4,000 characters) and keep your parsing linear in the length.
 

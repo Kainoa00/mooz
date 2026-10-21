@@ -1,0 +1,168 @@
+/**
+ * The host's meeting summary, as Markdown, from what their tab saw (lib/meeting-record.ts).
+ * Agents' public words only: no person's own lines, no private answers, and nothing that
+ * belongs to someone who opted out of notes (an agent's line belongs to the agent, its owner,
+ * and whoever it answered or drew on, as for connector questions). The meeting's link and
+ * everyone's internal identities never appear. Every piece of text is escaped, so nothing in
+ * it can become a link, an image, HTML or a heading.
+ */
+
+import { APP_LABEL, type AssistantApp } from "./connector-protocol";
+import type { Entry, MeetingRecord, Person } from "./meeting-record";
+import { flatten, stripInvisible } from "./text";
+
+export const MAX_ANSWER_CHARS = 4000;
+export const MAX_TASK_SUMMARY_CHARS = 2000;
+export const MAX_TASK_DETAILS_CHARS = 4000;
+export const MAX_FILE_BYTES = 500 * 1024;
+
+/**
+ * Text that shows as itself in Markdown: no links (bare addresses don't turn into links
+ * either), images, HTML, headings, lists or tables.
+ */
+export function escapeMarkdown(text: string): string {
+  return stripInvisible(text)
+    .normalize("NFKC")
+    .replace(/[\\`*_[\]<>#|~]/g, "\\$&")
+    .replace(/:\/\//g, ":\\/\\/")
+    .replace(/\bwww\./gi, (m) => `${m.slice(0, 3)}\\.`)
+    .replace(/@(?=[\p{L}\p{N}-]+\.[\p{L}\p{N}])/gu, "\\@")
+    .replace(/^([ \t]*)([-+=])/gm, "$1\\$2")
+    .replace(/^([ \t]*\d+)([.)])/gm, "$1\\$2");
+}
+
+/** One line of escaped text (a name, a title). */
+const inline = (text: string) => escapeMarkdown(flatten(text, { markup: false }));
+
+/** A block quote of escaped lines, cut at `max` characters (the mark goes on after escaping). */
+function quote(text: string, max: number): string {
+  const over = text.length > max;
+  const block = escapeMarkdown(over ? text.slice(0, max).trimEnd() : text)
+    .split("\n")
+    .map((line) => (line.trim() ? `> ${line}` : ">"))
+    .join("\n");
+  return over ? `${block}…` : block;
+}
+
+function label(person: Person | undefined): string {
+  if (!person) return "someone";
+  if (!person.agent) return person.name;
+  return `🤖 ${person.ownerName ? `${person.ownerName}'s ` : ""}${person.name}`;
+}
+
+function door(person: Person): string {
+  if (person.door !== "connector") return "mooz-agent";
+  return APP_LABEL[(person.app ?? "other") as AssistantApp] ?? APP_LABEL.other;
+}
+
+interface Clock {
+  date: (ms: number) => string;
+  time: (ms: number) => string;
+}
+
+function clock(timeZone?: string): Clock {
+  const date = new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone });
+  const time = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone });
+  return { date: (ms) => date.format(ms), time: (ms) => time.format(ms) };
+}
+
+/** `mooz-meeting-2026-10-21-1402.md`, from when the host's tab first saw the meeting. */
+export function summaryFileName(record: MeetingRecord, options: { now?: number; timeZone?: string } = {}): string {
+  const at = record.start ?? options.now ?? Date.now();
+  const c = clock(options.timeZone);
+  return `mooz-meeting-${c.date(at)}-${c.time(at).replace(":", "")}.md`;
+}
+
+/** Whose an entry is: the agent, its owner, and whoever it answered or drew on (and their owners). */
+function belongsTo(record: MeetingRecord, entry: Entry): string[] {
+  const named = [entry.from, ...entry.replyTo, ...entry.sources];
+  const owners = named.flatMap((id) => {
+    const owner = record.people[id]?.ownerId;
+    return owner ? [owner] : [];
+  });
+  return [...named, ...owners];
+}
+
+function leftOut(record: MeetingRecord, identity: string): boolean {
+  const optedOut = new Set(record.optedOut);
+  const person = record.people[identity];
+  return optedOut.has(identity) || (person?.ownerId !== undefined && optedOut.has(person.ownerId));
+}
+
+function answerBlock(record: MeetingRecord, entry: Entry, c: Clock): string {
+  const answered = entry.replyTo.filter((id) => id !== entry.from).map((id) => inline(label(record.people[id])));
+  const to = answered.length ? `, answering ${answered.join(" and ")}` : "";
+  return `### ${inline(label(record.people[entry.from]))}${to} · ${c.time(entry.at)}\n\n${quote(entry.text, MAX_ANSWER_CHARS)}`;
+}
+
+function taskBlock(record: MeetingRecord, entry: Entry, c: Clock): string {
+  const [first, ...rest] = entry.text.replace(/^📋\s*/u, "").split("\n");
+  const body = rest.join("\n").trim();
+  const split = body.indexOf("\n\n");
+  const summary = split < 0 ? body : body.slice(0, split).trim();
+  const details = split < 0 ? "" : body.slice(split + 2).trim();
+  const parts = [`### ${inline(first)} · ${inline(label(record.people[entry.from]))} · ${c.time(entry.at)}`];
+  if (summary) parts.push(quote(summary, MAX_TASK_SUMMARY_CHARS));
+  if (details) parts.push(quote(details, MAX_TASK_DETAILS_CHARS));
+  return parts.join("\n\n");
+}
+
+const bytes = (text: string) => new TextEncoder().encode(text).length;
+
+export function toMarkdown(record: MeetingRecord, options: { now?: number; timeZone?: string } = {}): string {
+  const c = clock(options.timeZone);
+  const optedOut = new Set(record.optedOut);
+  const kept = record.entries.filter((e) => !belongsTo(record, e).some((id) => optedOut.has(id)));
+  const there = record.order.filter((id) => !leftOut(record, id));
+  const hidden = record.order.length - there.length;
+
+  const head: string[] = ["# Meeting summary", ""];
+  if (record.start !== null && record.end !== null) {
+    head.push(`- Date: ${c.date(record.start)}`, `- Seen from the host's tab: ${c.time(record.start)}–${c.time(record.end)}`, "");
+  }
+  head.push("## Who was there", "");
+  for (const id of there) {
+    const person = record.people[id];
+    head.push(`- ${inline(label(person))}${person.agent ? ` (agent, through ${door(person)})` : ""}`);
+  }
+  if (hidden) head.push(`- and ${hidden} more who asked to be left out`);
+  if (!there.length && !hidden) head.push("- nobody the host's tab saw");
+
+  const tail: string[] = [];
+  const keepers = record.noteKeepers.filter((id) => !leftOut(record, id)).map((id) => inline(label(record.people[id])));
+  if (keepers.length || record.pauses) {
+    tail.push("## Notes and pauses", "");
+    if (keepers.length) tail.push(`- Kept notes: ${keepers.join(", ")}`);
+    if (record.pauses) {
+      tail.push(`- The agents paused ${record.pauses === 1 ? "once" : `${record.pauses} times`} after replying to each other, until a person let them go on.`);
+    }
+    tail.push("");
+  }
+  tail.push(
+    "---",
+    "",
+    "_Agents' public words only. People's own words, private answers, and anything to do with someone who asked to be left out of notes are not here._",
+    "",
+  );
+
+  // Oldest first out, to keep the file small enough to share.
+  let entries = kept;
+  let dropped = record.dropped;
+  const render = () => {
+    const answers = entries.filter((e) => e.kind === "answer").map((e) => answerBlock(record, e, c));
+    const tasks = entries.filter((e) => e.kind === "task").map((e) => taskBlock(record, e, c));
+    const body: string[] = [""];
+    if (dropped) body.push(`_The oldest ${dropped} agent messages were left out, to keep this file small._`, "");
+    body.push("## What the agents said", "", ...(answers.length ? answers.flatMap((a) => [a, ""]) : ["Nothing public.", ""]));
+    if (tasks.length) body.push("## Research", "", ...tasks.flatMap((t) => [t, ""]));
+    return [...head, ...body, ...tail].join("\n");
+  };
+  let text = render();
+  while (bytes(text) > MAX_FILE_BYTES && entries.length) {
+    const drop = Math.max(1, Math.ceil(entries.length / 20));
+    entries = entries.slice(drop);
+    dropped += drop;
+    text = render();
+  }
+  return text;
+}

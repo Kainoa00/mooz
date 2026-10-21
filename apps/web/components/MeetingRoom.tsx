@@ -5,12 +5,14 @@ import {
   GridLayout,
   LiveKitRoom,
   RoomAudioRenderer,
+  useChat,
   useParticipants,
   useTracks,
 } from "@livekit/components-react";
 import { Track } from "livekit-client";
-import { useCallback, useState } from "react";
+import { useCallback, useReducer, useState, type Dispatch } from "react";
 import { isAgent } from "@/lib/labels";
+import { EMPTY_RECORD, hasContent, recordReducer, type RecordEvent } from "@/lib/meeting-record";
 import { AgentCard } from "./AgentCard";
 import { AgentRequestsTray } from "./AgentRequestsTray";
 import { AgentsPausedBanner } from "./AgentsPausedBanner";
@@ -20,6 +22,7 @@ import { ConnectorAgent, type BroughtConnector } from "./ConnectorAgent";
 import { FloorStrip } from "./FloorStrip";
 import { JoinForm, type JoinResult } from "./JoinForm";
 import { MeetingContext } from "./MeetingContext";
+import { DownloadSummaryButton, LeftMeeting, MeetingRecorder } from "./MeetingSummary";
 import { MoozTile } from "./MoozTile";
 import { NotesBanner } from "./NotesBanner";
 import { NotesPolicyToggle } from "./NotesPolicyToggle";
@@ -48,6 +51,17 @@ function Stage() {
         <MoozTile />
       </GridLayout>
     </div>
+  );
+}
+
+/** The room's one chat: the panel shows it, and the host's tab records agents' public words from it. */
+function Chat({ record }: { record: Dispatch<RecordEvent> | null }) {
+  const chat = useChat();
+  return (
+    <>
+      <ChatPanel chat={chat} />
+      {record && <MeetingRecorder chat={chat.chatMessages} dispatch={record} />}
+    </>
   );
 }
 
@@ -84,8 +98,24 @@ function useBroughtConnector(slug: string): [BroughtConnector | null, (c: Brough
 export function MeetingRoom({ slug }: { slug: string }) {
   const [session, setSession] = useState<JoinResult | null>(null);
   const [connector, setConnector] = useBroughtConnector(slug);
+  // The host's record of the meeting, up here so leaving the call doesn't lose it.
+  const [record, dispatch] = useReducer(recordReducer, EMPTY_RECORD);
+  const [rejoining, setRejoining] = useState(false);
 
-  if (!session) return <JoinForm slug={slug} onJoined={setSession} />;
+  if (!session) {
+    if (hasContent(record) && !rejoining) {
+      return <LeftMeeting record={record} onDiscard={() => dispatch({ type: "reset" })} onRejoin={() => setRejoining(true)} />;
+    }
+    return (
+      <JoinForm
+        slug={slug}
+        onJoined={(s) => {
+          setRejoining(false);
+          setSession(s);
+        }}
+      />
+    );
+  }
 
   return (
     <MeetingContext.Provider value={{ slug, isHost: session.isHost }}>
@@ -107,6 +137,7 @@ export function MeetingRoom({ slug }: { slug: string }) {
             <span className="flex items-center gap-3">
               <span>{session.isHost ? "You are the host" : session.name}</span>
               {session.isHost && <NotesPolicyToggle slug={slug} />}
+              {session.isHost && <DownloadSummaryButton record={record} />}
               <BringAgentDialog slug={slug} onBringConnector={setConnector} />
             </span>
           </header>
@@ -120,7 +151,7 @@ export function MeetingRoom({ slug }: { slug: string }) {
             </div>
             <div className="flex min-h-0 flex-col border-t border-zinc-800 md:border-l md:border-t-0">
               <TaskPanel />
-              <ChatPanel />
+              <Chat record={session.isHost ? dispatch : null} />
             </div>
           </div>
           {connector && (

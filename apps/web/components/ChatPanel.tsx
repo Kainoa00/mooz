@@ -1,12 +1,13 @@
 "use client";
 
-import { useChat } from "@livekit/components-react";
+import type { useChat } from "@livekit/components-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { isAgent, participantLabel } from "@/lib/labels";
 import { AgentBadge } from "./AgentBadge";
 
-export function ChatPanel() {
-  const { chatMessages, send, isSending } = useChat();
+/** The meeting's chat (one `useChat` for the room, shared with the host's summary record). */
+export function ChatPanel({ chat }: { chat: ReturnType<typeof useChat> }) {
+  const { chatMessages, send, isSending } = chat;
   const [draft, setDraft] = useState("");
   const listRef = useRef<HTMLOListElement>(null);
 

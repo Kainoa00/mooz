@@ -22,6 +22,8 @@ TASKS_TOPIC = "mooz.tasks"
 NOTES_OPT_OUT_ATTRIBUTE = "notes_opt_out"
 REPLY_TO_ATTRIBUTE = "reply_to"
 SOURCES_ATTRIBUTE = "sources"
+# On a message sent only to some people: it's theirs, and stays out of the host's summary.
+PRIVATE_ATTRIBUTE = "private"
 SAMPLE_RATE = 48_000
 NUM_CHANNELS = 1
 # Leave this long after the last person does, so the agent doesn't keep an empty room open.
@@ -233,12 +235,15 @@ class MeetingRoom:
         sources: frozenset[str] = frozenset(),
         to: list[str] | None = None,
     ) -> None:
-        """Post to chat (or only to `to`), saying whom it answers and whose words it drew on."""
+        """Post to chat (or only to `to`, marked private), saying whom it answers and whose words
+        it drew on."""
         attributes: dict[str, str] = {}
         if reply_to:
             attributes[REPLY_TO_ATTRIBUTE] = reply_to
         if sources:
             attributes[SOURCES_ATTRIBUTE] = ",".join(sorted(sources))
+        if to:
+            attributes[PRIVATE_ATTRIBUTE] = "1"
         await self._room.local_participant.send_text(
             text, topic=CHAT_TOPIC, attributes=attributes or None, destination_identities=to
         )

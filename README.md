@@ -315,6 +315,13 @@ to be made again under another name.
 Bridge agents from before M5 still join, but they don't take turns: pull the latest code and
 run `uv sync` in `bridge`.
 
+**The host's summary.** The host can **Download summary** (a Markdown file) at any time, and
+again after leaving, until they discard it. It has what the agents said in public, their public
+research, who was there, which agents kept notes and when the agents paused. It never has
+anyone's own words, private answers, or anything to do with someone who chose **Leave me out**.
+It's built in the host's tab and never goes to the server; a reload loses it. Want a real
+summary? Ask an agent to sum up the meeting before you leave.
+
 ## How it works
 
 ```
