@@ -8,9 +8,10 @@ const livekit = new RoomServiceClient(
   process.env.LIVEKIT_API_SECRET ?? "secret",
 );
 
-/** The LiveKit room these people are in (its name is the server's, not the link's). */
+/** The newest LiveKit room these people are in (its name is the server's, not the link's). */
 async function roomOf(...names: string[]): Promise<string> {
-  for (const room of await livekit.listRooms()) {
+  const rooms = (await livekit.listRooms()).sort((a, b) => Number(b.creationTime - a.creationTime));
+  for (const room of rooms) {
     const here = (await livekit.listParticipants(room.name)).map((p) => p.name);
     if (names.every((n) => here.includes(n))) return room.name;
   }
@@ -38,9 +39,12 @@ test("two people meet by link, see each other, and chat", async ({ page, browser
   // Anyone can publish on LiveKit's old chat topic. Packets that aren't a message (not JSON, null,
   // an object for an id) are ignored, and chat carries on in every tab.
   const room = await roomOf("Kainoa", "Zach");
-  for (const bad of ["{oops", "null", JSON.stringify({ id: { toString: 1 }, message: "boom", timestamp: 1 })]) {
-    await livekit.sendData(room, new TextEncoder().encode(bad), DataPacket_Kind.RELIABLE, { topic: "lk-chat-topic" });
+  const good = JSON.stringify({ id: "legacy-ok", message: "legacy ok", timestamp: Date.now() });
+  for (const packet of ["{oops", "null", JSON.stringify({ id: { toString: 1 }, message: "boom", timestamp: 1 }), good]) {
+    await livekit.sendData(room, new TextEncoder().encode(packet), DataPacket_Kind.RELIABLE, { topic: "lk-chat-topic" });
   }
+  // A well-formed one, sent last on the same reliable channel, shows the others arrived first.
+  for (const p of [page, zach]) await expect(p.getByTestId("chat-message").filter({ hasText: "legacy ok" })).toBeVisible();
   await sendChat(zach, "still here");
   for (const p of [page, zach]) {
     await expect(p.getByTestId("chat-message").filter({ hasText: "still here" })).toBeVisible();

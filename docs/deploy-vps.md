@@ -134,6 +134,8 @@ Between meetings: back up, then
 git pull && docker compose pull && docker compose up -d
 ```
 
+With per-IP limits, see [Limits by IP address](#limits-by-ip-address) too.
+
 The database upgrades itself when the new version starts. Set `MOOZ_VERSION` in `.env` to pin
 a version.
 
@@ -207,12 +209,13 @@ keeps working at upgrades. In `deploy`:
    ```
 
 3. Save this as `compose.override.yaml`. Compose reads it along with `compose.yaml` by itself:
-   Caddy is built from your Dockerfile and reads your Caddyfile.
+   Caddy is built from your Dockerfile (never pulled) and reads your Caddyfile.
 
    ```yaml
    services:
      caddy:
        image: mooz-caddy-ratelimit
+       pull_policy: build
        build:
          context: .
          dockerfile: Caddy.Dockerfile
@@ -228,9 +231,9 @@ keeps working at upgrades. In `deploy`:
    docker compose up -d caddy
    ```
 
-   At upgrades, use `git pull && docker compose pull --ignore-buildable && docker compose up -d
-   --build`, and when `compose.yaml`'s Caddy version or the shipped Caddyfile changes, make the
-   same change in your two copies.
+   At upgrades, the usual command (see [Upgrades](#upgrades)) still works: Compose doesn't pull
+   your Caddy, and builds it again (from cache) at `up -d`. When `compose.yaml`'s Caddy version
+   or the shipped Caddyfile changes, make the same change in your two copies.
 
 People behind one address or one IPv6 /64 (an office, a school, a home) share these, so raise
 them if they get in each other's way. A client with many addresses (several /64s, or a botnet)

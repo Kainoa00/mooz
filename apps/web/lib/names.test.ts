@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { foldName, parseAgentName, parseDisplayName } from "./names";
+import { HOST_NAME_HOLDERS, MAX_NAME_HOLDERS } from "./agents";
+import { foldName, forgetNames, parseAgentName, parseDisplayName } from "./names";
 
 describe("parseDisplayName", () => {
   it("collapses whitespace", () => {
@@ -199,6 +200,21 @@ describe("names that look like an agent's", () => {
     ["KAl", "KAI"],
     ["NovaAl", "NovaAI"],
     ["lola", "Iola"], // and an l that starts a word
+    ["lsabel", "Isabelle"], // said as the I it looks like, where an l can't be said
+    ["lriss", "Iris"],
+    ["lrys", "Iris"],
+    ["lliya", "Ilya"],
+    ["lggor", "Igor"],
+    ["Maria lsabel", "Isabelle"],
+    ["Əli", "Ali"], // ə is said like a
+    ["Həsən", "Hasan"],
+    ["Kəmalə", "Kamala"],
+    ["ɳoʋa", "Nova"], // more Latin letters drawn like plain ones
+    ["ɠrɔk", "Grok"],
+    ["Atˊlas", "Atlas"], // more marks drawn like an apostrophe
+    ["Atˋlas", "Atlas"],
+    ["At‛las", "Atlas"],
+    ["At\u1ffdlas", "Atlas"],
   ])("refuses %j while %j is here, and the agent while they are", (name, agent) => {
     expect(() => parseDisplayName(name, [agent])).toThrowError(expect.objectContaining({ status: 409, code: "name_taken" }));
     expect(() => parseAgentName(agent, [name])).toThrowError(expect.objectContaining({ status: 409, code: "name_taken" }));
@@ -227,7 +243,14 @@ describe("names that look like an agent's", () => {
     ["Ɓala", "Nala"],
     ["Ɓello", "Jello"],
     ["Əli", "Oli"],
-    ["Ɓɔla", "Lila"], // and unknown ones stand in only for fewer than half the letters
+    ["Ɓɔla", "Lila"], // ɓ reads as b
+    ["Ɛɛna", "Lena"], // and unknown letters stand in only for fewer than half the letters
+    ["lara", "Ira"], // an l before a vowel is said as one
+    ["lana", "Ian"],
+    ["luna", "Ina"],
+    ["leon", "Ion"],
+    ["Sevinc Həsənova", "Nova"], // ə doesn't split a word in two
+    ["Cəlil", "Leila"],
     ["O’Brien", "Brien"], // ’ is an apostrophe, as ' is
   ])("keeps %j next to an agent called %j, either way round", (name, agent) => {
     expect(parseDisplayName(name, [agent])).toBe(name);
@@ -262,6 +285,16 @@ describe("names that look like an agent's", () => {
   it("refuses a word that mixes alphabets, which could look like a name it doesn't match", () => {
     expect(() => parseDisplayName("Grօk")).toThrowError(expect.objectContaining({ status: 400, code: "invalid_name" }));
     expect(() => parseDisplayName("Kaiнoa")).toThrowError(expect.objectContaining({ status: 400 }));
+  });
+});
+
+describe("a name check in a full meeting", () => {
+  it("stays quick with every name a meeting may hold, each seen for the first time", () => {
+    forgetNames();
+    const people = Array.from({ length: MAX_NAME_HOLDERS + HOST_NAME_HOLDERS }, (_, i) => `Guest ${i.toString(36)}xq`);
+    const started = performance.now();
+    expect(parseAgentName("Atlas", people)).toBe("Atlas");
+    expect(performance.now() - started).toBeLessThan(1_000);
   });
 });
 

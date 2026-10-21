@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createAgentCode, decideAgentRequest } from "@/lib/agents";
+import { MAX_NAME_HOLDERS, createAgentCode, decideAgentRequest } from "@/lib/agents";
 import { getDb } from "@/lib/db";
 import {
   HOST_SESSIONS,
@@ -9,8 +9,10 @@ import {
   UNCONNECTED_PLACE_MS,
   addParticipant,
   createRoom,
+  getRoom,
 } from "@/lib/rooms";
-import { noteWebhook } from "@/lib/webhook-seen";
+import { TOKEN_TTL_MS } from "@/lib/livekit";
+import { noteRoomWebhook, noteWebhook } from "@/lib/webhook-seen";
 import { jsonRequest, params, setCookies, useTestEnv } from "@/test/helpers";
 import { POST as claim } from "./agent/claim/route";
 import { GET as poll, POLLS_PER_MINUTE } from "./agent/claim/[id]/route";
@@ -141,6 +143,7 @@ describe("rate limits", () => {
     for (let i = 0; i < 3 * 60 * JOINS_PER_MINUTE; i++) {
       insert.run(`p_ghost${i}`, slug, long, Date.now() + 60_000, i % 2 ? `PA_${i}` : null, i % 2 ? long : null);
     }
+    noteRoomWebhook(db, getRoom(db, slug)!.livekitRoom); // the meeting is under way
     expect((await join(jsonRequest(url, { name: "Lee" }), params({ slug }))).status).toBe(200);
   });
 
@@ -156,9 +159,32 @@ describe("rate limits", () => {
     db.exec("BEGIN");
     for (let i = 0; i < MAX_ROOM_SESSIONS; i++) insert.run(`p_ghost${i}`, slug, long, Date.now() + 60_000);
     db.exec("COMMIT");
+    noteRoomWebhook(db, getRoom(db, slug)!.livekitRoom);
     expect(await code(await join(jsonRequest(url, { name: "Lee" }), params({ slug })))).toBe("room_full");
     // Sessions that have ended don't count, swept or not.
     db.prepare("UPDATE participants SET expires_at = ? WHERE identity = 'p_ghost0'").run(Date.now());
+    expect((await join(jsonRequest(url, { name: "Lee" }), params({ slug }))).status).toBe(200);
+  });
+
+  it("lets at most 2,000 sessions hold a name, until the meeting is heard from after them", async () => {
+    const db = getDb();
+    const { slug, hostSecret } = createRoom(db);
+    const { livekitRoom } = getRoom(db, slug)!;
+    const url = `http://localhost:3000/api/rooms/${slug}/join`;
+    noteWebhook(db);
+    const insert = db.prepare(
+      "INSERT INTO participants (identity, room_slug, name, is_host, secret_hash, created_at, expires_at) VALUES (?, ?, ?, 0, 's', ?, ?)",
+    );
+    // Joins that never came in, two hours ago, in a meeting the webhook hasn't spoken of since.
+    const long = Date.now() - 2 * TOKEN_TTL_MS;
+    db.exec("BEGIN");
+    for (let i = 0; i < MAX_NAME_HOLDERS; i++) insert.run(`p_ghost${i}`, slug, `Ghost ${i}`, long, long + SESSION_TTL_MS);
+    db.exec("COMMIT");
+    expect(await code(await join(jsonRequest(url, { name: "Lee" }), params({ slug })))).toBe("room_full");
+    const host = await join(jsonRequest(url, { name: "Kainoa" }, { cookie: `mooz_host_${slug}=${hostSecret}` }), params({ slug }));
+    expect(host.status).toBe(200);
+    // The host comes into the call: now the webhook has spoken of the meeting, and lets them go.
+    noteRoomWebhook(db, livekitRoom);
     expect((await join(jsonRequest(url, { name: "Lee" }), params({ slug }))).status).toBe(200);
   });
 

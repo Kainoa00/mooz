@@ -115,7 +115,7 @@ describe("endMeeting", () => {
     expect(endMeeting(db, slug)).toBe(0);
   });
 
-  it("forgets that the webhook spoke of the meeting, so the next one on its link starts over", () => {
+  it("forgets when the webhook last spoke of the meeting", () => {
     const db = getDb();
     const { slug } = createRoom(db);
     noteRoomWebhook(db, getRoom(db, slug)!.livekitRoom);
@@ -127,6 +127,18 @@ describe("endMeeting", () => {
 });
 
 describe("sweep", () => {
+  it("forgets when the webhook last spoke of a meeting nobody is left in, though LiveKit never said it ended", () => {
+    const db = getDb();
+    const { slug } = createRoom(db);
+    addParticipant(db, { slug, name: "Zach", isHost: false });
+    noteRoomWebhook(db, getRoom(db, slug)!.livekitRoom);
+    const heard = () => (db.prepare("SELECT webhook_at FROM rooms WHERE slug = ?").get(slug) as { webhook_at: number | null }).webhook_at;
+    sweep(db);
+    expect(heard()).not.toBeNull(); // Zach is still here
+    sweep(db, Date.now() + SESSION_TTL_MS + 1);
+    expect(heard()).toBeNull();
+  });
+
   it("deletes codes once they've expired", () => {
     const db = getDb();
     const { slug } = createRoom(db);

@@ -79,10 +79,12 @@ async def test_half_a_character_pair_from_a_model_doesnt_stop_the_message() -> N
     room = MeetingRoom(cast(rtc.Room, fake))
     await room.send_task_event({"type": "task", "summary": "Up \ud83d 5%", "details": "📈"})
     await room.send_chat("Up \ud83d 5%")
-    event, chat = fake.local_participant.sent
+    await room.send_chat("Up \ud83d" + "\udcc8 5%")  # both halves, apart
+    event, chat, joined = fake.local_participant.sent
     assert json.loads(event["text"])["summary"] == "Up \ufffd 5%"
     assert json.loads(event["text"])["details"] == "📈"
     assert chat["text"] == "Up \ufffd 5%"
+    assert joined["text"] == "Up 📈 5%"
 
 
 @pytest.mark.parametrize(

@@ -26,8 +26,8 @@ const BROADCAST_VOICE = ["agents"];
 const BROADCAST_CHAT = ["everyone", "agents"];
 // A heard word matches the name if it sounds alike AND is spelled close, or is spelled
 // very close. Sound alone is too loose ("could" sounds like "Claude").
-const SOUND_ALIKE_MIN_RATIO = 75;
-const SPELLED_ALIKE_MIN_RATIO = 90;
+export const SOUND_ALIKE_MIN_RATIO = 75;
+export const SPELLED_ALIKE_MIN_RATIO = 90;
 
 const EDGE_PUNCT = " \t,.:;!-";
 

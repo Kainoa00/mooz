@@ -111,6 +111,8 @@ export const MIGRATIONS = [
   `CREATE TABLE server_state (key TEXT PRIMARY KEY, value INTEGER NOT NULL);`,
   // When the webhook last spoke of a meeting (cleared when it ends).
   `ALTER TABLE rooms ADD COLUMN webhook_at INTEGER;`,
+  // Finding someone by their secret shouldn't read every session in a big meeting.
+  `CREATE INDEX participants_by_secret ON participants(secret_hash);`,
 ];
 
 function migrate(db: Db): void {

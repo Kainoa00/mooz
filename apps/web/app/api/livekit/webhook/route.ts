@@ -53,12 +53,14 @@ export async function POST(req: Request): Promise<Response> {
     if (room) noteRoomWebhook(db, room);
     if (event.event === "participant_joined" && identity && room) {
       revokeIfNameTakenWhileAway(db, identity); // before its return is noted: then it's unwelcome
+      // A person turned away isn't noted as here, so the "left" LiveKit sends for the kick is for
+      // a session never noted, and doesn't hold their name for another 2 minutes.
+      const unwelcomePerson = isUnwelcomePerson(db, identity, event.participant?.name);
       noteBridgePresence(db, identity, sid, true);
-      notePersonPresence(db, identity, sid, true);
-      if (isUnwelcomeAgent(db, identity) || isUnwelcomePerson(db, identity, event.participant?.name)) {
+      if (!unwelcomePerson) notePersonPresence(db, identity, sid, true);
+      if (unwelcomePerson || isUnwelcomeAgent(db, identity)) {
         await removeFromRoom(room, identity);
-      }
-      else if (noteConnectorPresence(db, identity, sid, true) === "expired") {
+      } else if (noteConnectorPresence(db, identity, sid, true) === "expired") {
         forgetAgent(identity);
         await removeFromRoom(room, identity);
       }

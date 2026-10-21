@@ -77,7 +77,7 @@ real local voice: a talking agent with no keys at all.
 
 ## In the connector tab
 
-In **Bring my agent → Grok, Claude or ChatGPT**, turn on voice and pick **A speech server on
+In **Bring my agent → Grok, Claude or ChatGPT**, turn on voice and pick **Speech server on
 this computer**:
 
 - **Server address:** `http://127.0.0.1:PORT/v1` or `http://localhost:PORT/v1` only (default

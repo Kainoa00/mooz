@@ -4,7 +4,7 @@ import { getDb } from "@/lib/db";
 import { HttpError, errorResponse, readJson, SMALL_JSON_BYTES } from "@/lib/http";
 import { livekitConfig, mintHumanToken } from "@/lib/livekit";
 import { parseDisplayName } from "@/lib/names";
-import { activeAgentNames } from "@/lib/agents";
+import { activeAgentNames, assertRoomForName } from "@/lib/agents";
 import { getNotesOptOut } from "@/lib/notes";
 import { allow } from "@/lib/rate-limit";
 import { addParticipant, findParticipant, isHost, renameParticipant, touchRoom } from "@/lib/rooms";
@@ -43,6 +43,7 @@ export async function POST(
     // No exception for someone coming back under their own name: while they're away for a
     // moment it's held for them, and after that an agent that sounds like it may have come in.
     const name = parseDisplayName(body.name, activeAgentNames(db, slug));
+    if (!returning) assertRoomForName(db, slug, host);
     const participant = returning
       ? { ...renameParticipant(db, returning, name, host), secret: secret as string }
       : addParticipant(db, { slug, name, isHost: host });

@@ -300,7 +300,7 @@ same dialog and it also hears its name said out loud ("Hey Grok, …") and speak
 through either:
 
 - **ElevenLabs:** your API key stays in your browser and is sent only to ElevenLabs.
-- **A speech server on this computer:** VoiceStudio, or any OpenAI-compatible server at
+- **Speech server on this computer:** VoiceStudio, or any OpenAI-compatible server at
   `http://127.0.0.1:PORT/v1` (or `localhost`), with no key. Everyone's speech goes only to that
   server. Saving checks the server is up and lets the page in (VoiceStudio needs the meeting's
   address in `OMNIVOICE_ALLOWED_ORIGINS`), and your browser may ask to let the site use apps on

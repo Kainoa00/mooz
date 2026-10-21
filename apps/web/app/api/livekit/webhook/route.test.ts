@@ -1,15 +1,16 @@
 import { createHash } from "node:crypto";
 import { AccessToken } from "livekit-server-sdk";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { claimAgentCode, createAgentCode, decideAgentRequest, getClaimStatus, revokeAgent } from "@/lib/agents";
+import { claimAgentCode, createAgentCode, decideAgentRequest, getClaimStatus, participantNames, revokeAgent } from "@/lib/agents";
 import { LEFT_GRACE_MS, attachedConnectorAgent, connectorAgentFor, connectorJoinStatus, requestConnectorJoin } from "@/lib/connector-agents";
 import { enqueueQuestion, listQuestions, resetQueueForTests } from "@/lib/connector-queue";
 import { createConnector } from "@/lib/connectors";
 import { getDb } from "@/lib/db";
 import { floorView, requestTurn, resetFloorsForTests } from "@/lib/floor";
+import { TOKEN_TTL_MS } from "@/lib/livekit";
 import { setNotesPolicy } from "@/lib/notes";
 import { addParticipant, createRoom, getRoom, getRoomByLivekitName, renameParticipant } from "@/lib/rooms";
-import { webhookArrives } from "@/lib/webhook-seen";
+import { noteWebhook, webhookArrives } from "@/lib/webhook-seen";
 import { LK_KEY, LK_SECRET, useTestEnv } from "@/test/helpers";
 
 const removeFromRoom = vi.fn<(room: string, identity: string) => Promise<void>>(async () => {});
@@ -131,6 +132,47 @@ describe("POST /api/livekit/webhook", () => {
     removeFromRoom.mockClear();
     await POST(await signed(joined(livekitRoom, lee.identity, "Atlas"))); // a reconnect: Lee stays
     expect(removeFromRoom).not.toHaveBeenCalled();
+  });
+
+  it("doesn't let a person turned away hold the name long enough to revoke the bridge that has it", async () => {
+    const db = getDb();
+    const { slug } = createRoom(db);
+    const { livekitRoom } = getRoom(db, slug)!;
+    const nova = addParticipant(db, { slug, name: "Nova", isHost: false });
+    const zach = addParticipant(db, { slug, name: "Zach", isHost: false });
+    db.prepare("UPDATE participants SET session_sid = 'PA_1', left_at = ? WHERE identity = ?").run(Date.now() - 5 * 60_000, nova.identity);
+    const claim = claimAgentCode(db, { code: createAgentCode(db, zach).code, name: "Nova" });
+    decideAgentRequest(db, { slug, requestId: claim.requestId, approve: true });
+    const status = getClaimStatus(db, claim.requestId, claim.claimSecret);
+    if (status.status !== "approved") throw new Error("setup failed");
+    const bridge = status.agent.identity;
+    await POST(await signed(joined(livekitRoom, bridge, "Nova")));
+    // The bridge drops; within its grace the person's tab comes back on its old token, and is
+    // turned away (LiveKit then reports that session leaving).
+    db.prepare("UPDATE agent_requests SET left_at = ? WHERE agent_identity = ?").run(Date.now() - 60_000, bridge);
+    await POST(await signed(JSON.stringify({ event: "participant_joined", room: { name: livekitRoom }, participant: { identity: nova.identity, name: "Nova", sid: "PA_2" } })));
+    expect(removeFromRoom).toHaveBeenCalledWith(livekitRoom, nova.identity);
+    await POST(await signed(JSON.stringify({ event: "participant_left", room: { name: livekitRoom }, participant: { identity: nova.identity, sid: "PA_2" } })));
+    // The bridge comes back three minutes after it dropped: its name is still its own.
+    db.prepare("UPDATE agent_requests SET left_at = ? WHERE agent_identity = ?").run(Date.now() - 3 * 60_000, bridge);
+    removeFromRoom.mockClear();
+    await POST(await signed(joined(livekitRoom, bridge, "Nova")));
+    expect(removeFromRoom).not.toHaveBeenCalled();
+    expect((db.prepare("SELECT status FROM agent_requests WHERE agent_identity = ?").get(bridge) as { status: string }).status).toBe("approved");
+  });
+
+  it("notes when the webhook spoke of the meeting, before an end forgets it", async () => {
+    const db = getDb();
+    const { slug } = createRoom(db);
+    const { livekitRoom } = getRoom(db, slug)!;
+    noteWebhook(db);
+    // Joined two hours ago and never came in: held until the webhook speaks of the meeting.
+    addParticipant(db, { slug, name: "Lee", isHost: false }, Date.now() - 2 * TOKEN_TTL_MS);
+    expect(participantNames(db, slug)).toEqual(["Lee"]);
+    await POST(await signed(JSON.stringify({ event: "room_started", room: { name: livekitRoom } })));
+    expect(participantNames(db, slug)).toEqual([]);
+    await POST(await signed(JSON.stringify({ event: "room_finished", room: { name: livekitRoom } })));
+    expect((db.prepare("SELECT webhook_at FROM rooms WHERE slug = ?").get(slug) as { webhook_at: number | null }).webhook_at).toBeNull();
   });
 
   it("takes a bridge back as before when its name is still free", async () => {

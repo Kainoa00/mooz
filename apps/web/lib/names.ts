@@ -1,4 +1,4 @@
-import { nameWords, ratio, sameWord, wakeWord } from "./addressing";
+import { SOUND_ALIKE_MIN_RATIO, SPELLED_ALIKE_MIN_RATIO, nameWords, phoneticKey, ratio, wakeWord } from "./addressing";
 import { COMMON_WORDS } from "./common-words";
 import { HttpError } from "./http";
 import { hasHidden } from "./text";
@@ -38,10 +38,6 @@ export function parseDisplayName(value: unknown, agentNames: readonly string[] =
   return name;
 }
 
-/** Whether two words would be heard as each other, either way round. */
-const alike = (a: string, b: string) => a === b || sameWord(a, b) || sameWord(b, a);
-/** Whether two words are spelled nearly the same (the detector's spelling rule, not its sound one). */
-const spelledAlike = (a: string, b: string) => a === b || (a.length >= 3 && b.length >= 3 && ratio(a, b) >= 90);
 
 // How Cyrillic and Greek letters sound in Latin ones, so "Атлас" (or "Аtlas", with one
 // Cyrillic letter) is heard as Atlas.
@@ -77,7 +73,8 @@ const LOOKS: Record<string, string> = {
   ɩ: "i", ȷ: "j", ɵ: "o", "0": "o", "1": "l",
   // Latin letters drawn like plain ones: Atǀas (a click letter) reads Atlas, Ɗan reads Dan.
   ǀ: "l", ǁ: "ll", ƚ: "l", ɭ: "l", ɫ: "l", ȴ: "l", ɨ: "i", ʉ: "u", ꜰ: "f", ꞵ: "b", ƀ: "b",
-  ꭓ: "x", ɲ: "n", ɾ: "r", ɼ: "r", ʂ: "s", ƙ: "k", ɓ: "b", ɗ: "d", ƴ: "y", ə: "e",
+  ꭓ: "x", ɲ: "n", ɾ: "r", ɼ: "r", ʂ: "s", ƙ: "k", ɓ: "b", ɗ: "d", ƴ: "y", ə: "e", ɳ: "n", ʋ: "v",
+  ɠ: "g", ɽ: "r",
   а: "a", в: "b", г: "r", е: "e", ё: "e", к: "k", м: "m", н: "h", о: "o", п: "n", р: "p",
   с: "c", т: "t", у: "y", х: "x", ш: "w", ѕ: "s", і: "i", ї: "i", ј: "j", ԁ: "d", ԛ: "q",
   ԝ: "w", һ: "h", ӏ: "l", ү: "y", α: "a", β: "b", ε: "e", ζ: "z", η: "n", ι: "i", κ: "k",
@@ -93,7 +90,7 @@ const LOOKS: Record<string, string> = {
 };
 
 // Marks drawn like an apostrophe: the curly ones phones type, the ʻokina, primes, accents.
-const APOSTROPHES = /[\u2018\u2019\u02b9\u02bb\u02bc\u02bd\u02be\u02bf\u02c8\ua78b\ua78c`\u00b4\u2032]/gu;
+const APOSTROPHES = /[\u2018\u2019\u201b\u02b9\u02bb\u02bc\u02bd\u02be\u02bf\u02c8\u02ca\u02cb\ua78b\ua78c`\u00b4\u1ffd\u0384\u2032\u2035]/gu;
 
 /**
  * Compatibility forms (fullwidth, circled…) and accents gone, joiners dropped, and anything drawn
@@ -112,12 +109,16 @@ function bare(name: string): string {
 
 const plain = (name: string) => bare(name).toLowerCase();
 
+// Latin letters as they're said where they look like something else: Azerbaijani ə is said like
+// the a in "cat" (Əli is heard as Ali, though it reads as Eli), and hooked letters as plain ones.
+const SOUNDS: Record<string, string> = { ə: "a", ɓ: "b", ɗ: "d", ƙ: "k", ƴ: "y" };
+
 /**
  * A name as it sounds in plain Latin letters (what speech-to-text writes when it's said):
  * fullwidth and other lookalike forms, accents, and Cyrillic and Greek letters folded.
  */
 export function foldName(name: string): string {
-  return plain(name).replace(/[^\x00-\x7f]/gu, (c) => TRANSLIT[c] ?? LATIN[c] ?? c);
+  return plain(name).replace(/[^\x00-\x7f]/gu, (c) => TRANSLIT[c] ?? LATIN[c] ?? SOUNDS[c] ?? c);
 }
 
 /** A name as it looks in plain Latin letters (what someone reading it would say). */
@@ -133,11 +134,20 @@ export function foldNameByLook(name: string): string {
  * small letter, or before one inside a word ("AtIas", "KaI"), and an l that starts a word, or
  * follows a capital with no small letter after it ("lris", "ARlA", "NovaAl"). A capital I that
  * starts a word (Ira, Ilham) and an l among small letters (Joel, Clara) are just themselves.
+ * An l read as I is said as an I only where it can't be said as an l: before a consonant
+ * ("lsabel" is said Isabel) or among capitals, not before a vowel ("lily" is said lily).
  */
 function readings(name: string): string[] {
   const iAsL = name.replace(/(?<=\p{Ll})I|(?<=\p{L})I(?=\p{Ll})/gu, "l");
   const lAsI = name.replace(/(?<![\p{L}\p{N}])l|(?<=\p{Lu})l(?!\p{Ll})/gu, "I");
-  return [foldName(name), foldNameByLook(name), foldNameByLook(iAsL), foldNameByLook(lAsI)];
+  const lSaidAsI = name.replace(/(?<![\p{L}\p{N}])l(?![aeiouyAEIOUY])|(?<=\p{Lu})l(?!\p{Ll})/gu, "I");
+  return [
+    foldName(name),
+    foldNameByLook(name),
+    foldNameByLook(iAsL),
+    foldNameByLook(lAsI),
+    foldNameByLook(lSaidAsI),
+  ];
 }
 
 interface Reading {
@@ -152,13 +162,99 @@ interface Reading {
 }
 
 function readingsOf(name: string): Reading[] {
-  const [sound, look, iAsL, lAsI] = readings(name);
+  const [sound, look, iAsL, lAsI, lSaidAsI] = readings(name);
   return [
     { folded: sound, byLook: false, bySpelling: false },
     { folded: look, byLook: true, bySpelling: false },
     { folded: iAsL, byLook: true, bySpelling: false },
     { folded: lAsI, byLook: true, bySpelling: lAsI !== look },
+    { folded: lSaidAsI, byLook: true, bySpelling: false },
   ];
+}
+
+/** A word of a name as read, with what comparing it takes. */
+interface Word {
+  text: string;
+  key: string;
+  bySpelling: boolean;
+}
+
+/** Everything a name check needs of one name, worked out once. */
+interface NameView {
+  readings: string[];
+  /** Its words, any reading. */
+  words: Word[];
+  /** Its wake word, any reading. */
+  wakes: Word[];
+  /** Words of a reading by look that still have letters beyond a to z. */
+  unknown: string[];
+}
+
+/** Words that differ only in how strictly they're compared keep the looser (sound) one. */
+function distinct(words: { text: string; bySpelling: boolean }[]): Word[] {
+  const loose = new Set(words.filter((w) => !w.bySpelling).map((w) => w.text));
+  const seen = new Set<string>();
+  const out: Word[] = [];
+  for (const { text, bySpelling } of words) {
+    const strict = bySpelling && !loose.has(text);
+    const id = `${strict ? 1 : 0}${text}`;
+    if (seen.has(id) || (bySpelling && !strict)) continue;
+    seen.add(id);
+    out.push({ text, key: phoneticKey(text), bySpelling: strict });
+  }
+  return out;
+}
+
+function viewOf(name: string): NameView {
+  const all = readingsOf(name);
+  return {
+    readings: all.map((r) => r.folded),
+    words: distinct(all.flatMap((r) => nameWords(r.folded).map((text) => ({ text, bySpelling: r.bySpelling })))),
+    wakes: distinct(
+      all.flatMap((r) => {
+        const text = wakeWord(r.folded);
+        return text === undefined ? [] : [{ text, bySpelling: r.bySpelling }];
+      }),
+    ),
+    unknown: [...new Set(all.filter((r) => r.byLook).flatMap((r) => unknownWords(r.folded)))],
+  };
+}
+
+// A name check compares one name with everyone's in the meeting: each name is worked out once,
+// and kept in memory only until a meeting ends or the next sweep (forgetNames).
+const VIEWS = new Map<string, NameView>();
+const MAX_VIEWS = 50_000;
+
+/** Forget the names worked out so far (they're people's names: they don't outlast a meeting). */
+export function forgetNames(): void {
+  VIEWS.clear();
+}
+
+function view(name: string): NameView {
+  let v = VIEWS.get(name);
+  if (!v) {
+    if (VIEWS.size >= MAX_VIEWS) VIEWS.delete(VIEWS.keys().next().value as string);
+    v = viewOf(name);
+    VIEWS.set(name, v);
+  }
+  return v;
+}
+
+/**
+ * Whether two words would be heard as each other, either way round: the detector's spelling
+ * rule, or its sound one (lib/addressing.ts sameWord). A word read only by look (an l as I)
+ * matches by spelling alone. The lengths alone rule most pairs out before comparing letters.
+ */
+function alike(a: Word, b: Word): boolean {
+  if (a.text === b.text) return true;
+  const shorter = Math.min(a.text.length, b.text.length);
+  const best = (200 * shorter) / (a.text.length + b.text.length);
+  if (a.bySpelling || b.bySpelling) {
+    return shorter >= 3 && best >= SPELLED_ALIKE_MIN_RATIO && ratio(a.text, b.text) >= SPELLED_ALIKE_MIN_RATIO;
+  }
+  if (Math.max(a.text.length, b.text.length) < 3 || best < SOUND_ALIKE_MIN_RATIO) return false;
+  const r = ratio(a.text, b.text);
+  return r >= SPELLED_ALIKE_MIN_RATIO || (r >= SOUND_ALIKE_MIN_RATIO && a.key === b.key);
 }
 
 const LATIN_SCRIPT = /\p{Script=Latin}/u;
@@ -204,17 +300,12 @@ const unknownWords = (folded: string) =>
  * (an agent called "AtIas" is read as Atlas too).
  */
 function heardAs(name: string, agent: string): boolean {
-  const wakes = readingsOf(agent).flatMap(({ folded, bySpelling }) => {
-    const word = wakeWord(folded);
-    return word === undefined ? [] : [{ word, bySpelling }];
-  });
+  const { wakes } = view(agent);
   if (wakes.length === 0) return false;
-  return readingsOf(name).some(
-    (r) =>
-      nameWords(r.folded).some((w) =>
-        wakes.some((wake) => (r.bySpelling || wake.bySpelling ? spelledAlike(w, wake.word) : alike(w, wake.word))),
-      ) ||
-      (r.byLook && unknownWords(r.folded).some((w) => wakes.some((wake) => readsAs(w, wake.word)))),
+  const { words, unknown } = view(name);
+  return (
+    words.some((w) => wakes.some((wake) => alike(w, wake))) ||
+    unknown.some((w) => wakes.some((wake) => readsAs(w, wake.text)))
   );
 }
 
@@ -254,8 +345,8 @@ export function parseAgentName(value: unknown, people: readonly string[], agents
   if (wake.replace(/[^a-z]/g, "").length < 3) {
     throw new HttpError(400, "invalid_agent_name", "An agent's name needs a last word with at least 3 letters");
   }
-  const read = readings(name);
-  if (takenNames.some((taken) => readings(taken.trim()).some((r) => read.includes(r)))) {
+  const read = new Set(view(name).readings);
+  if (takenNames.some((taken) => view(taken.trim()).readings.some((r) => read.has(r)))) {
     throw new HttpError(409, "name_taken", `Someone in this meeting is already called "${name}"`);
   }
   // Which name it clashes with isn't said: the asker may not be able to see everyone who counts.

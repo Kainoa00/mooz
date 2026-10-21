@@ -1,13 +1,15 @@
 import { transaction } from "./agents";
 import type { Db } from "./db";
+import { forgetNames } from "./names";
 import { pruneExpiredWindows } from "./rate-limit";
 import { SESSION_TTL_MS } from "./rooms";
 
 /**
  * What's left after a meeting. People, their agent codes and their agents' requests (names,
  * who brought what) go when the meeting ends, or once they've expired if LiveKit never says
- * it ended. The room itself (its link, the host secret's hash and the notes policy) is a
- * setting, kept for 30 days after its last join.
+ * it ended, and so do the names worked out in memory for name checks. The room itself (its
+ * link, the host secret's hash, the notes policy, when it was last joined and when the webhook
+ * last spoke of its meeting) is a setting, kept for 30 days after its last join.
  */
 
 export const ROOM_IDLE_MS = 30 * 24 * 60 * 60 * 1000;
@@ -34,6 +36,7 @@ function checkpoint(db: Db): void {
 
 /** LiveKit says the meeting ended (everyone left): forget who was there. The room stays. */
 export function endMeeting(db: Db, slug: string): number {
+  forgetNames();
   const changes = transaction(db, () => {
     db.prepare("UPDATE rooms SET webhook_at = NULL WHERE slug = ?").run(slug);
     return forgetRooms(db, "?", [slug]);
@@ -58,6 +61,12 @@ export function sweep(db: Db, now = Date.now()): number {
         )
         .run(now, now - REQUEST_TTL_MS),
       db.prepare("DELETE FROM participants WHERE expires_at IS NULL OR expires_at <= ?").run(now),
+      // A meeting nobody is left in, though LiveKit never said it ended: its webhook time goes too.
+      db
+        .prepare(
+          "UPDATE rooms SET webhook_at = NULL WHERE webhook_at IS NOT NULL AND slug NOT IN (SELECT room_slug FROM participants)",
+        )
+        .run(),
     ];
     let total = runs.reduce((n, r) => n + Number(r.changes), 0);
     const idle = "SELECT slug FROM rooms WHERE last_active_at IS NULL OR last_active_at <= ?";
@@ -65,7 +74,10 @@ export function sweep(db: Db, now = Date.now()): number {
     total += Number(db.prepare(`DELETE FROM rooms WHERE slug IN (${idle})`).run(now - ROOM_IDLE_MS).changes);
     return total;
   });
-  if (changes > 0) checkpoint(db);
+  if (changes > 0) {
+    checkpoint(db);
+    forgetNames(); // whoever went may have been in the names worked out for name checks
+  }
   // Rate-limit counts name meetings and people too: they go once their window is over.
   pruneExpiredWindows(now);
   return changes;

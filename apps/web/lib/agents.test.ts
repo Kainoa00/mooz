@@ -348,6 +348,23 @@ describe("who holds a name", () => {
     expect(participantNames(db, slug, Date.now() + TOKEN_TTL_MS + 1000)).toEqual([]);
   });
 
+  it("lets names go only when the webhook spoke of the meeting after the join or token, not at the same moment", () => {
+    vi.useFakeTimers({ now: 1_800_000_000_000, toFake: ["Date"] });
+    const { db, slug, host } = meeting();
+    const t = Date.now();
+    noteWebhook(db, t);
+    const claim = claimAgentCode(db, { code: createAgentCode(db, host).code, name: "Atlas" });
+    decideAgentRequest(db, { slug, requestId: claim.requestId, approve: true });
+    markTokenIssued(db, claim.requestId);
+    const livekitRoom = getRoom(db, slug)!.livekitRoom;
+    noteRoomWebhook(db, livekitRoom, t);
+    expect(participantNames(db, slug, t + TOKEN_TTL_MS + 1000).sort()).toEqual(["Kainoa", "Zach"]);
+    expect(activeAgentNames(db, slug, t + AGENT_TOKEN_TTL_MS + 62_000)).toEqual(["Atlas"]);
+    noteRoomWebhook(db, livekitRoom, t + 1);
+    expect(participantNames(db, slug, t + TOKEN_TTL_MS + 1000)).toEqual([]);
+    expect(activeAgentNames(db, slug, t + AGENT_TOKEN_TTL_MS + 62_000)).toEqual([]);
+  });
+
   it("holds names as without the webhook in a meeting it hasn't spoken of (it may have stopped)", () => {
     const { db, slug, host } = meeting();
     noteWebhook(db); // from another meeting, an hour ago

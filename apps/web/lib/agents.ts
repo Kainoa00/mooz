@@ -125,19 +125,36 @@ export function activeAgentNames(db: Db, slug: string, now = Date.now()): string
  * Without the webhook, everyone whose session is live counts.
  */
 export function participantNames(db: Db, slug: string, now = Date.now()): string[] {
-  // A session's expiry is SESSION_TTL_MS after its last /join, which minted its token. A join
-  // nobody reported coming in is let go once that token can't, if the webhook spoke of the
-  // meeting after it (so it would have reported them).
-  const rows = db
-    .prepare(
-      `SELECT name FROM participants
-       WHERE room_slug = ? AND (left_at IS NULL OR left_at > ?) AND expires_at > ?
-         AND (session_sid IS NOT NULL OR expires_at > ? OR ? <= expires_at - ?)`,
-    )
-    .all(slug, now - LEFT_GRACE_MS, now, now + SESSION_TTL_MS - TOKEN_TTL_MS, meetingHeardAt(db, slug, now), SESSION_TTL_MS) as {
+  const rows = db.prepare(`SELECT name FROM participants WHERE ${HOLDS_NAME}`).all(...holdsName(db, slug, now)) as {
     name: string;
   }[];
   return rows.map((r) => r.name);
+}
+
+// A session's expiry is SESSION_TTL_MS after its last /join, which minted its token. A join
+// nobody reported coming in is let go once that token can't, if the webhook spoke of the
+// meeting after it (so it would have reported them).
+const HOLDS_NAME = `room_slug = ? AND (left_at IS NULL OR left_at > ?) AND expires_at > ?
+  AND (session_sid IS NOT NULL OR expires_at > ? OR ? <= expires_at - ?)`;
+const holdsName = (db: Db, slug: string, now: number) =>
+  [slug, now - LEFT_GRACE_MS, now, now + SESSION_TTL_MS - TOKEN_TTL_MS, meetingHeardAt(db, slug, now), SESSION_TTL_MS] as const;
+
+/**
+ * People who may hold a name in a meeting at once. Every agent's name is checked against each,
+ * so a meeting stuffed with joins that never come in can't make that slow. Real meetings stay
+ * far below it (they have 200 places); past it nobody but the host joins (and the host only
+ * HOST_NAME_HOLDERS more), until someone coming into or leaving the call lets those joins go.
+ */
+export const MAX_NAME_HOLDERS = 2_000;
+export const HOST_NAME_HOLDERS = 500;
+
+export function assertRoomForName(db: Db, slug: string, isHost: boolean, now = Date.now()): void {
+  const { n } = db.prepare(`SELECT COUNT(*) AS n FROM participants WHERE ${HOLDS_NAME}`).get(...holdsName(db, slug, now)) as {
+    n: number;
+  };
+  if (n >= MAX_NAME_HOLDERS + (isHost ? HOST_NAME_HOLDERS : 0)) {
+    throw new HttpError(409, "room_full", "This meeting is full.");
+  }
 }
 
 export function transaction<T>(db: Db, fn: () => T): T {

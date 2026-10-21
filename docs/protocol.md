@@ -49,7 +49,9 @@ Request: `{"code": "ABCD-EFGH-JKLM", "name": "Atlas"}` with `content-type: appli
   join token has run out (an hour after they joined), or a bridge that collected its token but
   never came in once that has (5 minutes, and a minute's slack). A connector agent's approval holds its name for a day, as its owner's tab can
   still bring it in. A person coming back after 2 minutes can't keep a name that an agent
-  that came in meanwhile answers to. The detector's
+  that came in meanwhile answers to (one who comes back on the token they had is taken out of
+  the call). Likewise, a bridge back after more than 2 minutes (its laptop slept, say) whose
+  name someone took meanwhile is revoked and taken out; its owner needs a new code. The detector's
   own same-word test decides, so `Atlis` is refused next to `Atlas`, and `Lee's Grok` next
   to `Zach's Grok`. People's names are compared both as they sound and as they look in plain
   Latin letters: `Атлас`, `Ａｔｌａｓ` and `Atłas` count as `Atlas`, and so do `Сora`
@@ -57,8 +59,10 @@ Request: `{"code": "ABCD-EFGH-JKLM", "name": "Atlas"}` with `content-type: appli
   `Atlas`, either way round. A capital I and an l count as each other only where they pass
   for each other: an I after a small letter, and an l that starts a word or follows a capital
   with no small letter after it (`lris` is `Iris` and `ARlA` is `ARIA`, but `Joel` isn't
-  `Joe`, `Ira` isn't `Lyra` and `Clara` isn't `Kiara`). An l read as I matches by spelling only,
-  so `lily` isn't `Ilya`. Anything drawn like an apostrophe (`’`, `ʻ`, `´`) counts as `'`. The
+  `Joe`, `Ira` isn't `Lyra` and `Clara` isn't `Kiara`). An l read as I matches by spelling only
+  where it's said as an l (before a vowel: `lily` isn't `Ilya`), and by sound where it can only
+  be said as the I it looks like (`lsabel` is `Isabel`). `ə` sounds like a (`Əli` is `Ali`).
+  Marks drawn like an apostrophe (`’`, `ʻ`, `´`, `ˊ` and the like) count as `'`. The
   lookalikes are a list of the common ones, not Unicode's whole confusables table; in a word
   otherwise spelled like the wake word, a Latin letter the list doesn't know stands in for the
   one it replaces, if fewer than half the letters are such (`Ꜳtlas`). A person's name can't
@@ -118,7 +122,7 @@ across the server.
 | Route | Limit |
 |---|---|
 | `POST /api/rooms` | 30 new meetings across the server (`MOOZ_ROOMS_PER_MINUTE`) |
-| `POST /api/rooms/{slug}/join` | 30 joins per meeting, counted apart for the host and for each person coming back. A meeting keeps a place for at most 200 people (a rejoin reuses its place; where the webhook arrives, a join that never came into the call stops holding one after 5 minutes) and, as a backstop, 50,000 sessions in all (more than the join limit can make in a day); past either it answers `409 room_full`. The host always gets a place (while their host session lasts: a day after their last join), and may add 500 sessions past the 50,000 |
+| `POST /api/rooms/{slug}/join` | 30 joins per meeting, counted apart for the host and for each person coming back. A meeting keeps a place for at most 200 people (a rejoin reuses its place; where the webhook arrives, a join that never came into the call stops holding one after 5 minutes) and, as a backstop, 50,000 sessions in all (more than the join limit can make in a day). At most 2,000 sessions may hold a name at once (every agent's name is checked against each): joins that never came in stop counting once the webhook has spoken of the meeting after them and their token has run out. Past any of these it answers `409 room_full`. The host always gets a place (while their host session lasts: a day after their last join), and may go 500 past the name and session limits |
 | `POST /api/rooms/{slug}/agent-codes` | 10 codes an hour per person, and 50 per meeting for people who aren't the host and haven't come into the call |
 | `POST /api/agent/claim` | None: a made-up, used or expired code is refused at once (`400`), and a real one may try 5 names |
 | `GET /api/agent/claim/{id}` | 60 checks per claim, counted only with the right secret. A bridge that gets a 429 waits and polls again |
@@ -315,7 +319,8 @@ remove it.
 
 ## 3. Leaving
 
-The agent leaves when its process exits, or when the host removes it. On removal, the
+The agent leaves when its process exits, when the host or its owner removes it, or when it
+comes back after more than 2 minutes to find its name taken (section 1). On removal, the
 server disconnects it and revokes its claim. A LiveKit webhook kicks the identity again
 if it reconnects with a token it already holds, and so for an agent from a meeting that has
 ended.
@@ -327,7 +332,8 @@ ended.
 | People: name, identity, notes opt-out, a hash of their secret | The meeting ends, or 24 hours after their last join |
 | Agent codes | The meeting ends, or 10 minutes after they're made |
 | Agent requests: the agent's name, whose it is, its status | The meeting ends, or its owner's session does, or 24 hours after the request unless the agent is approved and still in the meeting |
-| The room: its link, a hash of the host secret, the notes policy | 30 days after its last join (it's a setting) |
+| The room: its link, a hash of the host secret, the notes policy, when it was last joined, and when LiveKit's webhook last spoke of its meeting (a time, nothing about anyone) | 30 days after its last join (it's a setting); the webhook time goes when the meeting ends, or at the sweep once nobody is left in it |
+| Names worked out for name checks (people's and agents' names, as read) | Memory only: gone when a meeting ends, at a sweep that removes anyone, or a restart |
 | Connectors: name, app, a hash of the link | Deleted by their owner, or expired as in [section 5](#the-connector-link) |
 | Questions, the floor | Memory only: gone when the meeting ends or the server restarts |
 | Rate-limit counters (a meeting's link or a random identity, a count and when it started) | Memory only: gone at the first sweep after their window (a minute or an hour), or a restart |

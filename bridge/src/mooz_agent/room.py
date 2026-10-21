@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -29,13 +28,12 @@ SAMPLE_RATE = 48_000
 NUM_CHANNELS = 1
 # Leave this long after the last person does, so the agent doesn't keep an empty room open.
 ALONE_GRACE_SECONDS = 60.0
-# Half of a character pair, on its own: a model can write one, and it can't be sent as UTF-8.
-_LONE_SURROGATE = re.compile("[\ud800-\udfff]")
 
 
 def _wire(text: str) -> str:
-    """Text LiveKit can send: a stray half character becomes \ufffd instead of failing the send."""
-    return _LONE_SURROGATE.sub("\ufffd", text)
+    """Text LiveKit can send as UTF-8. A model can write half a character pair: two halves side
+    by side become the character, and a stray one becomes \ufffd instead of failing the send."""
+    return text.encode("utf-16-le", "surrogatepass").decode("utf-16-le", "replace")
 
 
 @dataclass(frozen=True)
