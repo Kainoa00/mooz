@@ -91,6 +91,10 @@ const LOOKS: Record<string, string> = {
   ꓫ: "x", ꓬ: "y", ꓜ: "z",
 };
 
+// What LOOKS reads as l is drawn as one (a bar, crossed, hooked or curled, or the digit 1), so
+// it passes for a capital I where an l does. These don't: they're drawn as an L.
+const DRAWN_AS_CAPITAL_L = new Set(["ʟ", "Ꮮ", "ꓡ"]);
+
 // Marks drawn like an apostrophe: the curly ones phones type, the ʻokina, primes, accents.
 const APOSTROPHES =
   /[\u2018\u2019\u201b\u02b9\u02bb\u02bc\u02bd\u02be\u02bf\u02c8\u02ca\u02cb\ua78b\ua78c`\u00b4\u1ffd\u0384\u1fbd\u1fbf\u1ffe\u055a\u05f3\u2032\u2035]/gu;
@@ -139,13 +143,16 @@ export function foldNameByLook(name: string): string {
  * starts a word (Ira, Ilham) and an l among small letters (Joel, Clara) are just themselves.
  * An l read as I is said as an I only where it can't be said as an l: before a consonant
  * ("lsabel" is said Isabel) or among capitals, not before a vowel ("lily" is said lily).
+ * Accents (NFC or NFD) and compatibility forms don't change any of this, and letters drawn as an
+ * l count as one: "ĺsabel", "ℓsabel", "ǀsabel" and "1sabel" read as "lsabel" does, "AtÍas" as "AtIas".
  */
 function readings(name: string): string[] {
-  const iAsL = name.replace(/(?<=\p{Ll})I|(?<=\p{L})I(?=\p{Ll})/gu, "l");
-  const lAsI = name.replace(/(?<![\p{L}\p{N}])l|(?<=\p{Lu})l(?!\p{Ll})/gu, "I");
-  // The letter after the l as it sounds: léon, like leon, has an l before a vowel, and so do
-  // ləman, løna and lærke.
-  const lSaidAsI = name.replace(/(?<![\p{L}\p{N}])l(?=(\P{M}?\p{M}*))|(?<=\p{Lu})l(?!\p{Ll})/gu, (l, next?: string) =>
+  const seen = [...bare(name)].map((c) => (LOOKS[c] === "l" && !DRAWN_AS_CAPITAL_L.has(c) ? "l" : c)).join("");
+  const iAsL = seen.replace(/(?<=\p{Ll})I|(?<=\p{L})I(?=\p{Ll})/gu, "l");
+  const lAsI = seen.replace(/(?<![\p{L}\p{N}])l|(?<=\p{Lu})l(?!\p{Ll})/gu, "I");
+  // The letter after the l as it sounds: leon has an l before a vowel, and so do ləman, løna
+  // and lærke (léon too, its accent gone).
+  const lSaidAsI = seen.replace(/(?<![\p{L}\p{N}])l(?=(.?))|(?<=\p{Lu})l(?!\p{Ll})/gu, (l, next?: string) =>
     next !== undefined && /^[aeiouy]/i.test(foldName(next)) ? l : "I",
   );
   return [
@@ -212,18 +219,31 @@ function distinct(words: { text: string; bySpelling: boolean }[]): Word[] {
   return out;
 }
 
+/**
+ * Words, and the parts of one joined by an apostrophe where each has 3 letters or digits or more:
+ * speech-to-text may write "Atlas'Zach" as two words (O'Brien and D'Angelo stay whole). Not for
+ * wake words, which stay the detector's own tokens.
+ */
+const withParts = (words: string[]) =>
+  words.flatMap((word) => {
+    const parts = word.split(/'+/);
+    return parts.length > 1 && parts.every((p) => [...p].length >= 3) ? [word, ...parts] : [word];
+  });
+
 function viewOf(name: string): NameView {
   const all = readingsOf(name);
   return {
     readings: all.map((r) => r.folded),
-    words: distinct(all.flatMap((r) => nameWords(r.folded).map((text) => ({ text, bySpelling: r.bySpelling })))),
+    words: distinct(
+      all.flatMap((r) => withParts(nameWords(r.folded)).map((text) => ({ text, bySpelling: r.bySpelling }))),
+    ),
     wakes: distinct(
       all.flatMap((r) => {
         const text = wakeWord(r.folded);
         return text === undefined ? [] : [{ text, bySpelling: r.bySpelling }];
       }),
     ),
-    unknown: [...new Set(all.filter((r) => r.byLook).flatMap((r) => unknownWords(r.folded)))],
+    unknown: [...new Set(all.filter((r) => r.byLook).flatMap((r) => withParts(unknownWords(r.folded))))],
   };
 }
 

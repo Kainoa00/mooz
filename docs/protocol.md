@@ -66,8 +66,16 @@ Request: `{"code": "ABCD-EFGH-JKLM", "name": "Atlas"}` with `content-type: appli
   with no small letter after it (`lris` is `Iris` and `ARlA` is `ARIA`, but `Joel` isn't
   `Joe`, `Ira` isn't `Lyra` and `Clara` isn't `Kiara`). An l read as I matches by spelling only
   where it's said as an l (before a vowel, accented or not: `lily` and `léon` aren't `Ilya` and `Ion`), and by sound where it can only
-  be said as the I it looks like (`lsabel` is `Isabel`). `ə` sounds like a (`Əli` is `Ali`).
-  The common marks drawn like an apostrophe (`’`, `ʻ`, `´`, `ˊ`, `᾽`) count as `'`. The
+  be said as the I it looks like (`lsabel` is `Isabel`). Accents (written either way, NFC or
+  NFD) and compatibility forms don't change this, and the letters drawn as an l count as one,
+  as does the digit 1 (`ĺsabel`, `ℓsabel`, `ǀsabel`, `ɭsabel`, `łsabel` and `1sabel` are
+  `Isabel` too, and `AtÍas` is `Atlas`), but not `ʟ`, which is drawn as an L. `ə` sounds like
+  a (`Əli` is `Ali`). The common marks drawn like an apostrophe (`’`, `ʻ`, `´`, `ˊ`, `᾽`) count
+  as `'`. Words joined by one count apart too, where each part has at least 3 letters or
+  digits, as speech-to-text may write them apart: `Atlas'Zach` holds `Atlas` (so `Sha'Kira` is
+  refused next to `Kira`), while `O'Brien`, `D'Angelo` and `Hawaiʻi` stay whole. An agent's
+  wake word stays whole, as the detector hears it: an agent called `Atlas'Zach` can be in a
+  meeting with a person called `Atlas`. The
   lookalikes are a list of the common ones, not Unicode's whole confusables table; in a word
   otherwise spelled like the wake word, a Latin letter the list doesn't know stands in for the
   one it replaces, if fewer than half the letters are such (`Ꜳtlas`). A person's name can't

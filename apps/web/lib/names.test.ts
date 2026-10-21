@@ -85,6 +85,7 @@ describe("parseAgentName", () => {
   it.each([
     ["Grok Prime", "Grok"], // saying "Grok Prime" would wake Grok too
     ["Nova Atlas", "Zach's Atlas"],
+    ["Nova'Grok", "Grok"], // said, it may be written "Nova Grok"
   ])("rejects %j next to the agent %j, whose wake word it holds", (name, agent) => {
     expect(() => parseAgentName(name, [], [agent])).toThrowError(expect.objectContaining({ status: 409, code: "name_taken" }));
   });
@@ -222,6 +223,25 @@ describe("names that look like an agent's", () => {
     ["At՚las", "Atlas"],
     ["At׳las", "Atlas"],
     ["lśabel", "Isabelle"], // an accented consonant is still one
+    ["ĺsabel", "Isabelle"], // and an accented l is an l (in NFC, as in NFD)
+    ["ļsabel", "Isabelle"],
+    ["ľsabel", "Isabelle"],
+    ["ḷsabel", "Isabelle"],
+    ["ℓsabel", "Isabelle"],
+    ["ǀsabel", "Isabelle"], // as are the letters drawn as one
+    ["ɭsabel", "Isabelle"],
+    ["ƚsabel", "Isabelle"],
+    ["ɫsabel", "Isabelle"],
+    ["ȴsabel", "Isabelle"],
+    ["łsabel", "Isabelle"],
+    ["1sabel", "Isabelle"], // and the digit, which reads as l already (At1as)
+    ["AtÍas", "Atlas"], // an accented capital I, as AtIas
+    ["Atlas'Zach", "Atlas"], // words joined by an apostrophe, which may be written apart when said
+    ["Atlas’Zach", "Atlas"],
+    ["Atlas᾽Zach", "Atlas"],
+    ["Zach'Atlas", "Atlas"],
+    ["Ꜳtlas'Zach", "Atlas"],
+    ["Sha'Kira", "Kira"], // the cost: a name made of two names counts as each
   ])("refuses %j while %j is here, and the agent while they are", (name, agent) => {
     expect(() => parseDisplayName(name, [agent])).toThrowError(expect.objectContaining({ status: 409, code: "name_taken" }));
     expect(() => parseAgentName(agent, [name])).toThrowError(expect.objectContaining({ status: 409, code: "name_taken" }));
@@ -270,6 +290,13 @@ describe("names that look like an agent's", () => {
     ["Sevinc Həsənova", "Nova"], // ə doesn't split a word in two
     ["Cəlil", "Leila"],
     ["O’Brien", "Brien"], // ’ is an apostrophe, as ' is
+    ["łily", "Ilya"], // a letter drawn as an l is an l where an l would be
+    ["ĺena", "Iona"],
+    ["Joeł", "Joe"],
+    ["ʟsabel", "Isabelle"], // ʟ is drawn as an L, not a bar
+    ["D'Angelo", "Angelo"], // a part of 1 or 2 letters keeps a word whole
+    ["De'Andre", "Andre"],
+    ["Atlas", "Atlas'Zach"], // and an agent's wake word is whole, as the detector hears it
   ])("keeps %j next to an agent called %j, either way round", (name, agent) => {
     expect(parseDisplayName(name, [agent])).toBe(name);
     expect(parseAgentName(agent, [name])).toBe(agent);
