@@ -455,11 +455,11 @@ sent whenever a task changes:
   delete notes. Likewise a quick answer changes memory only when the owner's own request asks
   for it, and makes a note public only when the request says so.
 - When a task is done, post the result to chat (a private one only to the owner, with
-  `destination_identities`) and save it to the owner's private memory. Speak a public result
+  `destination_identities` and `private` = `"1"`) and save it to the owner's private memory. Speak a public result
   only at a pause in the conversation (no one is speaking, and no one has just finished), never
   a private one.
 - When the owner asks for privacy ("privately", "just for me", "DM me"), answer only to them,
-  as a chat message with `destination_identities`, never spoken and kept out of the transcript
+  as a chat message with `destination_identities` and `private` = `"1"`, never spoken and kept out of the transcript
   and notes. This covers quick answers, status answers and tasks, including a question that
   overflows into a task.
 

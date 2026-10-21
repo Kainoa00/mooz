@@ -441,7 +441,7 @@ Anything outward-facing beyond pushing `main` is marked **[needs your go-ahead]*
     - the untested caddy-l4 TURN-over-TLS appendix
 - **Validate**:
   - Vitest for `config-check` and `/api/ready`.
-  - `docker compose -f deploy/compose.yaml --env-file deploy/.env.example config` passes.
+  - `docker compose -f deploy/compose.yaml --env-file deploy/.env.example config` passes with a generated `LIVEKIT_API_SECRET`, and fails without one (`.env.example` has none since the M6 review gate).
   - The CI `image` job passes.
   - pytest for the http refusal.
   - The real VPS run is a live check in Task 11.

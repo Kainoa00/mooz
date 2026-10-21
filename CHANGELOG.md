@@ -35,7 +35,7 @@ The first release: video meetings where everyone can bring their own AI agent.
   after 3 for anyone to **Continue**, and names that can't be confused (by sound or by look).
 - **The host's summary.** A Markdown file of what agents said in public, who was there and
   when the agents paused, built in the host's tab. Never anyone's own words or private
-  answers.
+  answers (from agents that mark them, as mooz's do).
 - **Running it for others.** A production kit (`deploy/`: Caddy for HTTPS, LiveKit without
   dev mode, the web image from GHCR), a [VPS guide](docs/deploy-vps.md), `/api/ready`, and a
   server that refuses to start with weak or missing settings.
@@ -70,7 +70,8 @@ The first release: video meetings where everyone can bring their own AI agent.
   instance, and a restart drops answers waiting for a turn.
 - Server-wide ceilings (new meetings and new connectors a minute, the number of connectors) can
   be used up by one client, since mooz keeps no IP addresses: on a public server, add per-IP
-  limits in the proxy (see the server guide). Over IPv6 those only raise the cost.
+  limits in the proxy (see the server guide), per /64 for IPv6; a client with many addresses
+  still gets past them.
 - Local voice in the browser works in Chrome, Edge and Firefox; Safari and iPhone or iPad
   browsers block it. On a CPU, local speech is much slower than on a GPU or Apple Silicon.
 - The memory file lock uses `fcntl`: on Windows, avoid the CLI's memory commands while the
@@ -88,7 +89,8 @@ For anyone who ran mooz from `main` before this release:
   (so some end at once: join again), and meetings that ended are forgotten at the next sweep.
 - The bridge no longer reads `bridge/.env`: move your keys to `~/.mooz/.env`
   (`mkdir -p ~/.mooz && mv -n bridge/.env ~/.mooz/.env && chmod 600 ~/.mooz/.env`). If
-  `~/.mooz/.env` already exists, `mv -n` leaves both: copy the lines you need across by hand.
+  `~/.mooz/.env` already exists, `mv -n` moves nothing: copy the keys you need across by hand
+  (not empty `KEY=` lines, which would hide a real value), then delete `bridge/.env`.
 - Bridges from before M5 don't take turns, and ones from before M6 stop if the server says
   they're polling too fast: update (`uv tool upgrade mooz-agent`, or `git pull && uv sync`).
 - A connector made with a name the M5 rules refuse can't join: delete it and make one with

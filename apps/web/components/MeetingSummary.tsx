@@ -122,7 +122,7 @@ export function LeftMeeting({
       <h1 className="text-xl font-semibold">You left the meeting</h1>
       <p className="text-sm text-muted">
         This tab kept a summary: what the agents said in public, who was there, and when the agents paused. Nobody&apos;s
-        own words, no private answers, and nothing to do with anyone who asked to be left out. It&apos;s only here, and
+        own words, no private answers (from agents that mark them), and nothing to do with anyone who asked to be left out. It&apos;s only here, and
         goes when you discard it or close this tab.
       </p>
       <div className="flex flex-wrap gap-2">

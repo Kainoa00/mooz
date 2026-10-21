@@ -148,20 +148,22 @@ waiting for a turn are dropped, and the chat still has them).
 mooz's own limits are per person, meeting and claim, with ceilings across the server (new
 meetings and new connectors a minute, and the number of connectors); it keeps no IP addresses.
 So one client that joins over and over can use up a ceiling for everyone. On a server open to
-the internet, add per-IP limits in Caddy, below those ceilings. This isn't part of the tested
-setup yet, so check the `caddy-ratelimit` module's documentation for the current syntax.
+the internet, add per-IP limits in Caddy, below those ceilings, with the `caddy-ratelimit`
+module. This isn't part of the tested setup yet, so check the module's documentation for the
+current syntax.
 
-1. Build Caddy with the module. Save this as `deploy/Caddy.Dockerfile`:
+1. Build Caddy with the module. Save this as `deploy/Caddy.Dockerfile` (it pins a commit: the
+   module's only release, v0.1.0, can't group IPv6 addresses):
 
    ```dockerfile
    FROM caddy:2.11.7-builder AS builder
-   RUN xcaddy build --with github.com/mholt/caddy-ratelimit
+   RUN xcaddy build --with github.com/mholt/caddy-ratelimit@5625512f24f6f59d6f64fb3aafe5eecff0b286db
    FROM caddy:2.11.7
    COPY --from=builder /usr/bin/caddy /usr/bin/caddy
    ```
 
 2. In `deploy/compose.yaml`, have the `caddy` service build it instead of using the stock image
-   (which refuses the `rate_limit` settings). Replace `image: caddy:2.11.7` with:
+   (which refuses `rate_limit`). Replace `image: caddy:2.11.7` with:
 
    ```yaml
        build:
@@ -169,29 +171,22 @@ setup yet, so check the `caddy-ratelimit` module's documentation for the current
          dockerfile: Caddy.Dockerfile
    ```
 
-3. Replace `deploy/Caddyfile` with this. Caddy allows only one global block (the `{ … }` at the
-   top), so the `order` line goes in with the log filter; the LiveKit site is unchanged.
+3. In `deploy/Caddyfile`, add a `rate_limit` block at the top of the `{$MOOZ_DOMAIN}` site, so it
+   reads as below. Leave the global block at the top of the file (the log filter) and the
+   `{$LIVEKIT_DOMAIN}` site as they are. No `order` line is needed: the module runs before
+   `reverse_proxy` on its own.
 
    ```caddyfile
-   {
-   	order rate_limit before reverse_proxy
-   	log default {
-   		format filter {
-   			wrap json
-   			request>uri regexp "(^/mcp/|access_token=)[^&/?]+" "${1}REDACTED"
-   		}
-   	}
-   }
-
    {$MOOZ_DOMAIN} {
    	rate_limit {
-   		# Below the server-wide ceilings, so one address can't use them up.
+   		# Below the server-wide ceilings, so one address (one /64 over IPv6) can't use them up.
    		zone new_things {
    			match {
    				method POST
    				path /api/rooms /api/connectors
    			}
    			key {remote_host}
+   			ipv6_prefix 64
    			events 5
    			window 1m
    		}
@@ -201,11 +196,13 @@ setup yet, so check the `caddy-ratelimit` module's documentation for the current
    				path /api/rooms/*/join
    			}
    			key {remote_host}
+   			ipv6_prefix 64
    			events 20
    			window 1m
    		}
    		zone everything {
    			key {remote_host}
+   			ipv6_prefix 64
    			events 300
    			window 1m
    		}
@@ -213,23 +210,22 @@ setup yet, so check the `caddy-ratelimit` module's documentation for the current
    	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
    	reverse_proxy 127.0.0.1:3000
    }
-
-   {$LIVEKIT_DOMAIN} {
-   	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
-   	reverse_proxy 127.0.0.1:7880 {
-   		# Keep meetings' WebSockets open across a Caddy reload.
-   		stream_close_delay 5m
-   	}
-   }
    ```
 
-4. Check it, then start it: `docker compose run --rm caddy caddy validate --config
-   /etc/caddy/Caddyfile`, then `docker compose up -d --build caddy`.
+4. In `deploy`, build it and check the file, then start it:
 
-People behind one address (an office, a school) share these, so raise them if they get in each
-other's way. Over IPv6 they're weaker: one client usually has a whole /64 of addresses, so a
-limit per address only raises the cost. For more, serve the app's name over IPv4 only (no AAAA
-record for `MOOZ_DOMAIN`), or key the zones by address prefix if the module supports it.
+   ```bash
+   docker compose build caddy
+   docker compose run --rm --no-deps caddy caddy validate --config /etc/caddy/Caddyfile
+   docker compose up -d caddy
+   ```
+
+   These are edits to files in the repository: at an upgrade, if `git pull` refuses because
+   they changed upstream too, run `git stash`, pull, then `git stash pop`.
+
+People behind one address or one IPv6 /64 (an office, a school, a home) share these, so raise
+them if they get in each other's way. A client with many addresses (several /64s, or a botnet)
+still gets past them: they raise the cost of using up a ceiling, they don't remove it.
 
 ## Appendix: TURN over TLS on 443 (untested)
 

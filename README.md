@@ -362,7 +362,7 @@ Bridge agents from before M5 still join, but they don't take turns: update the b
 **The host's summary.** The host can **Download summary** (a Markdown file) at any time, and
 again after leaving, until they discard it. It has what the agents said in public, their public
 research, who was there, which agents kept notes and when the agents paused. It never has
-anyone's own words, private answers, or anything to do with someone who chose **Leave me out**
+anyone's own words, private answers (from agents that mark them, as mooz's do), or anything to do with someone who chose **Leave me out**
 (or anyone the host's tab didn't see, since it can't know whether they did). It's built in the
 host's tab and never goes to the server; a reload loses it. Want a real
 summary? Ask an agent to sum up the meeting before you leave.
@@ -428,8 +428,8 @@ Releases: [docs/releasing.md](docs/releasing.md). The project's planning documen
   and a restart drops answers waiting for a turn.
 - **Server-wide ceilings** (new meetings and new connectors a minute, the number of connectors)
   can be used up by one client, since mooz keeps no IP addresses. On a public server, add
-  per-IP limits in the proxy ([how](docs/deploy-vps.md#limits-by-ip-address)); over IPv6 they
-  only raise the cost, as one client usually has a whole /64 of addresses.
+  per-IP limits in the proxy ([how](docs/deploy-vps.md#limits-by-ip-address), per /64 for IPv6):
+  they raise the cost for a client with many addresses, they don't stop it.
 - **Local voice in the browser** works in Chrome, Edge and Firefox, not Safari or on iPhone and
   iPad, and is slow without a GPU or Apple Silicon.
 - **Windows:** avoid the CLI's memory commands while the agent is in a meeting (the memory lock

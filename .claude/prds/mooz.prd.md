@@ -108,7 +108,7 @@ We'll know we're right when **people who complete setup use an agent in at least
 - Turn-taking, rate limits and connector questions live in one web server's memory: run one instance; a restart drops answers waiting for a turn.
 - Local voice in the browser needs Chrome, Edge or Firefox; Safari and iOS block it. Speech servers on a CPU are much slower than on a GPU or Apple Silicon, and VoiceStudio's time to first audio isn't measured yet.
 - The bridge logs heard→voice latency (p50 and p95 at leave), not yet speech end→transcript.
-- Rate limits are per person, meeting and claim with server-wide ceilings; with no IP addresses kept, someone can use up a ceiling (like rooms a minute) for everyone. On a public server, add per-IP limits in the proxy (docs/deploy-vps.md#limits-by-ip-address); over IPv6 they only raise the cost.
+- Rate limits are per person, meeting and claim with server-wide ceilings; with no IP addresses kept, someone can use up a ceiling (like rooms a minute) for everyone. On a public server, add per-IP limits in the proxy (docs/deploy-vps.md#limits-by-ip-address), per /64 for IPv6; they raise the cost for a client with many addresses rather than stop it.
 - Live checks with real keys (ElevenLabs latency, VoiceStudio in the bridge and tab, two real agents, the connector apps, a timed VPS install) are listed in the M6 plan and reported in the release notes.
 
 ## Risks

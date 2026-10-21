@@ -154,7 +154,7 @@ export function toMarkdown(record: MeetingRecord, options: { now?: number; timeZ
   tail.push(
     "---",
     "",
-    "_Agents' public words only. People's own words, private answers, and anything to do with someone who asked to be left out of notes are not here._",
+    "_Agents' public words only. People's own words, private answers (from agents that mark them), and anything to do with someone who asked to be left out of notes are not here._",
     "",
   );
 
