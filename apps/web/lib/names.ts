@@ -25,7 +25,9 @@ export function parseDisplayName(value: unknown, agentNames: readonly string[] =
   if (DECEPTIVE.test(name) || hasHidden(name)) {
     throw new HttpError(400, "invalid_name", "Names cannot contain 🤖 or invisible characters");
   }
-  if (agentNames.some((a) => heardAs(name, a))) {
+  // Worked out here, not kept: only names the server has accepted go in the cache.
+  const own = viewOf(name);
+  if (agentNames.some((a) => heard(own, view(a)))) {
     throw new HttpError(
       409,
       "name_taken",
@@ -90,7 +92,8 @@ const LOOKS: Record<string, string> = {
 };
 
 // Marks drawn like an apostrophe: the curly ones phones type, the ʻokina, primes, accents.
-const APOSTROPHES = /[\u2018\u2019\u201b\u02b9\u02bb\u02bc\u02bd\u02be\u02bf\u02c8\u02ca\u02cb\ua78b\ua78c`\u00b4\u1ffd\u0384\u2032\u2035]/gu;
+const APOSTROPHES =
+  /[\u2018\u2019\u201b\u02b9\u02bb\u02bc\u02bd\u02be\u02bf\u02c8\u02ca\u02cb\ua78b\ua78c`\u00b4\u1ffd\u0384\u1fbd\u1fbf\u1ffe\u055a\u05f3\u2032\u2035]/gu;
 
 /**
  * Compatibility forms (fullwidth, circled…) and accents gone, joiners dropped, and anything drawn
@@ -140,7 +143,10 @@ export function foldNameByLook(name: string): string {
 function readings(name: string): string[] {
   const iAsL = name.replace(/(?<=\p{Ll})I|(?<=\p{L})I(?=\p{Ll})/gu, "l");
   const lAsI = name.replace(/(?<![\p{L}\p{N}])l|(?<=\p{Lu})l(?!\p{Ll})/gu, "I");
-  const lSaidAsI = name.replace(/(?<![\p{L}\p{N}])l(?![aeiouyAEIOUY])|(?<=\p{Lu})l(?!\p{Ll})/gu, "I");
+  // The letter after the l with its accents off: léon, like leon, has an l before a vowel.
+  const lSaidAsI = name.replace(/(?<![\p{L}\p{N}])l(?=(\P{M}?\p{M}*))|(?<=\p{Lu})l(?!\p{Ll})/gu, (l, next?: string) =>
+    next !== undefined && /^[aeiouy]/i.test(bare(next)) ? l : "I",
+  );
   return [
     foldName(name),
     foldNameByLook(name),
@@ -220,10 +226,14 @@ function viewOf(name: string): NameView {
   };
 }
 
-// A name check compares one name with everyone's in the meeting: each name is worked out once,
-// and kept in memory only until a meeting ends or the next sweep (forgetNames).
+// A name check compares one name with everyone's in the meeting: each name the server has
+// accepted is worked out once, and kept in memory only until a meeting ends or a sweep removes
+// anything (forgetNames). The name being checked isn't kept, so refused names never are.
 const VIEWS = new Map<string, NameView>();
-const MAX_VIEWS = 50_000;
+const MAX_VIEWS = 10_000;
+
+/** How many names are in memory (for tests: they must go when the meeting does). */
+export const namesInMemoryForTests = (): number => VIEWS.size;
 
 /** Forget the names worked out so far (they're people's names: they don't outlast a meeting). */
 export function forgetNames(): void {
@@ -296,13 +306,11 @@ const unknownWords = (folded: string) =>
     .map((w) => w.replace(/'s$/, "").replace(/^'+|'+$/g, ""));
 
 /**
- * Whether saying any word of `name` would be heard as `agent`'s wake word, either read any way
+ * Whether saying any word of a name would be heard as an agent's wake word, either read any way
  * (an agent called "AtIas" is read as Atlas too).
  */
-function heardAs(name: string, agent: string): boolean {
-  const { wakes } = view(agent);
+function heard({ words, unknown }: NameView, { wakes }: NameView): boolean {
   if (wakes.length === 0) return false;
-  const { words, unknown } = view(name);
   return (
     words.some((w) => wakes.some((wake) => alike(w, wake))) ||
     unknown.some((w) => wakes.some((wake) => readsAs(w, wake.text)))
@@ -345,12 +353,13 @@ export function parseAgentName(value: unknown, people: readonly string[], agents
   if (wake.replace(/[^a-z]/g, "").length < 3) {
     throw new HttpError(400, "invalid_agent_name", "An agent's name needs a last word with at least 3 letters");
   }
-  const read = new Set(view(name).readings);
+  const own = viewOf(name);
+  const read = new Set(own.readings);
   if (takenNames.some((taken) => view(taken.trim()).readings.some((r) => read.has(r)))) {
     throw new HttpError(409, "name_taken", `Someone in this meeting is already called "${name}"`);
   }
   // Which name it clashes with isn't said: the asker may not be able to see everyone who counts.
-  if (takenNames.some((taken) => heardAs(taken, name)) || agents.some((agent) => heardAs(name, agent))) {
+  if (takenNames.some((taken) => heard(view(taken.trim()), own)) || agents.some((agent) => heard(own, view(agent)))) {
     throw new HttpError(
       409,
       "name_taken",

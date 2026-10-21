@@ -60,9 +60,9 @@ Request: `{"code": "ABCD-EFGH-JKLM", "name": "Atlas"}` with `content-type: appli
   for each other: an I after a small letter, and an l that starts a word or follows a capital
   with no small letter after it (`lris` is `Iris` and `ARlA` is `ARIA`, but `Joel` isn't
   `Joe`, `Ira` isn't `Lyra` and `Clara` isn't `Kiara`). An l read as I matches by spelling only
-  where it's said as an l (before a vowel: `lily` isn't `Ilya`), and by sound where it can only
+  where it's said as an l (before a vowel, accented or not: `lily` and `léon` aren't `Ilya` and `Ion`), and by sound where it can only
   be said as the I it looks like (`lsabel` is `Isabel`). `ə` sounds like a (`Əli` is `Ali`).
-  Marks drawn like an apostrophe (`’`, `ʻ`, `´`, `ˊ` and the like) count as `'`. The
+  The common marks drawn like an apostrophe (`’`, `ʻ`, `´`, `ˊ`, `᾽`) count as `'`. The
   lookalikes are a list of the common ones, not Unicode's whole confusables table; in a word
   otherwise spelled like the wake word, a Latin letter the list doesn't know stands in for the
   one it replaces, if fewer than half the letters are such (`Ꜳtlas`). A person's name can't
@@ -122,7 +122,7 @@ across the server.
 | Route | Limit |
 |---|---|
 | `POST /api/rooms` | 30 new meetings across the server (`MOOZ_ROOMS_PER_MINUTE`) |
-| `POST /api/rooms/{slug}/join` | 30 joins per meeting, counted apart for the host and for each person coming back. A meeting keeps a place for at most 200 people (a rejoin reuses its place; where the webhook arrives, a join that never came into the call stops holding one after 5 minutes) and, as a backstop, 50,000 sessions in all (more than the join limit can make in a day). At most 2,000 sessions may hold a name at once (every agent's name is checked against each): joins that never came in stop counting once the webhook has spoken of the meeting after them and their token has run out. Past any of these it answers `409 room_full`. The host always gets a place (while their host session lasts: a day after their last join), and may go 500 past the name and session limits |
+| `POST /api/rooms/{slug}/join` | 30 joins per meeting, counted apart for the host and for each person coming back (one who never came into the call counts with new joins, where the webhook would have said). A meeting keeps a place for at most 200 people (a rejoin reuses its place; where the webhook arrives, a join that never came into the call stops holding one after 5 minutes) and, as a backstop, 50,000 sessions in all (more than the join limit can make in a day). Past either it answers `409 room_full`. The host always gets a place (while their host session lasts: a day after their last join), and may add 500 sessions past the 50,000. Name checks count everyone who came into the call and the 2,000 most recent joins nobody saw come in (every agent's name is checked against each); one of the rest who comes in later, under a name an agent now answers to, is taken out |
 | `POST /api/rooms/{slug}/agent-codes` | 10 codes an hour per person, and 50 per meeting for people who aren't the host and haven't come into the call |
 | `POST /api/agent/claim` | None: a made-up, used or expired code is refused at once (`400`), and a real one may try 5 names |
 | `GET /api/agent/claim/{id}` | 60 checks per claim, counted only with the right secret. A bridge that gets a 429 waits and polls again |
@@ -333,7 +333,7 @@ ended.
 | Agent codes | The meeting ends, or 10 minutes after they're made |
 | Agent requests: the agent's name, whose it is, its status | The meeting ends, or its owner's session does, or 24 hours after the request unless the agent is approved and still in the meeting |
 | The room: its link, a hash of the host secret, the notes policy, when it was last joined, and when LiveKit's webhook last spoke of its meeting (a time, nothing about anyone) | 30 days after its last join (it's a setting); the webhook time goes when the meeting ends, or at the sweep once nobody is left in it |
-| Names worked out for name checks (people's and agents' names, as read) | Memory only: gone when a meeting ends, at a sweep that removes anyone, or a restart |
+| Names worked out for name checks (names the server accepted, as read) | Memory only: gone when a meeting ends, at a sweep that removes anything, or a restart |
 | Connectors: name, app, a hash of the link | Deleted by their owner, or expired as in [section 5](#the-connector-link) |
 | Questions, the floor | Memory only: gone when the meeting ends or the server restarts |
 | Rate-limit counters (a meeting's link or a random identity, a count and when it started) | Memory only: gone at the first sweep after their window (a minute or an hour), or a restart |

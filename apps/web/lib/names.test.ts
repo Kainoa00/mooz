@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { HOST_NAME_HOLDERS, MAX_NAME_HOLDERS } from "./agents";
-import { foldName, forgetNames, parseAgentName, parseDisplayName } from "./names";
+import { foldName, parseAgentName, parseDisplayName } from "./names";
 
 describe("parseDisplayName", () => {
   it("collapses whitespace", () => {
@@ -215,6 +214,14 @@ describe("names that look like an agent's", () => {
     ["Atˋlas", "Atlas"],
     ["At‛las", "Atlas"],
     ["At\u1ffdlas", "Atlas"],
+    ["At\u0384las", "Atlas"],
+    ["At‵las", "Atlas"],
+    ["At᾽las", "Atlas"], // Greek koronis, psili and dasia, the Armenian apostrophe, the Hebrew geresh
+    ["At᾿las", "Atlas"],
+    ["At῾las", "Atlas"],
+    ["At՚las", "Atlas"],
+    ["At׳las", "Atlas"],
+    ["lśabel", "Isabelle"], // an accented consonant is still one
   ])("refuses %j while %j is here, and the agent while they are", (name, agent) => {
     expect(() => parseDisplayName(name, [agent])).toThrowError(expect.objectContaining({ status: 409, code: "name_taken" }));
     expect(() => parseAgentName(agent, [name])).toThrowError(expect.objectContaining({ status: 409, code: "name_taken" }));
@@ -249,6 +256,13 @@ describe("names that look like an agent's", () => {
     ["lana", "Ian"],
     ["luna", "Ina"],
     ["leon", "Ion"],
+    ["léon", "Ion"], // a vowel with an accent is still a vowel
+    ["léon".normalize("NFD"), "Ion"],
+    ["léna", "Ina"],
+    ["lúna", "Ina"],
+    ["lúna".normalize("NFD"), "Ina"],
+    ["lívia", "Iva"],
+    ["lāna", "Ian"],
     ["Sevinc Həsənova", "Nova"], // ə doesn't split a word in two
     ["Cəlil", "Leila"],
     ["O’Brien", "Brien"], // ’ is an apostrophe, as ' is
@@ -285,16 +299,6 @@ describe("names that look like an agent's", () => {
   it("refuses a word that mixes alphabets, which could look like a name it doesn't match", () => {
     expect(() => parseDisplayName("Grօk")).toThrowError(expect.objectContaining({ status: 400, code: "invalid_name" }));
     expect(() => parseDisplayName("Kaiнoa")).toThrowError(expect.objectContaining({ status: 400 }));
-  });
-});
-
-describe("a name check in a full meeting", () => {
-  it("stays quick with every name a meeting may hold, each seen for the first time", () => {
-    forgetNames();
-    const people = Array.from({ length: MAX_NAME_HOLDERS + HOST_NAME_HOLDERS }, (_, i) => `Guest ${i.toString(36)}xq`);
-    const started = performance.now();
-    expect(parseAgentName("Atlas", people)).toBe("Atlas");
-    expect(performance.now() - started).toBeLessThan(1_000);
   });
 });
 

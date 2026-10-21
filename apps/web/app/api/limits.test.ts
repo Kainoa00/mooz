@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MAX_NAME_HOLDERS, createAgentCode, decideAgentRequest } from "@/lib/agents";
+import { MAX_UNSEEN_NAMES, createAgentCode, decideAgentRequest, participantNames } from "@/lib/agents";
 import { getDb } from "@/lib/db";
 import {
   HOST_SESSIONS,
@@ -10,6 +10,7 @@ import {
   addParticipant,
   createRoom,
   getRoom,
+  notePersonPresence,
 } from "@/lib/rooms";
 import { TOKEN_TTL_MS } from "@/lib/livekit";
 import { noteRoomWebhook, noteWebhook } from "@/lib/webhook-seen";
@@ -166,26 +167,45 @@ describe("rate limits", () => {
     expect((await join(jsonRequest(url, { name: "Lee" }), params({ slug }))).status).toBe(200);
   });
 
-  it("lets at most 2,000 sessions hold a name, until the meeting is heard from after them", async () => {
+  it("counts only the 2,000 newest joins nobody saw come in for names, and turns nobody away", async () => {
     const db = getDb();
-    const { slug, hostSecret } = createRoom(db);
-    const { livekitRoom } = getRoom(db, slug)!;
+    const { slug } = createRoom(db);
     const url = `http://localhost:3000/api/rooms/${slug}/join`;
     noteWebhook(db);
     const insert = db.prepare(
-      "INSERT INTO participants (identity, room_slug, name, is_host, secret_hash, created_at, expires_at) VALUES (?, ?, ?, 0, 's', ?, ?)",
+      "INSERT INTO participants (identity, room_slug, name, is_host, secret_hash, created_at, expires_at, session_sid) VALUES (?, ?, ?, 0, 's', ?, ?, ?)",
     );
-    // Joins that never came in, two hours ago, in a meeting the webhook hasn't spoken of since.
+    // A meeting the webhook hasn't spoken of: every live session holds its name.
     const long = Date.now() - 2 * TOKEN_TTL_MS;
     db.exec("BEGIN");
-    for (let i = 0; i < MAX_NAME_HOLDERS; i++) insert.run(`p_ghost${i}`, slug, `Ghost ${i}`, long, long + SESSION_TTL_MS);
+    insert.run("p_in", slug, "Zach", long, long + SESSION_TTL_MS, "PA_zach"); // came in, long ago
+    for (let i = 0; i < MAX_UNSEEN_NAMES + 100; i++) insert.run(`p_ghost${i}`, slug, `Ghost ${i}`, long + i, long + i + SESSION_TTL_MS, null);
     db.exec("COMMIT");
-    expect(await code(await join(jsonRequest(url, { name: "Lee" }), params({ slug })))).toBe("room_full");
-    const host = await join(jsonRequest(url, { name: "Kainoa" }, { cookie: `mooz_host_${slug}=${hostSecret}` }), params({ slug }));
-    expect(host.status).toBe(200);
-    // The host comes into the call: now the webhook has spoken of the meeting, and lets them go.
-    noteRoomWebhook(db, livekitRoom);
+    const names = participantNames(db, slug);
+    expect(names).toHaveLength(MAX_UNSEEN_NAMES + 1);
+    expect(names).toContain("Zach");
+    expect(names).toContain(`Ghost ${MAX_UNSEEN_NAMES + 99}`);
+    expect(names).not.toContain("Ghost 99");
     expect((await join(jsonRequest(url, { name: "Lee" }), params({ slug }))).status).toBe(200);
+  });
+
+  it("counts a reload of a session nobody saw come in with new joins, where the webhook would say", async () => {
+    const db = getDb();
+    const { slug } = createRoom(db);
+    const url = `http://localhost:3000/api/rooms/${slug}/join`;
+    noteWebhook(db);
+    const joined: { name: string; identity: string; secret: string }[] = [];
+    for (const name of ["Zach", "Mia"]) {
+      const res = await join(jsonRequest(url, { name }), params({ slug }));
+      const { identity } = (await res.json()) as { identity: string };
+      joined.push({ name, identity, secret: setCookies(res)[`mooz_p_${slug}`] });
+    }
+    notePersonPresence(db, joined[1].identity, "PA_mia", true); // Mia came in; Zach never did
+    for (let i = 2; i < JOINS_PER_MINUTE; i++) await join(jsonRequest(url, { name: `Stranger ${i}` }), params({ slug }));
+    const back = (p: (typeof joined)[number]) =>
+      join(jsonRequest(url, { name: p.name, rejoin: p.identity }, { cookie: `mooz_p_${slug}=${p.secret}` }), params({ slug }));
+    expect((await back(joined[0])).status).toBe(429);
+    expect((await back(joined[1])).status).toBe(200);
   });
 
   it("lets the host past a full meeting, though not without end", () => {

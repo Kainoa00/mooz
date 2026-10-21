@@ -125,9 +125,15 @@ export function activeAgentNames(db: Db, slug: string, now = Date.now()): string
  * Without the webhook, everyone whose session is live counts.
  */
 export function participantNames(db: Db, slug: string, now = Date.now()): string[] {
-  const rows = db.prepare(`SELECT name FROM participants WHERE ${HOLDS_NAME}`).all(...holdsName(db, slug, now)) as {
-    name: string;
-  }[];
+  const held = holdsName(db, slug, now);
+  const rows = db
+    .prepare(
+      `SELECT name FROM participants WHERE ${HOLDS_NAME} AND session_sid IS NOT NULL
+       UNION ALL
+       SELECT name FROM (SELECT name FROM participants WHERE ${HOLDS_NAME} AND session_sid IS NULL
+         ORDER BY expires_at DESC LIMIT ?)`,
+    )
+    .all(...held, ...held, MAX_UNSEEN_NAMES) as { name: string }[];
   return rows.map((r) => r.name);
 }
 
@@ -140,22 +146,12 @@ const holdsName = (db: Db, slug: string, now: number) =>
   [slug, now - LEFT_GRACE_MS, now, now + SESSION_TTL_MS - TOKEN_TTL_MS, meetingHeardAt(db, slug, now), SESSION_TTL_MS] as const;
 
 /**
- * People who may hold a name in a meeting at once. Every agent's name is checked against each,
- * so a meeting stuffed with joins that never come in can't make that slow. Real meetings stay
- * far below it (they have 200 places); past it nobody but the host joins (and the host only
- * HOST_NAME_HOLDERS more), until someone coming into or leaving the call lets those joins go.
+ * Joins nobody has reported coming in whose names a name check counts: the most recent ones.
+ * Every agent's name is checked against each, so a meeting stuffed with joins that never come in
+ * can't make that slow, and nobody is turned away for it. One of the older ones who does come in
+ * later, under a name an agent now answers to, is taken out of the call (isUnwelcomePerson).
  */
-export const MAX_NAME_HOLDERS = 2_000;
-export const HOST_NAME_HOLDERS = 500;
-
-export function assertRoomForName(db: Db, slug: string, isHost: boolean, now = Date.now()): void {
-  const { n } = db.prepare(`SELECT COUNT(*) AS n FROM participants WHERE ${HOLDS_NAME}`).get(...holdsName(db, slug, now)) as {
-    n: number;
-  };
-  if (n >= MAX_NAME_HOLDERS + (isHost ? HOST_NAME_HOLDERS : 0)) {
-    throw new HttpError(409, "room_full", "This meeting is full.");
-  }
-}
+export const MAX_UNSEEN_NAMES = 2_000;
 
 export function transaction<T>(db: Db, fn: () => T): T {
   db.exec("BEGIN IMMEDIATE");

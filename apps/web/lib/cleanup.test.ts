@@ -23,6 +23,7 @@ import {
   touchRoom,
   type Participant,
 } from "./rooms";
+import { namesInMemoryForTests, parseAgentName } from "./names";
 import { noteRoomWebhook } from "./webhook-seen";
 import { useTestEnv } from "@/test/helpers";
 
@@ -115,6 +116,15 @@ describe("endMeeting", () => {
     expect(endMeeting(db, slug)).toBe(0);
   });
 
+  it("forgets the names worked out for name checks", () => {
+    const db = getDb();
+    const { slug } = createRoom(db);
+    parseAgentName("Atlas", ["Zach", "Mia"]);
+    expect(namesInMemoryForTests()).toBeGreaterThan(0);
+    endMeeting(db, slug);
+    expect(namesInMemoryForTests()).toBe(0);
+  });
+
   it("forgets when the webhook last spoke of the meeting", () => {
     const db = getDb();
     const { slug } = createRoom(db);
@@ -127,6 +137,17 @@ describe("endMeeting", () => {
 });
 
 describe("sweep", () => {
+  it("forgets the names worked out for name checks when it removes anyone", () => {
+    const db = getDb();
+    const { slug } = createRoom(db);
+    addParticipant(db, { slug, name: "Zach", isHost: false });
+    parseAgentName("Atlas", ["Zach"]);
+    expect(sweep(db)).toBe(0);
+    expect(namesInMemoryForTests()).toBeGreaterThan(0); // nothing went, so nothing to forget
+    expect(sweep(db, Date.now() + SESSION_TTL_MS + 1)).toBeGreaterThan(0);
+    expect(namesInMemoryForTests()).toBe(0);
+  });
+
   it("forgets when the webhook last spoke of a meeting nobody is left in, though LiveKit never said it ended", () => {
     const db = getDb();
     const { slug } = createRoom(db);
