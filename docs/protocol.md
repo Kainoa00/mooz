@@ -55,7 +55,8 @@ Request: `{"code": "ABCD-EFGH-JKLM", "name": "Atlas"}` with `content-type: appli
   still bring it in. A person coming back after 2 minutes can't keep a name that an agent
   that came in meanwhile answers to (one who comes back on the token they had is taken out of
   the call). Likewise, a bridge back after more than 2 minutes (its laptop slept, say) whose
-  name someone took meanwhile is revoked and taken out; its owner needs a new code. The detector's
+  name someone took meanwhile, or whose name the meeting is too busy to check, is revoked and
+  taken out; its owner needs a new code. The detector's
   own same-word test decides, so `Atlis` is refused next to `Atlas`, and `Lee's Grok` next
   to `Zach's Grok`. People's names are compared both as they sound and as they look in plain
   Latin letters: `Атлас`, `Ａｔｌａｓ` and `Atłas` count as `Atlas`, and so do `Сora`
@@ -83,7 +84,10 @@ Responses:
 - `400 invalid_agent_name`, `400 reserved_name`, `409 name_taken`: the name was
   rejected. The code stays usable.
 - `503 names_busy`: the meeting holds too many joins nobody can vouch for to check the name
-  now. Try again later; the code stays usable, and this doesn't count as a try.
+  now. Try again later; the code stays usable, and this doesn't count as a try. Tries in the
+  next 10 seconds or so get the same answer without a check. It needn't mean the webhook is
+  down: a meeting that has had more than 2,000 joins since the webhook last spoke of it (about
+  an hour of joins at the limit) answers it too.
 
 ### `GET /api/agent/claim/{requestId}`
 
@@ -128,7 +132,7 @@ across the server.
 | Route | Limit |
 |---|---|
 | `POST /api/rooms` | 30 new meetings across the server (`MOOZ_ROOMS_PER_MINUTE`) |
-| `POST /api/rooms/{slug}/join` | 30 joins per meeting, counted apart for the host and for each person coming back. A meeting keeps a place for at most 200 people (a rejoin reuses its place; where the webhook arrives, a join that never came into the call stops holding one after 5 minutes) and, as a backstop, 50,000 sessions in all (more than the join limit can make in a day). Past either it answers `409 room_full`. The host always gets a place (while their host session lasts: a day after their last join), and may add 500 sessions past the 50,000. Nobody is turned away to keep agents' name checks quick: they count at most 2,000 joins nobody saw come in ([section 1](#1-joining)) |
+| `POST /api/rooms/{slug}/join` | 30 joins per meeting, counted apart for the host and for each person coming back (one who never came into the call counts with new joins, where the webhook would have said). A meeting keeps a place for at most 200 people (a rejoin reuses its place; where the webhook arrives, a join that never came into the call stops holding one after 5 minutes) and, as a backstop, 50,000 sessions in all (more than the join limit can make in a day). Past either it answers `409 room_full`. The host always gets a place (while their host session lasts: a day after their last join), and may add 500 sessions past the 50,000. Nobody is turned away to keep agents' name checks quick: they count at most 2,000 joins the webhook vouches for that never came in, plus up to 2,000 it can't vouch for; past that, new agents get `503 names_busy` ([section 1](#1-joining)) |
 | `POST /api/rooms/{slug}/agent-codes` | 10 codes an hour per person, and 50 per meeting for people who aren't the host and haven't come into the call |
 | `POST /api/agent/claim` | None: a made-up, used or expired code is refused at once (`400`), and a real one may try 5 names |
 | `GET /api/agent/claim/{id}` | 60 checks per claim, counted only with the right secret. A bridge that gets a 429 waits and polls again |
@@ -520,7 +524,9 @@ come from the same origin, and someone else's connector looks like one that does
 ### Joining
 
 `POST /api/rooms/{slug}/connector-requests` `{ connectorId }` asks to bring it in and returns
-`{ requestId, status: "pending" }` (at most 10 a minute per person and 30 per meeting). The host approves it in the same tray as bridge agents.
+`{ requestId, status: "pending" }` (at most 10 a minute per person and 30 per meeting). Its name is checked as a
+bridge agent's is ([section 1](#1-joining)): it can answer `409 name_taken` or `503 names_busy`. The
+host approves it in the same tray as bridge agents.
 `GET …/{requestId}` returns `{ status }` (`pending`, `approved`, `denied`, `revoked` or
 `expired`), and once approved `POST …/{requestId}/token` returns `{ token, url, identity, name }`
 for the tab's agent connection, again after a reload. Every one of these needs the participant

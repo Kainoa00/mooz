@@ -10,6 +10,7 @@ import {
   addParticipant,
   createRoom,
   getRoom,
+  notePersonPresence,
   renameParticipant,
 } from "@/lib/rooms";
 import { TOKEN_TTL_MS } from "@/lib/livekit";
@@ -212,6 +213,30 @@ describe("rate limits", () => {
     expect(await code(res)).toBe("names_busy");
     expect((db.prepare("SELECT attempts FROM agent_codes").get() as { attempts: number }).attempts).toBe(0);
     expect((await join(jsonRequest(url, { name: "Lee" }), params({ slug }))).status).toBe(200);
+    // For a few seconds it doesn't look again: retries can't make it scan over and over.
+    db.prepare("DELETE FROM participants WHERE identity LIKE 'p_ghost%'").run();
+    expect((await claim(jsonRequest("http://localhost/api/agent/claim", { code: real, name: "Nova" }))).status).toBe(503);
+    vi.setSystemTime(Date.now() + 11_000);
+    expect((await claim(jsonRequest("http://localhost/api/agent/claim", { code: real, name: "Nova" }))).status).toBe(201);
+  });
+
+  it("counts a reload of a session nobody saw come in with new joins, where the webhook would say", async () => {
+    const db = getDb();
+    const { slug } = createRoom(db);
+    const url = `http://localhost:3000/api/rooms/${slug}/join`;
+    noteWebhook(db);
+    const joined: { name: string; identity: string; secret: string }[] = [];
+    for (const name of ["Zach", "Mia"]) {
+      const res = await join(jsonRequest(url, { name }), params({ slug }));
+      const { identity } = (await res.json()) as { identity: string };
+      joined.push({ name, identity, secret: setCookies(res)[`mooz_p_${slug}`] });
+    }
+    notePersonPresence(db, joined[1].identity, "PA_mia", true); // Mia came in; Zach never did
+    for (let i = 2; i < JOINS_PER_MINUTE; i++) await join(jsonRequest(url, { name: `Stranger ${i}` }), params({ slug }));
+    const back = (p: (typeof joined)[number]) =>
+      join(jsonRequest(url, { name: p.name, rejoin: p.identity }, { cookie: `mooz_p_${slug}=${p.secret}` }), params({ slug }));
+    expect((await back(joined[0])).status).toBe(429);
+    expect((await back(joined[1])).status).toBe(200);
   });
 
   it("lets the host past a full meeting, though not without end", () => {

@@ -17,6 +17,8 @@ import {
   listPendingRequests,
   noteBridgePresence,
   participantNames,
+  revokeIfNameTakenWhileAway,
+  MAX_UNSEEN_NAMES,
   requireBridgeAgent,
 } from "./agents";
 import { getDb } from "./db";
@@ -363,6 +365,22 @@ describe("who holds a name", () => {
     noteRoomWebhook(db, livekitRoom, t + 1);
     expect(participantNames(db, slug, t + TOKEN_TTL_MS + 1000)).toEqual([]);
     expect(activeAgentNames(db, slug, t + AGENT_TOKEN_TTL_MS + 62_000)).toEqual([]);
+  });
+
+  it("takes out a bridge back too late when the meeting is too busy to check its name", () => {
+    const { db, slug, host } = meeting();
+    noteWebhook(db);
+    const claim = claimAgentCode(db, { code: createAgentCode(db, host).code, name: "Atlas" });
+    decideAgentRequest(db, { slug, requestId: claim.requestId, approve: true });
+    const { agent_identity } = db.prepare("SELECT agent_identity FROM agent_requests WHERE id = ?").get(claim.requestId) as {
+      agent_identity: string;
+    };
+    db.prepare("UPDATE agent_requests SET left_at = ? WHERE agent_identity = ?").run(Date.now() - 3 * 60_000, agent_identity);
+    const insert = db.prepare(
+      "INSERT INTO participants (identity, room_slug, name, is_host, secret_hash, created_at, expires_at) VALUES (?, ?, ?, 0, 's', ?, ?)",
+    );
+    for (let i = 0; i <= MAX_UNSEEN_NAMES; i++) insert.run(`p_ghost${i}`, slug, `Ghost ${i}`, Date.now(), Date.now() + SESSION_TTL_MS);
+    expect(revokeIfNameTakenWhileAway(db, agent_identity)).toBe(true);
   });
 
   it("holds names as without the webhook in a meeting it hasn't spoken of (it may have stopped)", () => {

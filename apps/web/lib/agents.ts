@@ -126,7 +126,8 @@ export function activeAgentNames(db: Db, slug: string, now = Date.now()): string
  * MAX_UNSEEN_NAMES who first joined most recently count (one of the rest who comes in later
  * under a name an agent answers to is taken out). Anyone it can't vouch for (without the
  * webhook, everyone) counts: past MAX_UNSEEN_NAMES of them, a new agent's name can't be checked
- * now, and is refused until the webhook speaks of the meeting.
+ * now, and is refused until the webhook has spoken of the meeting since enough of their last
+ * joins (in an outage, or a meeting with many joins and nothing said of it for an hour).
  */
 export function participantNames(db: Db, slug: string, now = Date.now()): string[] {
   const held = holdsName(db, slug, now);
@@ -136,9 +137,7 @@ export function participantNames(db: Db, slug: string, now = Date.now()): string
       `SELECT name FROM participants WHERE ${HOLDS_NAME} AND session_sid IS NULL AND ? <= expires_at - ? LIMIT ?`,
     )
     .all(...held, heardAt, SESSION_TTL_MS, MAX_UNSEEN_NAMES + 1) as { name: string }[];
-  if (unvouched.length > MAX_UNSEEN_NAMES) {
-    throw new HttpError(503, "names_busy", "This meeting is too busy to check agents' names just now. Try again later.");
-  }
+  if (unvouched.length > MAX_UNSEEN_NAMES) throw namesBusy();
   const rows = db
     .prepare(
       `SELECT name FROM participants WHERE ${HOLDS_NAME} AND session_sid IS NOT NULL
@@ -160,11 +159,36 @@ const holdsName = (db: Db, slug: string, now: number) =>
   [slug, now - LEFT_GRACE_MS, now, now + SESSION_TTL_MS - TOKEN_TTL_MS, meetingHeardAt(db, slug, now), SESSION_TTL_MS] as const;
 
 /**
- * Joins nobody has reported coming in whose names a name check counts at most (participantNames).
- * Every agent's name is checked against each, so a meeting stuffed with joins that never come in
- * can't make that slow, and nobody is turned away for it.
+ * Joins nobody has reported coming in that a name check counts at most, of those the webhook
+ * vouches for and again of those it can't (participantNames). Every agent's name is checked
+ * against each, so a meeting stuffed with joins that never come in can't make that slow. No
+ * person is turned away for it; past it, a new agent's name is refused for now (names_busy).
  */
 export const MAX_UNSEEN_NAMES = 2_000;
+/** After a meeting is found too busy to check names, claims are refused this long without looking. */
+const BUSY_RECHECK_MS = 10_000;
+const BUSY = Symbol.for("mooz.namesBusy");
+
+function busyUntil(): Map<string, number> {
+  const g = globalThis as unknown as Record<symbol, Map<string, number> | undefined>;
+  return (g[BUSY] ??= new Map());
+}
+
+const namesBusy = () =>
+  new HttpError(503, "names_busy", "This meeting is too busy to check agents' names just now. Try again later.");
+
+/** People's names, for checking a new agent's: refused at once if the meeting was just too busy. */
+export function namesForNewAgent(db: Db, slug: string, now = Date.now()): string[] {
+  const until = busyUntil().get(slug);
+  if (until !== undefined && until > now) throw namesBusy();
+  busyUntil().delete(slug);
+  try {
+    return participantNames(db, slug, now);
+  } catch (err) {
+    if (err instanceof HttpError && err.code === "names_busy") busyUntil().set(slug, now + BUSY_RECHECK_MS);
+    throw err;
+  }
+}
 
 export function transaction<T>(db: Db, fn: () => T): T {
   db.exec("BEGIN IMMEDIATE");
@@ -203,7 +227,7 @@ export function claimAgentCode(
       .get(codeHash, Date.now(), MAX_NAME_ATTEMPTS) as { room_slug: string; owner_identity: string } | undefined;
     if (!row) throw invalid;
     // Outside the try: a meeting too busy to check names doesn't use up one of the code's tries.
-    const people = participantNames(db, row.room_slug);
+    const people = namesForNewAgent(db, row.room_slug);
 
     let name: string;
     try {
@@ -395,7 +419,8 @@ export function revokeIfNameTakenWhileAway(db: Db, agentIdentity: string, now = 
     parseAgentName(row.agent_name, participantNames(db, row.room_slug, now), activeAgentNames(db, row.room_slug, now));
     return false;
   } catch (err) {
-    if (!(err instanceof HttpError && err.code === "name_taken")) return false;
+    // Too busy to check fails closed too (it can't really happen: the webhook just spoke of the meeting).
+    if (!(err instanceof HttpError && (err.code === "name_taken" || err.code === "names_busy"))) return false;
   }
   db.prepare("UPDATE agent_requests SET status = 'revoked' WHERE agent_identity = ? AND status = 'approved'").run(agentIdentity);
   return true;

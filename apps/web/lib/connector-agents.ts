@@ -3,7 +3,7 @@ import {
   PENDING_TTL_MS,
   UNJOINED_APPROVAL_MS,
   activeAgentNames,
-  participantNames,
+  namesForNewAgent,
   transaction,
   type AgentIdentity,
 } from "./agents";
@@ -141,7 +141,7 @@ export function requestConnectorJoin(
   const connector = getOwned(db, ownerKey, connectorId);
   return transaction(db, () => {
     const superseded = revokeLive(db, connector.id);
-    const people = participantNames(db, owner.slug);
+    const people = namesForNewAgent(db, owner.slug);
     const name = withStoredName(connector.name, () => parseAgentName(connector.name, people, activeAgentNames(db, owner.slug)));
     const requestId = newId("r");
     db.prepare(
