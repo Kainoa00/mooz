@@ -38,17 +38,19 @@ test("two people meet by link, see each other, and chat", async ({ page, browser
   await expect(received.getByTestId("chat-sender")).toHaveText("Kainoa");
 
   // Anyone can publish on LiveKit's old chat topic. Packets that aren't a message (not JSON, null,
-  // an object for an id) are ignored, and chat carries on in every tab.
+  // an object for an id) are ignored, and so is a message no participant sent: it would be
+  // nobody's (once, a "Guest"'s). Chat carries on in every tab.
   const room = await roomOf("Kainoa", "Zach");
-  const good = JSON.stringify({ id: "legacy-ok", message: "legacy ok", timestamp: Date.now() });
-  for (const packet of ["{oops", "null", JSON.stringify({ id: { toString: 1 }, message: "boom", timestamp: 1 }), good]) {
+  const unsent = JSON.stringify({ id: "legacy-unsent", message: "from no one", timestamp: Date.now() });
+  for (const packet of ["{oops", "null", JSON.stringify({ id: { toString: 1 }, message: "boom", timestamp: 1 }), unsent]) {
     await livekit.sendData(room, new TextEncoder().encode(packet), DataPacket_Kind.RELIABLE, { topic: "lk-chat-topic" });
   }
-  // A well-formed one, sent last on the same reliable channel, shows the others arrived first.
-  for (const p of [page, zach]) await expect(p.getByTestId("chat-message").filter({ hasText: "legacy ok" })).toBeVisible();
-  await sendChat(zach, "still here");
+  // Each one's next words, sent after those on the same reliable channel, show they arrived first.
+  await sendChat(page, "still here");
+  await sendChat(zach, "me too");
   for (const p of [page, zach]) {
-    await expect(p.getByTestId("chat-message").filter({ hasText: "still here" })).toBeVisible();
+    for (const text of ["still here", "me too"]) await expect(p.getByTestId("chat-message").filter({ hasText: text })).toBeVisible();
+    await expect(p.getByTestId("chat-message").filter({ hasText: "from no one" })).toHaveCount(0);
     await expect(p.getByTestId("participant-tile")).toHaveCount(2);
   }
 });

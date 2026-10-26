@@ -5,7 +5,6 @@ import {
   GridLayout,
   LiveKitRoom,
   RoomAudioRenderer,
-  useChat,
   useParticipants,
   useTracks,
 } from "@livekit/components-react";
@@ -18,7 +17,7 @@ import { AgentCard } from "./AgentCard";
 import { AgentRequestsTray } from "./AgentRequestsTray";
 import { AgentsPausedBanner } from "./AgentsPausedBanner";
 import { BringAgentDialog } from "./BringAgentDialog";
-import { ChatPanel } from "./ChatPanel";
+import { ChatPanel, useMeetingChat } from "./ChatPanel";
 import { ConnectorAgent, type BroughtConnector } from "./ConnectorAgent";
 import { FloorStrip } from "./FloorStrip";
 import { JoinForm, type JoinResult } from "./JoinForm";
@@ -28,7 +27,6 @@ import { MoozTile } from "./MoozTile";
 import { NotesBanner } from "./NotesBanner";
 import { NotesPolicyToggle } from "./NotesPolicyToggle";
 import { TaskPanel } from "./TaskPanel";
-import { decodeLegacyChat } from "@/lib/chat-decode";
 
 function Stage() {
   const tracks = useTracks(
@@ -56,12 +54,9 @@ function Stage() {
   );
 }
 
-// Module-level: useChat sets chat up again whenever its options object changes.
-const CHAT_OPTIONS = { messageDecoder: decodeLegacyChat };
-
 /** The room's one chat: the panel shows it, and the host's tab records agents' public words from it. */
 function Chat({ record }: { record: Dispatch<RecordEvent> | null }) {
-  const chat = useChat(CHAT_OPTIONS);
+  const chat = useMeetingChat();
   return (
     <>
       <ChatPanel chat={chat} />

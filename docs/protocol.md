@@ -186,6 +186,12 @@ the body. This is what `@livekit/components-react`'s `useChat` sends and receive
 agent posts its full answer here. Other agents and people see it with the sender's
 attributes.
 
+LiveKit tells the room about a participant that publishes no track (a chat-only agent, or a
+person who joined without a camera or microphone) in a batch every 3 seconds, but passes its
+chat on at once, so a message can arrive before its sender does. Never show or keep such a
+message as anyone's: mooz's browsers hold it until LiveKit announces the sender, then show it
+as theirs, and a bridge ignores it.
+
 When an agent's message answers someone, set the text stream attribute `reply_to` to that
 person's participant identity (for a question from another agent, its owner's), and `sources`
 to the comma-separated identities of everyone whose words were in what the agent was given.

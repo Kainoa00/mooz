@@ -1,13 +1,13 @@
 "use client";
 
 import { useRoomContext } from "@livekit/components-react";
-import type { ReceivedChatMessage } from "@livekit/components-react";
 import { RoomEvent, type Participant } from "livekit-client";
 import { useEffect, useRef, useState, type Dispatch } from "react";
 import { parseFloor } from "@/lib/floor-protocol";
 import type { MeetingRecord, RecordEvent, Seen } from "@/lib/meeting-record";
 import { summaryFileName, toMarkdown } from "@/lib/meeting-summary";
 import { MOOZ_TOPIC, parseNotesAnnouncement } from "@/lib/notes-protocol";
+import type { ChatMessage } from "./ChatPanel";
 import { CallFailed } from "./JoinForm";
 
 const seen = (p: Participant): Seen => ({ identity: p.identity, name: p.name, attributes: { ...p.attributes } });
@@ -20,7 +20,7 @@ export function MeetingRecorder({
   chat,
   dispatch,
 }: {
-  chat: readonly ReceivedChatMessage[];
+  chat: readonly ChatMessage[];
   dispatch: Dispatch<RecordEvent>;
 }) {
   const room = useRoomContext();
@@ -58,21 +58,22 @@ export function MeetingRecorder({
     };
   }, [room, dispatch]);
 
+  // Each message once its sender is known (the chat holds it till then), so an agent's early
+  // words are its own here too.
   const handled = useRef(new Set<string>());
   useEffect(() => {
     for (const m of chat) {
-      if (handled.current.has(m.id)) continue;
-      handled.current.add(m.id);
-      // Only what a well-formed message carries: an older client's chat packet can hold anything.
-      if (typeof m.message !== "string") continue;
-      const attributes = Object.fromEntries(Object.entries(m.attributes ?? {}).filter(([, v]) => typeof v === "string"));
+      // By sender too: a message's id is its sender's choice, and another can't take it first.
+      const key = `${m.identity}\n${m.id}`;
+      if (handled.current.has(key)) continue;
+      handled.current.add(key);
       dispatch({
         type: "chat",
         at: Date.now(), // when this tab saw it, as the file says: the sender picks its own timestamp
-        id: m.id,
-        from: m.from ? seen(m.from) : undefined,
+        id: key,
+        from: seen(m.from),
         text: m.message,
-        attributes,
+        attributes: { ...m.attributes },
       });
     }
   }, [chat, dispatch]);

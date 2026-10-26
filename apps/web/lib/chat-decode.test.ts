@@ -22,6 +22,6 @@ describe("decodeLegacyChat", () => {
     ["a time that isn't one", { id: "m1", message: "hi", timestamp: "soon" }],
     ["the echo of a message also sent as a text stream", { id: "m1", message: "hi", timestamp: 1, ignoreLegacy: true }],
   ])("ignores %s", (_what, value) => {
-    expect(decodeLegacyChat(packet(value))).toMatchObject({ ignoreLegacy: true });
+    expect(decodeLegacyChat(packet(value))).toBeNull();
   });
 });
