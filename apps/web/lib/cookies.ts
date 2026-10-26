@@ -14,8 +14,16 @@ export function readCookie(req: Request, name: string): string | undefined {
   return undefined;
 }
 
+/** This machine's own names, as a Host header carries them (with or without a port). */
+const LOOPBACK_HOST = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
+
 export function isHttps(req: Request): boolean {
-  // The configured public address is the truth (a TLS proxy may not say x-forwarded-proto).
+  const forwarded = req.headers.get("x-forwarded-proto");
+  const said = forwarded ? forwarded.split(",")[0].trim() === "https" : new URL(req.url).protocol === "https:";
+  // Someone on the server's own machine over plain http (a laptop whose public address is a
+  // tunnel) gets cookies without Secure: Safari drops Secure ones on http://localhost.
+  if (!said && LOOPBACK_HOST.test(req.headers.get("host") ?? new URL(req.url).host)) return false;
+  // Otherwise the configured public address is the truth (a TLS proxy may not say x-forwarded-proto).
   const configured = process.env.MOOZ_PUBLIC_URL;
   if (configured) {
     try {
@@ -24,9 +32,7 @@ export function isHttps(req: Request): boolean {
       // fall through to what the request says
     }
   }
-  const forwarded = req.headers.get("x-forwarded-proto");
-  if (forwarded) return forwarded.split(",")[0].trim() === "https";
-  return new URL(req.url).protocol === "https:";
+  return said;
 }
 
 /** Build an HTTP-only, SameSite=Lax session cookie, Secure whenever served over HTTPS. */

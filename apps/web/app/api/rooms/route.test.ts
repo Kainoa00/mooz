@@ -33,4 +33,15 @@ describe("POST /api/rooms", () => {
 
     expect(res.headers.getSetCookie()[0]).toMatch(/Secure/);
   });
+
+  it("leaves Secure off at http://localhost when the public address is a tunnel, so every browser keeps it", async () => {
+    process.env.MOOZ_PUBLIC_URL = "https://quiet-river.trycloudflare.com";
+    try {
+      const res = await POST(new Request("http://localhost:3000/api/rooms", { method: "POST" }));
+      expect(res.status).toBe(201);
+      expect(res.headers.getSetCookie()[0]).not.toMatch(/Secure/i);
+    } finally {
+      delete process.env.MOOZ_PUBLIC_URL;
+    }
+  });
 });
