@@ -33,7 +33,8 @@ it, and only talks to its local API.
    ```
 
    Exact origins only (scheme, host and port, no path or `*`). For a local mooz, that's
-   `http://localhost:3000`. The bridge doesn't need this.
+   `http://localhost:3000`, even with a tunnel for the connector link. The bridge doesn't need
+   this.
 
 **Engines.** Its default speech engine is OmniVoice. `tts-1` and `whisper-1` (mooz's
 defaults) map to the active engines. If you name an engine instead, it must be the active one,

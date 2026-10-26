@@ -67,7 +67,7 @@ numbers, or what failed) in the release notes; anything not run is listed there 
 | 3 | Local voice in the tab | VoiceStudio, the VPS from check 4 | works in Chrome and Firefox; Safari shows the "use another browser" message |
 | 4 | A fresh server install | a VPS, two DNS names | clone to first meeting in under 10 minutes |
 | 5 | Two real agents | two sets of keys (or one, twice) | one speaks at a time; the pause and Continue work |
-| 6 | The connector apps | Grok, Claude and ChatGPT accounts | each answers a question in the meeting |
+| 6 | The connector apps | Grok, Claude and ChatGPT accounts, the VPS from check 4 or a tunnel | each answers a question in the meeting |
 | 7 | Six people at once | six people (or devices) talking | the bridge hears all six with no ElevenLabs errors |
 
 ### 1. Voice latency with ElevenLabs
@@ -124,7 +124,9 @@ names). Check:
 
 ### 6. The connector apps
 
-For each of Grok, Claude and ChatGPT: make a connector link, add it to the app
+Use the VPS from check 4, or a laptop with a tunnel as the README says: there, open mooz at
+http://localhost:3000, not at the tunnel's address, and be the other person from a private
+window. For each of Grok, Claude and ChatGPT: make a connector link, add it to the app
 (README → Connect Grok, Claude or ChatGPT), bring it in, ask `@Grok …` from another person,
 tap **Ask Grok ↗**, and check the answer appears in the meeting. Note whether the prefill link
 filled the prompt (Grok and Claude) or sent it (ChatGPT).

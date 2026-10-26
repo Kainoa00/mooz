@@ -278,13 +278,22 @@ used in a meeting is deleted after 24 hours, and any link after 180 days without
 | ChatGPT | Settings → Apps & Connectors → Advanced → Developer mode, then create a connector with the link and no authentication | ChatGPT asks you to confirm each answer it posts. If your plan can't use connectors that write, use **Paste the answer** |
 
 Your assistant's servers call the link, so the mooz server must be reachable over HTTPS. A
-public server already is. To try it from your laptop, run a tunnel, then open mooz **through
-the tunnel's address** (mooz checks that requests come from its public address):
+public server already is. To try it from your laptop, run a tunnel so those servers can reach
+the link, and set `MOOZ_PUBLIC_URL` in `.env` to the tunnel's address:
 
 ```bash
 cloudflared tunnel --url http://localhost:3000     # prints https://<random>.trycloudflare.com
-echo "MOOZ_PUBLIC_URL=https://<random>.trycloudflare.com" >> .env && docker compose up -d
+# in .env, uncomment and set: MOOZ_PUBLIC_URL=https://<random>.trycloudflare.com
+docker compose up -d
 ```
+
+The tunnel is only for your assistant's servers. Keep opening mooz at http://localhost:3000
+and make the connector there: its link uses the tunnel's address. Don't open mooz through the
+tunnel: the call goes to LiveKit on `localhost`, which a page from a public address can't count
+on reaching (Chrome blocks it), and nobody else can join that way either. Each time cloudflared
+starts, it prints a new address: change the `MOOZ_PUBLIC_URL` line (don't add another), run
+`docker compose up -d`, then click **New link** and replace the link in your app. Stop the
+tunnel (Ctrl-C) when you're done.
 
 **3. Bring it in.** Click **Bring to this meeting**; the host approves it like any agent. Then
 anyone can type **`@Grok …`**. A card appears for you: **Ask Grok ↗** opens your app with a

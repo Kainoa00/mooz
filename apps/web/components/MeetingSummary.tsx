@@ -8,6 +8,7 @@ import { parseFloor } from "@/lib/floor-protocol";
 import type { MeetingRecord, RecordEvent, Seen } from "@/lib/meeting-record";
 import { summaryFileName, toMarkdown } from "@/lib/meeting-summary";
 import { MOOZ_TOPIC, parseNotesAnnouncement } from "@/lib/notes-protocol";
+import { CallFailed } from "./JoinForm";
 
 const seen = (p: Participant): Seen => ({ identity: p.identity, name: p.name, attributes: { ...p.attributes } });
 
@@ -106,20 +107,24 @@ export function DownloadSummaryButton({ record }: { record: MeetingRecord }) {
   );
 }
 
-/** After the host leaves: the record is still in this tab until they discard it. */
+/** After the host leaves (or their call drops): the record is still in this tab until they discard it. */
 export function LeftMeeting({
   record,
+  callFailed = false,
   onDiscard,
   onRejoin,
 }: {
   record: MeetingRecord;
+  /** The call couldn't connect (or dropped), so they didn't leave. */
+  callFailed?: boolean;
   onDiscard: () => void;
   onRejoin: () => void;
 }) {
   const [copied, setCopied] = useState(false);
   return (
     <main data-testid="left-meeting" className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center gap-4 p-6">
-      <h1 className="text-xl font-semibold">You left the meeting</h1>
+      <h1 className="text-xl font-semibold">{callFailed ? "You're out of the meeting" : "You left the meeting"}</h1>
+      {callFailed && <CallFailed />}
       <p className="text-sm text-muted">
         This tab kept a summary: what the agents said in public, who was there, and when the agents paused. Nobody&apos;s
         own words, no private answers (from agents that mark them), and nothing to do with anyone who asked to be left out. It&apos;s only here, and

@@ -11,6 +11,7 @@ import {
 } from "@livekit/components-react";
 import { Track } from "livekit-client";
 import { useCallback, useReducer, useState, type Dispatch } from "react";
+import { callFailed } from "@/lib/disconnect";
 import { isAgent } from "@/lib/labels";
 import { EMPTY_RECORD, hasContent, recordReducer, type RecordEvent } from "@/lib/meeting-record";
 import { AgentCard } from "./AgentCard";
@@ -105,14 +106,24 @@ export function MeetingRoom({ slug }: { slug: string }) {
   // The host's record of the meeting, up here so leaving the call doesn't lose it.
   const [record, dispatch] = useReducer(recordReducer, EMPTY_RECORD);
   const [rejoining, setRejoining] = useState(false);
+  // The last call couldn't connect, or dropped (not left, removed, or the meeting ended).
+  const [failed, setFailed] = useState(false);
 
   if (!session) {
     if (hasContent(record) && !rejoining) {
-      return <LeftMeeting record={record} onDiscard={() => dispatch({ type: "reset" })} onRejoin={() => setRejoining(true)} />;
+      return (
+        <LeftMeeting
+          record={record}
+          callFailed={failed}
+          onDiscard={() => dispatch({ type: "reset" })}
+          onRejoin={() => setRejoining(true)}
+        />
+      );
     }
     return (
       <JoinForm
         slug={slug}
+        callFailed={failed}
         onJoined={(s) => {
           setRejoining(false);
           setSession(s);
@@ -133,7 +144,10 @@ export function MeetingRoom({ slug }: { slug: string }) {
           video
           data-lk-theme="default"
           className="flex flex-col"
-          onDisconnected={() => setSession(null)}
+          onDisconnected={(reason) => {
+            setFailed(callFailed(reason));
+            setSession(null);
+          }}
         >
           <header className="flex items-center justify-between border-b border-zinc-800 px-4 py-2 text-sm">
             <span className="font-semibold">mooz</span>
